@@ -4,17 +4,18 @@
 struct Parser : public DiagnosticHelper {
   Lexer l;
   struct Sema { // Semantics processor
-    CType currentfunctionRet = nullptr, currentInitTy = nullptr,
-          currentCase = nullptr;
+    CType currentfunctionRet = nullptr, currentInitTy = nullptr, currentCase = nullptr;
     IdentRef pfunc = nullptr;           // current function name: `__func__`
-    uint32_t currentAlign = 0;          // current align(bytes)
     SmallVector<BScope, 8> scopes{};    // block scope
+    SmallVector<Token, 5> tokens_cache;
     size_t scopeTop = 0;
+    uint32_t currentAlign = 0;          // current align(bytes)
     bool type_error = false; // type error
   } sema;
   struct JumpBuilder {
     DenseMap<IdentRef, Label_Info> labels{}; // named labels
     unsigned cur = 0;
+    llvm::SmallSet<label_t, 12> used_breaks{};
     label_t topBreak = INVALID_LABEL, topContinue = INVALID_LABEL;
     unsigned createLabel() {
       return cur++;
@@ -25,6 +26,8 @@ struct Parser : public DiagnosticHelper {
   } jumper;
   IRGen &irgen;
   Stmt InsertPt = nullptr;
+  bool sreachable;
+  Stmt unreachable_reason = nullptr;
   Parser(SourceMgr &SM, xcc_context &context, IRGen &irgen)
       : DiagnosticHelper{context}, l(SM, *this, context), irgen{irgen} {}
   template <typename T> auto getsizeof(T a) { return irgen.getsizeof(a); }
@@ -743,9 +746,9 @@ struct Parser : public DiagnosticHelper {
         return;
       }
   }
-  void more(llvm::SmallVectorImpl<Token> &s) {
+  void more() {
     while (is_declaration_specifier(l.tok.tok))
-      s.push_back(l.tok.tok), consume();
+      sema.tokens_cache.push_back(l.tok.tok), consume();
   }
   void read_enum_sepcs(CType &c, Token sepc) {
     // TODO: ...
@@ -754,38 +757,43 @@ struct Parser : public DiagnosticHelper {
     // TODO: ...
   }
 
-  CType handle_typedef(llvm::SmallVectorImpl<Token> &s, CType ty) {
+  CType handle_typedef(CType ty) {
+    bool is_redefine = false;
     CType result = context.clone(ty);
     consume();
     while (is_declaration_specifier(l.tok.tok))
-      s.push_back(l.tok.tok), consume();
-    if (s.size()) {
-      for (size_t i = 0; i < s.size(); ++i) {
+      sema.tokens_cache.push_back(l.tok.tok), consume();
+    if (sema.tokens_cache.size()) {
+      for (size_t i = 0; i < sema.tokens_cache.size(); ++i) {
         switch (i) {
         case Ktypedef:
           break;
         default:
-          if (!addTag(result, s[i]))
-            warning(getLoc(), "typedef types cannot combine with "
-                              "type-specifier and type-qualifiers");
+          if (!addTag(result, sema.tokens_cache[i]))
+            is_redefine = true;
         }
       }
     }
-    result->tags &= (~TYTYPEDEF);
+    if (is_redefine) {
+      dbgprint("typedef redefinition founded\n");
+      if (!compatible(result, ty))
+        type_error("typedef redefinition with different types: %T vs %T", result, ty);
+    } else {
+      result->tags &= (~TYTYPEDEF);
+    }
     return result;
   }
   CType specifier_qualifier_list() {
     Location loc = getLoc();
     // specfier-qualifier-list: parse many type specfiers and type qualifiers
-    SmallVector<Token, 5> s;
     CType result;
-
+    sema.tokens_cache.clear();
     while (is_declaration_specifier(l.tok.tok)) {
       switch (l.tok.tok) {
       case Kenum:
         result = enum_decl();
-        more(s);
-        for (const auto tok : s) {
+        more();
+        for (const auto tok : sema.tokens_cache) {
           if (tok == Ktypedef) {
             result->tags |= TYTYPEDEF;
             continue;
@@ -796,8 +804,8 @@ struct Parser : public DiagnosticHelper {
       case Kunion:
       case Kstruct:
         result = struct_union(l.tok.tok);
-        more(s);
-        for (const auto tok : s) {
+        more();
+        for (const auto tok: sema.tokens_cache) {
           if (tok == Ktypedef) {
             result->tags |= TYTYPEDEF;
             continue;
@@ -814,23 +822,22 @@ struct Parser : public DiagnosticHelper {
           if (l.tok.tok != TRbracket)
             return expectRB(getLoc()), nullptr;
           consume();
-          more(s);
-          if (s.size())
-            warning(getLoc(),
-                    "atomic-type-specifier cannot combine with other types");
+          more();
+          if (sema.tokens_cache.size())
+            warning(getLoc(), "atomic-type-specifier cannot combine with other types");
           return result;
         }
         LLVM_FALLTHROUGH;
       default:
-        s.push_back(l.tok.tok), consume();
+        sema.tokens_cache.push_back(l.tok.tok), consume();
       }
     }
     if (l.tok.tok == TIdentifier) {
       result = gettypedef(l.tok.s);
       if (result && (result->tags & TYTYPEDEF))
-        return more(s), handle_typedef(s, result);
+        return more(), handle_typedef(result);
     }
-    return merge_types(s, loc);
+    return merge_types(sema.tokens_cache, loc);
   }
   NameTypePair declarator(CType base, enum DeclaratorFlags flags = Direct) {
     // take a base type, return the final type and name
@@ -1294,14 +1301,14 @@ struct Parser : public DiagnosticHelper {
       return (l.evaluator.error = false);
     if (l.tok.tok == TRbracket) { // no message
       if (ok == 0)
-        error(loc, "%s", "static assert failed!");
+        parse_error(loc, "%s", "static assert failed!");
       consume();
     } else if (l.tok.tok == TComma) {
       consume();
       if (l.tok.tok != TStringLit)
         return expect(loc, "string literal in static assert"), false;
       if (!ok)
-        error(loc, "static assert failed: %s", l.tok.str.data());
+        parse_error(loc, "static assert failed: %s", l.tok.str.data());
       consume();
       if (l.tok.tok != TRbracket)
         return expectRB(getLoc()), false;
@@ -1381,18 +1388,12 @@ struct Parser : public DiagnosticHelper {
           return parse_error(loc2, "function definition is not allowed here"), note("function can only declared in global scope");
         Stmt res = SNEW(FunctionStmt){.loc = loc, .funcname = st.name, .functy = st.ty};
         {
-          CType oldRet = sema.currentfunctionRet;
-          sema.currentfunctionRet = st.ty->ret;
-          res->funcbody = function_body(st.ty->params);
-          res->numLabels = jumper.cur;
-          jumper.cur = 0;
-          sema.currentfunctionRet = oldRet;
+          llvm::SaveAndRestore<CType> saved_ret(sema.currentfunctionRet, st.ty->ret);
+          res->funcbody = function_body(st.ty->params, loc);
         }
-        if (!(res->funcbody))
-          return;
-        if (st.name->second.getToken() == PP_main) {
-          // TODO
-        }
+        res->numLabels = jumper.cur;
+        jumper.cur = 0;
+        sreachable = true;
         return insertStmt(res);
       }
       noralizeType(st.ty);
@@ -1839,9 +1840,7 @@ struct Parser : public DiagnosticHelper {
         tname = nullptr;
         if (l.tok.tok == Kdefault) {
           if (defaults)
-            return type_error(
-                       loc, "more then one default case in Generic expression"),
-                   nullptr;
+            return type_error(loc, "more then one default case in Generic expression"), nullptr;
           consume();
         } else if (!(tname = type_name()))
           return expect(loc, "type-name"), nullptr;
@@ -2024,10 +2023,6 @@ struct Parser : public DiagnosticHelper {
       }
     }
   }
-  void tryBreak() {
-    if (jumper.topBreak == INVALID_LABEL)
-      type_error(getLoc(), "%s", "connot break: no outer for/while/switch/do-while");
-  }
   void tryContinue() {
     if (jumper.topContinue == INVALID_LABEL)
       type_error(getLoc(), "%s", "connot continue: no outer for/while/do-while");
@@ -2053,31 +2048,52 @@ struct Parser : public DiagnosticHelper {
   Stmt getInsertPoint() {
     return InsertPt;
   }
-  void jumpIfTrue(Expr test, label_t dst, Location loc = Location()) {
+  void clearInsertPoint() {
+    InsertPt = nullptr;
+  }
+  void jumpIfTrue(Expr test, label_t dst) {
     label_t thenBB = jumper.createLabel();
-    doinsertStmt(SNEW(CondJumpStmt) {.loc = loc, .test = test, .T = dst, .F = thenBB});
-    return insertLabel(thenBB, loc);
+    doinsertStmt(SNEW(CondJumpStmt) {.loc = Location::make_invalid(), .test = test, .T = dst, .F = thenBB});
+    return insertLabel(thenBB);
   }
-  void jumpIfFalse(Expr test, label_t dst, Location loc = Location()) {
+  void jumpIfFalse(Expr test, label_t dst) {
     label_t thenBB = jumper.createLabel();
-    doinsertStmt(SNEW(CondJumpStmt) {.loc = loc, .test = test, .T = thenBB, .F = dst});
-    return insertLabel(thenBB, loc);
+    doinsertStmt(SNEW(CondJumpStmt) {.loc = Location::make_invalid(), .test = test, .T = thenBB, .F = dst});
+    return insertLabel(thenBB);
   }
-  void insertBr(label_t L, Location loc = Location()) {
-    return doinsertStmt(SNEW(GotoStmt) {.loc = loc, .location = L});
+  void insertBr(label_t L) {
+    return doinsertStmt(SNEW(GotoStmt) {.loc = Location::make_invalid(), .location = L});
   }
-  void insertLabel(label_t L, Location loc = Location()) {
-    return doinsertStmt(SNEW(LabelStmt) {.loc = loc, .label = L, .labelName = nullptr});
+  void insertLabel(label_t L, IdentRef Name = nullptr) {
+    sreachable = true;
+    return insertStmtInternal(SNEW(LabelStmt) {.loc = Location::make_invalid(), .label = L, .labelName = Name});
+  }
+  void insertStmtInternal(Stmt s) {
+      InsertPt->next = s;
+      InsertPt = s;
   }
   void doinsertStmt(Stmt s) {
     if (s) {
-      InsertPt->next = s;
-      InsertPt = s;
+      if (sreachable) {
+        insertStmtInternal(s);
+        if (isTerminator(s->k)) {
+            unreachable_reason = s;
+            sreachable = false;
+        }
+      } else {
+        if (unreachable_reason && s->loc.isValid()) {
+          warning(s->loc, "this statement is unreachable");
+          note(unreachable_reason->loc, "after this *terminator* statement is unreachable");
+          unreachable_reason = nullptr;
+        }
+      }
     }
   }
   void insertStmt(Stmt s) {
     if (s) {
       doinsertStmt(s);
+    } else {
+      dbgprint("insertStmt: got nullptr?\n");
     }
   }
   void insertStmtEnd() {
@@ -2136,10 +2152,18 @@ struct Parser : public DiagnosticHelper {
       return doinsertStmt(SNEW(GotoStmt){.loc = loc, .location = jumper.topContinue});
     case Kbreak: 
     {
-      tryBreak();
       consume();
       checkSemicolon();
-      return doinsertStmt(SNEW(GotoStmt){.loc = loc, .location = jumper.topBreak});
+      if (jumper.topBreak == INVALID_LABEL)
+        type_error(getLoc(), "%s", "connot break: no outer for/while/switch/do-while");
+      else {
+        if (sreachable) {
+          jumper.used_breaks.insert(jumper.topBreak);
+          dbgprint("insert into jumper.topBreak: %u\n", jumper.topBreak);
+        }
+        doinsertStmt(SNEW(GotoStmt){.loc = loc, .location = jumper.topBreak});
+      }
+      return;
     }
     case Kreturn: {
       Expr e, r;
@@ -2147,7 +2171,7 @@ struct Parser : public DiagnosticHelper {
       if (l.tok.tok == TSemicolon) {
         consume();
         if (sema.currentfunctionRet->tags & TYVOID)
-          return doinsertStmt(SNEW(ReturnStmt){.loc = loc});
+          return doinsertStmt(SNEW(ReturnStmt){.loc = loc, .ret = nullptr});
         return warning(loc, "function should not return void in a function return %T", sema.currentfunctionRet),
                note("%s", "A return statement without an expression shall only appear in a function whose return type is void"),
                doinsertStmt(SNEW(ReturnStmt){.loc = loc, .ret = ENEW(DefaultExpr){.loc = loc, .ty = sema.currentfunctionRet}});
@@ -2158,7 +2182,7 @@ struct Parser : public DiagnosticHelper {
       if (sema.currentfunctionRet->tags & TYVOID)
         return warning(loc,"function should return a value in a function return void"),
                note("A return statement with an expression shall not appear in a function whose return type is void"),
-               doinsertStmt(SNEW(ReturnStmt){.loc = loc});
+               doinsertStmt(SNEW(ReturnStmt){.loc = loc, .ret = nullptr});
       // warn_if_bad_cast(e, sema.currentfunctionRet, " returning '" & $e->ty &
       // "' from a function with return type '" & $sema.currentfunctionRet &
       // "'")
@@ -2186,9 +2210,9 @@ struct Parser : public DiagnosticHelper {
       insertBr(CMP);
       insertLabel(BODY);
       statement();
-      insertLabel(CMP, loc);
-      doinsertStmt(SNEW(CondJumpStmt) {.loc = loc, .test = test, .T = BODY, .F = LEAVE});
-      return insertLabel(LEAVE, loc);
+      insertLabel(CMP);
+      doinsertStmt(SNEW(CondJumpStmt) {.loc = Location::make_invalid(), .test = test, .T = BODY, .F = LEAVE});
+      return insertLabel(LEAVE);
     }
     case Kfor: 
     {
@@ -2231,14 +2255,14 @@ struct Parser : public DiagnosticHelper {
       label_t LEAVE = jumper.createLabel();
       llvm::SaveAndRestore<label_t> saved_b(jumper.topBreak, LEAVE);
       llvm::SaveAndRestore<label_t> saved_c(jumper.topContinue, CMP);
-      insertLabel(CMP, loc);
+      insertLabel(CMP);
       if (cond)
-        jumpIfFalse(cond, LEAVE, loc);
+        jumpIfFalse(cond, LEAVE);
       if (forincl)
         doinsertStmt(SNEW(ExprStmt) {.loc = forincl->loc, .exprbody = forincl});
       statement();
-      insertBr(CMP, loc);
-      insertLabel(LEAVE, loc);
+      insertBr(CMP);
+      insertLabel(LEAVE);
       leaveBlock();
       return;
     }
@@ -2249,7 +2273,7 @@ struct Parser : public DiagnosticHelper {
       label_t LEAVE = jumper.createLabel();
       llvm::SaveAndRestore<label_t> saved_b(jumper.topBreak, LEAVE);
       llvm::SaveAndRestore<label_t> saved_c(jumper.topContinue, CMP);
-      insertLabel(CMP, loc);
+      insertLabel(CMP);
       consume();
       statement();
       if (l.tok.tok != Kwhile)
@@ -2261,8 +2285,8 @@ struct Parser : public DiagnosticHelper {
       if (!(test = Bexpression()))
         return;
       checkSemicolon();
-      jumpIfTrue(test, CMP, loc);
-      insertLabel(LEAVE, loc);
+      jumpIfTrue(test, CMP);
+      insertLabel(LEAVE);
     }
     case Kif: 
     {
@@ -2270,21 +2294,21 @@ struct Parser : public DiagnosticHelper {
       Expr test;
       if (!(test = Bexpression()))
         return;
-      jumpIfFalse(test, IF_END, loc);
+      jumpIfFalse(test, IF_END);
       statement();
       if (l.tok.tok == Kelse) {
         label_t END = jumper.createLabel();
         consume();
-        insertBr(END, loc);
-        insertLabel(IF_END, loc);
+        insertBr(END);
+        insertLabel(IF_END);
         statement();
-        insertLabel(END, loc);
+        insertLabel(END);
         return;
       }
-      return insertLabel(IF_END, loc);
+      return insertLabel(IF_END);
     }
     case Kelse:
-      return parse_error("'else' without a previous 'if'"), consume();
+      return parse_error(loc, "'else' without a previous 'if'"), consume();
     case TIdentifier: 
     {
       TokenV tok = l.tok;
@@ -2292,7 +2316,7 @@ struct Parser : public DiagnosticHelper {
       if (l.tok.tok == TColon) { // labeled-statement
         consume();
         label_t L = putLable(tok.s);
-        doinsertStmt(SNEW(LabelStmt) {.loc = loc, .label = L, .labelName = tok.s});
+        insertLabel(L, tok.s);
         return statement();
       }
       l.tokenq.push_back(l.tok), l.tok = tok;
@@ -2643,9 +2667,9 @@ struct Parser : public DiagnosticHelper {
       return result;
   }
   Stmt translation_unit() {
-    assert(!getInsertPoint());
     Stmt head = SNEW(HeadStmt) {.loc = getLoc()};
     setInsertPoint(head);
+    sreachable = true;
     while (l.tok.tok != TEOF) {
       if (l.tok.tok == Kasm)
         parse_asm(), checkSemicolon();
@@ -2665,44 +2689,65 @@ struct Parser : public DiagnosticHelper {
     return ast;
   }
   void compound_statement() {
-    NullStmt nullstmt;
-    // parse mant statements
-    Stmt head = SNEW(CompoundStmt) {.loc = getLoc(), .inner = reinterpret_cast<Stmt>(&nullstmt)};
-    Stmt old = getInsertPoint();
-    setInsertPoint(head->inner);
     consume();
     enterBlock();
-    while (l.tok.tok != TRcurlyBracket) {
-      if (istype(l.tok.tok)) 
-        declaration();
-      else
-        statement();
+    NullStmt nullstmt {.k = SHead}; // make a dummy statement in stack, remove it when scope leaves
+    Stmt head = SNEW(CompoundStmt) {.loc = getLoc(), .inner = reinterpret_cast<Stmt>(&nullstmt)};
+    {
+      llvm::SaveAndRestore<Stmt> saved_ip(InsertPt, head->inner);
+      bool old = sreachable;
+      eat_compound_statement();
+      insertStmtEnd();
+      sreachable = old;
     }
-    insertStmtEnd();
-    setInsertPoint(old);
     head->inner = head->inner->next;
     leaveBlock();
     consume();
     insertStmt(head);
   }
-  Stmt function_body(xvector<NameTypePair> &params) {
-    Stmt head = SNEW(HeadStmt) {.loc = getLoc()}; 
-    Stmt old = getInsertPoint();
-    setInsertPoint(head);
-    Location loc = getLoc();
+  void eat_compound_statement() {
+    while (l.tok.tok != TRcurlyBracket) {
+      if (istype(l.tok.tok)) 
+        declaration();
+      else 
+        statement();
+    }
+  }
+  Stmt function_body(xvector<NameTypePair> &params, Location loc) {
     consume();
+    Stmt head = SNEW(HeadStmt) {.loc = loc};
     enterBlock();
     assert(jumper.cur == 0 && "labels scope should be empty in start of function");
     for (const auto &it : params)
       putsymtype(it.name, it.ty);
-    while (l.tok.tok != TRcurlyBracket) {
-      if (istype(l.tok.tok))
-        declaration();
-      else
-        statement();
+    {
+      llvm::SaveAndRestore<Stmt> saved_ip(InsertPt, head);
+      eat_compound_statement();
+      if (!isTerminator(getInsertPoint()->k)) {
+        Stmt s = getInsertPoint();
+        Location loc2 = getLoc();
+        if (sema.pfunc->second.getToken() == PP_main) {
+          insertStmt(SNEW(ReturnStmt) {.loc = loc2, .ret = ENEW(IntLitExpr) {.loc = loc2, .ty = context.getInt(), .ival = 0}});
+        } else {
+          if (sema.currentfunctionRet->tags & TYVOID) {
+            insertStmt(SNEW(ReturnStmt) {.loc = loc2, .ret = nullptr});
+          } else {
+            // if this label never reaches (never break to it)
+            if (s->k != SLabel || (!s->labelName &&
+                !jumper.used_breaks.contains(s->label))
+              ) {
+               warning(loc2, "control reaches end of non-void function");
+                note(loc, "in the definition of function %I", sema.pfunc);
+            }
+            insertStmt(SNEW(ReturnStmt) {.loc = loc, .ret = ENEW(UndefExpr) {.loc = loc2, .ty = sema.currentfunctionRet}});
+            // control reaches end of non-void function
+            // non-void function does not return a value
+            // no return statement in function returning non-void
+          }
+        }
+      }
+      insertStmtEnd();
     }
-    insertStmtEnd();
-    setInsertPoint(old);
     for (const auto &it: jumper.labels) {
       IdentRef name = it.first;
       switch (it.second.flags) {
@@ -2715,29 +2760,10 @@ struct Parser : public DiagnosticHelper {
       case LBL_OK:
         dbgprint("push label into function: %s\n", name->getKey().data());
         break;
-      default:
-        llvm_unreachable("");
+      default: llvm_unreachable("");
       }
     }
-    /*auto r = reachable(head, Reachable);
-    if (r != Unreachable) {
-      Location locend = getLoc();
-      if (sema.currentfunctionRet->tags & TYVOID) {
-        ptr->next = SNEW(ReturnStmt) {.loc = locend};
-      } else {
-        if (sema.pfunc->second.getToken() == PP_main) {
-          ptr->next = SNEW(ReturnStmt) {.loc = locend, .ret = ENEW(IntLitExpr) {.loc = locend, .ty = sema.currentfunctionRet, .ival = 0}};
-        } else {
-          if (r == Reachable) {
-            warning(locend, "control reaches end of non-void function");
-            note(loc, "in the definition of function %R", sema.pfunc->getKey());
-          }
-          ptr->next = SNEW(ReturnStmt) {.loc = locend, .ret = ENEW(UndefExpr) {.loc = locend, .ty = sema.currentfunctionRet}};
-        }
-      }
-      ptr->next->next = nullptr;
-    }*/
-    // TODO: add return
+    jumper.used_breaks.clear();
     leaveBlock();
     consume();
     return head;

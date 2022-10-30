@@ -26,8 +26,12 @@ int main(int argc, const char **argv)
     if (InputFiles.empty())
         return SM.fatal("no input files"), 1;
 
-    for (const auto &str: InputFiles)
-        SM.addFile(str.c_str());
+    for (const auto &str: InputFiles) {
+        if (str.length() == 1 && str.front() == '-')
+            SM.addStdin();
+        else
+            SM.addFile(str.c_str());
+    }
 
     llvm::InitializeAllTargets();
     llvm::InitializeAllAsmParsers();

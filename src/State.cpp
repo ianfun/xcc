@@ -103,15 +103,6 @@ struct xcc_context {
     Expr clone(Expr e) {
         return reinterpret_cast<Expr>(new_memcpy(expr_size_map[e->k], e));
     }
-    Stmt getUniqueStmt() {
-        return reinterpret_cast<Stmt>(this);
-    }
-    Expr getUniqueExpr() {
-        return reinterpret_cast<Expr>(this);
-    }
-    CType getUniqueCType() {
-        return reinterpret_cast<CType>(this);
-    }
 };
 #undef TNEW
 #undef SNEW

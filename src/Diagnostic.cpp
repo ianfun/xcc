@@ -9,7 +9,7 @@ struct Diagnostic {
     llvm::SmallVector<storage_type, 5> data;
     Location loc;
 
-    Diagnostic(const char *fmt): fmt{fmt}, data{}, loc{Location()} {}
+    Diagnostic(const char *fmt): fmt{fmt}, data{}, loc{Location::make_invalid()} {}
     Diagnostic(const char *fmt, Location loc): fmt{fmt}, data{}, loc{loc} {}
     template <typename T>
     void write_impl(const T *ptr) {
@@ -150,16 +150,16 @@ struct Diagnostic {
                         (*get<const llvm::Type*>(idx++)).print(OS);
                         break;
                     case 'E':
-                        // TODO:
+                        OS << lquote << get<const Expr>(idx++) << rquote;
                         break;
                     case 'e':
-                        // TODO:
+                        OS << get<const Expr>(idx++);
                         break;
                     case 'T':
-                        // TODO:
+                        OS << lquote << get<const CType>(idx++) << rquote;
                         break;
                     case 't':
-                        // TODO:
+                        OS << get<const CType>(idx++);
                         break;
                     case 'h':
                         OS.write_hex(static_cast<unsigned long long>(data[idx++]));
@@ -279,14 +279,6 @@ struct DiagnosticHelper {
         context.printer->emitDiagnostic(msg, DiagnosticLevel::PPError, args...);
     }
     template<typename... Args>
-    void lex_error(const char *msg, const Args&... args) {
-        context.printer->emitDiagnostic(msg, DiagnosticLevel::LexError, args...);
-    }
-    template<typename... Args>
-    void parse_error(const char *msg, const Args&... args) {
-        context.printer->emitDiagnostic(msg, DiagnosticLevel::ParseError, args...);
-    }
-    template<typename... Args>
     void type_error(const char *msg, const Args&... args) {
         context.printer->emitDiagnostic(msg, DiagnosticLevel::TypeError, args...);
     }
@@ -306,10 +298,6 @@ struct DiagnosticHelper {
     template<typename... Args>
     void warning(Location loc, const char *msg, const Args&... args) {
         context.printer->emitDiagnostic(loc, msg, DiagnosticLevel::Warning, args...);
-    }
-    template<typename... Args>
-    void error(Location loc, const char *msg, const Args&... args) {
-        context.printer->emitDiagnostic(loc, msg, DiagnosticLevel::Error, args...);
     }
     template<typename... Args>
     void pp_error(Location loc, const char *msg, const Args&... args) {

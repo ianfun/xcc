@@ -134,7 +134,7 @@ RUN:
                                 m.ivarargs = true;
                                 tok = lex();
                                 if (tok.tok != TRbracket) {
-                                    parse_error("%s", "')' expected");
+                                    parse_error(loc, "%s", "')' expected");
                                     goto BAD_RET;
                                 }
                                 continue;
@@ -286,7 +286,7 @@ RUN:
                             path.make_eos();
                             dbgprint("#including file %s\n", path.data());
                             if (!SM.addIncludeFile(path.str(), is_std == '>'))
-                                pp_error("#include file not found: %s", path.data());                            
+                                pp_error("#include file not found: %R", StringRef(path.data(), path.length() - 1));
                             path.free();
                             break;
                         case '<':
@@ -364,7 +364,7 @@ RUN:
                     if (saved_tok == PPwarning)
                         warning(loc, "#warning: %R", s.str());
                     else
-                        error(loc, "#error: %R", s.str());
+                        pp_error(loc, "#error: %R", s.str());
                 } break;
                 case TNewLine:
                     continue;

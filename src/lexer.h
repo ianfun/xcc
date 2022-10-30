@@ -32,12 +32,12 @@ struct Lexer: public DiagnosticHelper
         if (codepoint < 0xA0) {
             if (codepoint == 0x24 || codepoint == 0x40 || codepoint == 0x60)
                 return;
-            error(loc, "%U is not a valid universal character", codepoint);
+            lex_error(loc, "%U is not a valid universal character", codepoint);
         }
         if (codepoint > 0x10FFFF)
-            error(loc, "codepoint too large(larger than 0x10FFFF)"), codepoint = 0x10FFFF - 1;
+            lex_error(loc, "codepoint too large(larger than 0x10FFFF)"), codepoint = 0x10FFFF - 1;
         if (codepoint >= 0xD800 && codepoint <= 0xDFFF)
-            error(loc, "universal character %U in surrogate range", codepoint);
+            lex_error(loc, "universal character %U in surrogate range", codepoint);
     }
     void eat() {
         c = SM.skip_read();

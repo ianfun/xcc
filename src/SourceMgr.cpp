@@ -47,11 +47,12 @@ struct Stream /*FileStream*/ {
 };
 
 struct SourceMgr: public DiagnosticHelper {
-    llvm::SmallString<STREAM_BUFFER_SIZE> buf;
+    SmallString<STREAM_BUFFER_SIZE> buf;
     SmallVector<const char*> sysPaths;
     SmallVector<xstring> userPaths;
     SmallVector<Stream> streams;
     SmallVector<fileid_t> includeStack;
+    bool hasStdinAdded = false;
     uint32_t getLine() {
         return streams[includeStack.back()].line;
     }
@@ -123,13 +124,6 @@ struct SourceMgr: public DiagnosticHelper {
         streams.push_back(f);
         return true;
     }
-    bool addFile(xstring str) {
-        bool res;
-        assert(str.size() && str.back() == '\0');
-        res = addFile(str.data(), false);
-        str.free();
-        return res;
-    }
     // read a char from a stream
     LLVM_NODISCARD char raw_read(Stream &f) {
         switch (f.k) {
@@ -139,18 +133,13 @@ struct SourceMgr: public DiagnosticHelper {
                     if (f.pos == 0) {
                 #if WINDOWS
                         DWORD L = 0;
-                        if (!::ReadFile(f.fd, buf.data(), STREAM_BUFFER_SIZE, &L, nullptr)){
-                            return '\0';
-                        }
-                        if (L == 0)
-                            return '\0';
+                        if (!::ReadFile(f.fd, buf.data(), STREAM_BUFFER_SIZE, &L, nullptr) || L == 0)
+                            return '\0'; // xxx: ReadFile error report ?
                 #else
                     READ_AGAIN:
                         ssize_t L = ::read(f.fd, buf.data(), buf.size());
-
                         if (L == 0)
                             return '\0';
-
                         if (L < 0) {
                             if (errno == EINTR)
                                 goto READ_AGAIN;
@@ -163,8 +152,7 @@ struct SourceMgr: public DiagnosticHelper {
                     }
                     char c = buf[f.p++];
                     f.pos--;
-                    if (c)
-                        return c;
+                    if (c) return c;
                     warning("null character(s) ignored");
                     goto AGAIN;
                 }
@@ -181,7 +169,7 @@ struct SourceMgr: public DiagnosticHelper {
                         if (::ReadConsoleW(hStdin, reinterpret_cast<PWCHAR>(buf.data()), buf.size() / 2, &f.readed, nullptr) == 0){
                             return '\0';
                         }
-                        for(DWORD i = 0;i<f.readed;f.i++){
+                        for(DWORD i = 0;i < f.readed;f.i++){
                             // ^D = 4
                             // ^X = 24
                             // ^Z = 26
@@ -201,7 +189,7 @@ struct SourceMgr: public DiagnosticHelper {
                     ssize_t L;
                     for(unsigned idx = 0;;) {
                         L = ::read(STDIN_FILENO, &c, 1);
-                        if (L <= 0){
+                        if (L <= 0) {
                             if (errno == EINTR)
                                 continue;
                             if (L)
@@ -209,7 +197,7 @@ struct SourceMgr: public DiagnosticHelper {
                             return '\0';
                         }
                         buf[idx++] = c;
-                        if (c == '\n'){
+                        if (c == '\n' || idx == buf.size()) {
                             f.readed = idx;
                             break;
                         }
@@ -226,13 +214,12 @@ struct SourceMgr: public DiagnosticHelper {
                     ::add_history(line);
                     {
                         StringRef line_str = StringRef(line);
-                        buf += line_str;
+                        size_t max_ch = std::max(line_str.size(), STREAM_BUFFER_SIZE);
+                        memcpy(buf.data(), line_str.data(), max_ch);
                         ::free(line_str);
                         f.readed = line_str.size();
                     }
             #endif
-            
-            
                     if (buf[0] == ':'){
                         enum Command command = NotACommand;
             
@@ -300,6 +287,26 @@ struct SourceMgr: public DiagnosticHelper {
     LLVM_NODISCARD char raw_read_from_id(unsigned id) {
         return raw_read(streams[id]);
     }
+    void resetBuffer() {
+        Stream &target = streams[includeStack[includeStack.size() - 2]];
+        switch (target.k) {
+            case AFileStream:
+#if WINDOWS
+                LARGE_INTEGER I;
+                I.QuadPart = -static_cast<LONGLONG>(target.pos);
+                ::SetFilePointerEx(target.fd, I, nullptr, FILE_CURRENT);
+#else
+                ::lseek(target.fd, -static_cast<off_t>(target.pos), SEEK_CUR);
+#endif
+                target.pos = 0;
+                break;
+            case AStringStream:
+                break;
+            case AStdinStream:
+                target.readed = 0;
+                break;
+        }
+    }
     bool searchFileInDir(xstring &result, StringRef path, xstring *dir, size_t len) {
         for (size_t i = 0;i < len;++i)
         {
@@ -309,7 +316,7 @@ struct SourceMgr: public DiagnosticHelper {
             result += path;
             result.make_eos();
             if (addFile(result.data()), false)
-                return true;
+                return resetBuffer(), true;
             result.clear();
         }
         return false;
@@ -323,7 +330,7 @@ struct SourceMgr: public DiagnosticHelper {
             result += path;
             result.make_eos();
             if (addFile(result.data()), false)
-                return true;
+                return resetBuffer(), true;
             result.clear();
         }
         return false;
@@ -331,14 +338,14 @@ struct SourceMgr: public DiagnosticHelper {
     bool addIncludeFile(StringRef path, bool isAngled) {
         // https://stackoverflow.com/q/21593/15886008
         // path must be null terminated
-        if (!isAngled && addFile(path.data()), false) {
-            return true;
+        if (!isAngled && addFile(path.data())) {
+            return resetBuffer(), true;
         }
         xstring result = xstring::get_with_capacity(256);
         if (searchFileInDir(result, path, userPaths.data(), userPaths.size()))
-            return addFile(result, false);
+            return true;
         if (searchFileInDir(result, path, sysPaths.data(), sysPaths.size()))
-            return addFile(result, false);
+            return true;
         result.free();
         return false;
     }
@@ -352,12 +359,15 @@ struct SourceMgr: public DiagnosticHelper {
 #endif
         }
     }
-    void addStdin(const char *name = "<stdin>") {
-        Stream x = Stream {.name = name, .k = AStdinStream};
+    void addStdin(const char *Name = "<stdin>") {
+        if (hasStdinAdded)
+            return pp_error("stdardard input (%s) cannot be added as file more than once", Name);
+        Stream x = Stream {.name = Name, .k = AStdinStream};
         x.i = 0;
         x.readed = 0;
         includeStack.push_back(streams.size());
         streams.push_back(x);
+        hasStdinAdded = true;
     }
     void addString(StringRef s, const char *fileName = "<string>") {
         Stream x = Stream {.name = fileName, .k = AStringStream};

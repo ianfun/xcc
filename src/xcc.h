@@ -9,6 +9,7 @@
 #include <llvm/ADT/Triple.h>
 #include <llvm/ADT/SmallVector.h>
 #include <llvm/ADT/StringSwitch.h>
+#include <llvm/ADT/SmallSet.h>
 #include <llvm/ADT/DenseMap.h>
 #include <llvm/Support/Casting.h>
 #include <llvm/Support/CommandLine.h>
@@ -250,6 +251,10 @@ struct Location {
   column_t col; // at most 65535 are supported
   // xxx: use bitfields? for example: line: 40 bits, col: 24 bits
   fileid_t id;
+  // construct an invalid Location
+  static Location make_invalid() {
+    return Location {.line = 0, .col = 0, .id = 0};
+  }
   bool isValid() const { return line != 0; }
 };
 
@@ -384,15 +389,19 @@ static bool isCSkip(char c){
   // space, tab, new line, form feed are translate into ' '
   return c == ' ' || c == '\t' || c == '\f' || c == '\v';
 }
-constexpr unsigned char
-  CTX_NONE = 0,
-  CTX_HAS_CONTINUE = 0x1,
-  CTX_HAS_BREAK = 0x2;
-
 static bool is_declaration_specifier(Token a) {
     return a >= Kextern && a <= Kvolatile;
 }
-
+static bool isTerminator(enum StmtKind k) {
+    switch (k) {
+        case SGoto:
+        case SReturn:
+        case SCondJump:
+            return true;
+        default:
+            return false;
+    }
+}
 static bool isConstant(const Expr e) {
     // check whether a expression is a constant-expression
     switch(e->k){
