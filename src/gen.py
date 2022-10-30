@@ -64,9 +64,8 @@ stmts = {
 	"SHead": [],
 	"SCompound": ["Stmt inner"],
 	"SLabel": ["label_t label", "IdentRef labelName"],
-	"SGoto": ["label_t location"], # llvm::BranchInst
-	"SJumpIfTrue": ["Expr test", "label_t dst"], # llvm::BranchInst
-	"SJumpIfFalse": ["Expr test2", "label_t dst2"], # llvm::BranchInst
+	"SGoto": ["label_t location"],
+	"SCondJump": ["Expr test", "label_t T", "label_t F"],
 	"SDeclOnly": ["CType decl"],
 	"SReturn": ["Expr ret"],
 	"SExpr": ["Expr exprbody"],

@@ -1,7 +1,10 @@
 int putchar(int);
 int getchar();
+int puts(char*);
+int printf(char*, ...);
 int main() {
-	int c;
-	while ((c = getchar()) > 0)
-		putchar(c);
+	int i = 0;
+	while (i < 100)
+		printf("%d\n", i++);
+	return i;
 }

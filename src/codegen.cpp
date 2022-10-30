@@ -677,6 +677,14 @@ void gen(Stmt s) {
             }
             for (Stmt ptr = s->funcbody->next;ptr;ptr = ptr->next) 
                 gen(ptr);
+            if (!getTerminator()) {
+                auto retTy = ty->getReturnType();
+                if (retTy->isVoidTy()) {
+                    B().CreateRetVoid();
+                } else {
+                    B().CreateRet(llvm::UndefValue::get(retTy));
+                }
+            }
             leaveScope();
             if (options.g) {
                 lexBlocks.pop_back();
@@ -713,18 +721,12 @@ void gen(Stmt s) {
                 B().CreateBr(BB);
             //after(BB);
         } break;
-        case SJumpIfTrue:
-        case SJumpIfFalse:
+        case SCondJump:
         {
             auto cond = gen_cond(s->test);
-            auto thenBB = llvm::BasicBlock::Create(ctx, "", currentfunction);
             if (!getTerminator()) {
-                if (s->k == SJumpIfTrue) 
-                    B().CreateCondBr(cond, getLabel(s->dst), thenBB);
-                else 
-                    B().CreateCondBr(cond, thenBB, getLabel(s->dst));
+                B().CreateCondBr(cond, getLabel(s->T), getLabel(s->F));
             }
-            B().SetInsertPoint(thenBB);
         } break;
         case SAsm:
             handle_asm(s->asms);

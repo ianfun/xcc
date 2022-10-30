@@ -77,11 +77,8 @@ struct StmtPrinter {
         indent();
         ++Indentation;
         switch (s->k) {
-            case SJumpIfTrue:
-                OS << "jump to " << s->dst << " if " << s->test;
-                break;
-            case SJumpIfFalse:
-                OS << "jump to " << s->dst2 << " if not " << s->test2;
+            case SCondJump:
+                OS << "br " << s->test << " " << s->T << ", " << s->F << NL;
                 break;
             case SHead:
                 OS << '{' << NL;

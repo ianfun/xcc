@@ -2053,16 +2053,20 @@ struct Parser : public DiagnosticHelper {
   Stmt getInsertPoint() {
     return InsertPt;
   }
-  void jumpIfTrue(Expr test, label_t dst, Location loc) {
-    return doinsertStmt(SNEW(JumpIfTrueStmt) {.loc = loc, .test = test, .dst = dst});
+  void jumpIfTrue(Expr test, label_t dst, Location loc = Location()) {
+    label_t thenBB = jumper.createLabel();
+    doinsertStmt(SNEW(CondJumpStmt) {.loc = loc, .test = test, .T = dst, .F = thenBB});
+    return insertLabel(thenBB, loc);
   }
-  void jumpIfFalse(Expr test, label_t dst, Location loc) {
-    return doinsertStmt(SNEW(JumpIfFalseStmt) {.loc = loc, .test2 = test, .dst2 = dst});
+  void jumpIfFalse(Expr test, label_t dst, Location loc = Location()) {
+    label_t thenBB = jumper.createLabel();
+    doinsertStmt(SNEW(CondJumpStmt) {.loc = loc, .test = test, .T = thenBB, .F = dst});
+    return insertLabel(thenBB, loc);
   }
-  void insertBr(label_t L, Location loc) {
+  void insertBr(label_t L, Location loc = Location()) {
     return doinsertStmt(SNEW(GotoStmt) {.loc = loc, .location = L});
   }
-  void insertLabel(label_t L, Location loc) {
+  void insertLabel(label_t L, Location loc = Location()) {
     return doinsertStmt(SNEW(LabelStmt) {.loc = loc, .label = L, .labelName = nullptr});
   }
   void doinsertStmt(Stmt s) {
@@ -2166,7 +2170,6 @@ struct Parser : public DiagnosticHelper {
     case Kswitch: {
       Expr test;
       Token tok = l.tok.tok;
-      consume();
       if (!(test = Bexpression()))
         return;
       if (tok == Kswitch) {
@@ -2175,14 +2178,17 @@ struct Parser : public DiagnosticHelper {
         llvm_unreachable("");
         return;
       }
+      label_t BODY = jumper.createLabel();
       label_t CMP = jumper.createLabel();
       label_t LEAVE = jumper.createLabel();
       llvm::SaveAndRestore<label_t> saved_c(jumper.topContinue, CMP);
       llvm::SaveAndRestore<label_t> saved_b(jumper.topBreak, LEAVE);
-      insertLabel(CMP, loc);
-      jumpIfFalse(test, LEAVE, loc);
+      insertBr(CMP);
+      insertLabel(BODY);
       statement();
-      insertLabel(LEAVE, loc);
+      insertLabel(CMP, loc);
+      doinsertStmt(SNEW(CondJumpStmt) {.loc = loc, .test = test, .T = BODY, .F = LEAVE});
+      return insertLabel(LEAVE, loc);
     }
     case Kfor: 
     {

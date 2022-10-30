@@ -4,8 +4,7 @@ enum StmtKind: uint8_t {
   SCompound,
   SLabel,
   SGoto,
-  SJumpIfTrue,
-  SJumpIfFalse,
+  SCondJump,
   SDeclOnly,
   SReturn,
   SExpr,
@@ -35,11 +34,8 @@ struct OpaqueStmt {
   };
   struct {
       Expr test;
-    label_t dst;
-  };
-  struct {
-      Expr test2;
-    label_t dst2;
+    label_t T;
+    label_t F;
   };
   struct {
       CType decl;
@@ -96,24 +92,15 @@ struct {
     label_t location;
 
   };};
-struct JumpIfTrueStmt {
-  enum StmtKind k=SJumpIfTrue;
+struct CondJumpStmt {
+  enum StmtKind k=SCondJump;
   Location loc;
   Stmt next;
 struct {
   
     Expr test;
-    label_t dst;
-
-  };};
-struct JumpIfFalseStmt {
-  enum StmtKind k=SJumpIfFalse;
-  Location loc;
-  Stmt next;
-struct {
-  
-    Expr test2;
-    label_t dst2;
+    label_t T;
+    label_t F;
 
   };};
 struct DeclOnlyStmt {
@@ -178,8 +165,7 @@ static uint8_t stmt_size_map[] = {
     sizeof(CompoundStmt),
     sizeof(LabelStmt),
     sizeof(GotoStmt),
-    sizeof(JumpIfTrueStmt),
-    sizeof(JumpIfFalseStmt),
+    sizeof(CondJumpStmt),
     sizeof(DeclOnlyStmt),
     sizeof(ReturnStmt),
     sizeof(ExprStmt),
@@ -187,4 +173,4 @@ static uint8_t stmt_size_map[] = {
     sizeof(VarDeclStmt),
     sizeof(FunctionStmt)
 };
-static constexpr size_t stmt_max_size = std::max({sizeof(HeadStmt), sizeof(CompoundStmt), sizeof(LabelStmt), sizeof(GotoStmt), sizeof(JumpIfTrueStmt), sizeof(JumpIfFalseStmt), sizeof(DeclOnlyStmt), sizeof(ReturnStmt), sizeof(ExprStmt), sizeof(AsmStmt), sizeof(VarDeclStmt), sizeof(FunctionStmt)});
+static constexpr size_t stmt_max_size = std::max({sizeof(HeadStmt), sizeof(CompoundStmt), sizeof(LabelStmt), sizeof(GotoStmt), sizeof(CondJumpStmt), sizeof(DeclOnlyStmt), sizeof(ReturnStmt), sizeof(ExprStmt), sizeof(AsmStmt), sizeof(VarDeclStmt), sizeof(FunctionStmt)});
