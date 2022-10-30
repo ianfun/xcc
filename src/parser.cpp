@@ -2683,6 +2683,7 @@ struct Parser : public DiagnosticHelper {
     head->inner = head->inner->next;
     leaveBlock();
     consume();
+    insertStmt(head);
   }
   Stmt function_body(xvector<NameTypePair> &params) {
     Stmt head = SNEW(HeadStmt) {.loc = getLoc()}; 
