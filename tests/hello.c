@@ -1,4 +1,7 @@
-int main(int argc, char **argv){
-	printf("Hello world!\n");
-	exit(1);
+int putchar(int);
+int getchar();
+int main() {
+	int c;
+	while ((c = getchar()) > 0)
+		putchar(c);
 }

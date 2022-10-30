@@ -77,6 +77,12 @@ struct StmtPrinter {
         indent();
         ++Indentation;
         switch (s->k) {
+            case SJumpIfTrue:
+                OS << "jump to " << s->dst << " if " << s->test;
+                break;
+            case SJumpIfFalse:
+                OS << "jump to " << s->dst2 << " if not " << s->test2;
+                break;
             case SHead:
                 OS << '{' << NL;
                 for (Stmt ptr = s->next;ptr;ptr = ptr->next)
@@ -92,12 +98,6 @@ struct StmtPrinter {
             case SGoto:
                 OS << "goto xxx" << ';' << NL;
                 break;
-            case SContinue:
-                OS << "continue;" << NL;
-                break;
-            case SBreak:
-                OS << "break;" << NL;
-                break;
             case SReturn:
                 OS << "return";
                 if (s->ret) {
@@ -108,53 +108,14 @@ struct StmtPrinter {
             case SExpr:
                 OS << s->exprbody << ';';
                 break;
-            case SLabeled:
-                OS << s->label->getKey() << s->labledstmt;
-                break;
-            case SIf:
-                OS << "if (" << s->iftest << ')';
-                p(s->ifbody);
-                if (s->elsebody) {
-                    OS<< "else" << NL ;
-                    p(s->elsebody);
-                }
-                break;
-            case SDoWhile:
-                OS << "do " << s->dowhilebody << "while (" << s->dowhiletest << ");" << NL;
-                break;
-            case SWhile:
-                OS << "while (" << s->whiletest << ')' << s->whilebody << NL;
-                break;
-            case SFor:
-                OS << "for (";
-                if (s->forinit)
-                    p(s->forinit);
-                OS << ';';
-                if (s->forcond) {
-                    OS << s->forcond;
-                }
-                OS << ';';
-                if (s->forincl) {
-                    OS << s->forincl;
-                }
-                OS << ')';
-                OS << s->forbody;
-                break;
-            case SSwitch:
-                OS << "switch (";
-                OS << s->swtest;
-                OS << ')';
-                p(s->swbody);
-                break;
-            case SDeclOnly:
-                OS << s->decl;
+            case SLabel:
+                OS << s->label;
                 break;
             case SAsm:
                 OS << "__asm__(" << s->asms.str() << ')' << ';';
                 break;
-            case SLoop:
-                OS << "loop " << s->loop;
-                break;
+            case SDeclOnly:
+                OS << s->decl;
             case SVarDecl:
                 for (const auto decl: s->vars) {
                     OS << decl.ty << ' ' << decl.name;
@@ -162,14 +123,6 @@ struct StmtPrinter {
                         OS << " = " << decl.init;
                     OS << ';' << NL;
                 }
-                break;
-            case SDefault:
-                OS << "default:" << NL;
-                p(s->default_stmt);
-                break;
-            case SCase:
-                OS << "case " << s->case_expr << ':' << NL;
-                p(s->case_stmt);
                 break;
             case SFunction:
                 OS << "Function " << s->funcname << ": " << s->functy << "" << NL;

@@ -63,24 +63,16 @@ keywords = [
 stmts = {
 	"SHead": [],
 	"SCompound": ["Stmt inner"],
-	"SGoto": ["IdentRef location"],
-	"SContinue": [],
-	"SBreak": [],
+	"SLabel": ["label_t label", "IdentRef labelName"],
+	"SGoto": ["label_t location"], # llvm::BranchInst
+	"SJumpIfTrue": ["Expr test", "label_t dst"], # llvm::BranchInst
+	"SJumpIfFalse": ["Expr test2", "label_t dst2"], # llvm::BranchInst
+	"SDeclOnly": ["CType decl"],
 	"SReturn": ["Expr ret"],
 	"SExpr": ["Expr exprbody"],
-	"SLabeled": ["IdentRef label", "Stmt labledstmt"],
-	"SIf": ["Expr iftest", "Stmt ifbody, elsebody"],
-	"SDoWhile": ["Expr dowhiletest;", "Stmt dowhilebody"],
-	"SWhile": ["Expr whiletest", "Stmt whilebody"],
-	"SFor": ["Stmt forinit, forbody", "Expr forcond, forincl"],
-	"SSwitch": ["Expr swtest", "Stmt swbody"],
-	"SDeclOnly": ["CType decl"],
 	"SAsm": ["xstring asms"],
-	"SLoop": ["Stmt loop"],
 	"SVarDecl": ["xvector<VarDecl> vars"],
-	"SDefault": ["Stmt default_stmt"],
-	"SCase": ["Stmt case_stmt", "Expr case_expr"],
-	"SFunction": ["IdentRef funcname", "CType functy", "Stmt funcbody", "xvector<IdentRef> labels = xvector<IdentRef>::get()"],
+	"SFunction": ["IdentRef funcname", "CType functy", "Stmt funcbody", "unsigned numLabels"],
 }
 exprs = {
 	"EBin": ["Expr lhs", "enum BinOp bop", "Expr rhs"],

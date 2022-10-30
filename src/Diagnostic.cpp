@@ -321,7 +321,7 @@ struct DiagnosticHelper {
     }
     template<typename... Args>
     void parse_error(Location loc, const char *msg, const Args&... args) {
-        context.printer->emitDiagnostic(msg, DiagnosticLevel::ParseError, args...);
+        context.printer->emitDiagnostic(loc, msg, DiagnosticLevel::ParseError, args...);
     }
     template<typename... Args>
     void type_error(Location loc, const char *msg, const Args&... args) {
