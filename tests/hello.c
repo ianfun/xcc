@@ -1,10 +1,11 @@
-int putchar(int);
-int getchar();
-int puts(char*);
-int printf(char*, ...);
-int main() {
-	int i = 0;
-	while (i < 100)
-		printf("%d\n", i++);
-	return i;
+int next();
+int global_declaration();
+int token;
+
+void program() {
+    // get next token
+    next();
+    while (token > 0) {
+        global_declaration();
+    }
 }
