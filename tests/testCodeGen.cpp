@@ -9,7 +9,7 @@
 
     xcc::IRModuleOutputFileHelper output(ctx, &ig.M(), "example.ll");
 
-    output.verify();
+    //output.verify();
     //output.dump();
 
     output.IR();

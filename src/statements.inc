@@ -2,14 +2,23 @@
 enum StmtKind: uint8_t {
   SHead,
   SCompound,
-  SLabel,
   SGoto,
-  SCondJump,
-  SDeclOnly,
+  SContinue,
+  SBreak,
   SReturn,
   SExpr,
+  SLabeled,
+  SIf,
+  SDoWhile,
+  SWhile,
+  SFor,
+  SSwitch,
+  SDeclOnly,
   SAsm,
+  SLoop,
   SVarDecl,
+  SDefault,
+  SCase,
   SFunction
 };
 struct NullStmt {
@@ -26,19 +35,7 @@ struct OpaqueStmt {
       Stmt inner;
   };
   struct {
-      label_t label;
-    IdentRef labelName;
-  };
-  struct {
-      label_t location;
-  };
-  struct {
-      Expr test;
-    label_t T;
-    label_t F;
-  };
-  struct {
-      CType decl;
+      IdentRef location;
   };
   struct {
       Expr ret;
@@ -47,16 +44,53 @@ struct OpaqueStmt {
       Expr exprbody;
   };
   struct {
+      IdentRef label;
+    Stmt labledstmt;
+  };
+  struct {
+      Expr iftest;
+    Stmt ifbody, elsebody;
+  };
+  struct {
+      Expr dowhiletest;;
+    Stmt dowhilebody;
+  };
+  struct {
+      Expr whiletest;
+    Stmt whilebody;
+  };
+  struct {
+      Stmt forinit, forbody;
+    Expr forcond, forincl;
+  };
+  struct {
+      Expr swtest;
+    Stmt swbody;
+  };
+  struct {
+      CType decl;
+  };
+  struct {
       xstring asms;
+  };
+  struct {
+      Stmt loop;
   };
   struct {
       xvector<VarDecl> vars;
   };
   struct {
+      Stmt default_stmt;
+  };
+  struct {
+      Stmt case_stmt;
+    Expr case_expr;
+  };
+  struct {
       IdentRef funcname;
     CType functy;
     Stmt funcbody;
-    unsigned numLabels;
+    xvector<IdentRef> labels = xvector<IdentRef>::get();
   };
 };};
 struct HeadStmt {
@@ -73,46 +107,26 @@ struct {
     Stmt inner;
 
   };};
-struct LabelStmt {
-  enum StmtKind k=SLabel;
-  Location loc;
-  Stmt next;
-struct {
-  
-    label_t label;
-    IdentRef labelName;
-
-  };};
 struct GotoStmt {
   enum StmtKind k=SGoto;
   Location loc;
   Stmt next;
 struct {
   
-    label_t location;
+    IdentRef location;
 
   };};
-struct CondJumpStmt {
-  enum StmtKind k=SCondJump;
+struct ContinueStmt {
+  enum StmtKind k=SContinue;
   Location loc;
   Stmt next;
-struct {
-  
-    Expr test;
-    label_t T;
-    label_t F;
-
-  };};
-struct DeclOnlyStmt {
-  enum StmtKind k=SDeclOnly;
+ /* empty! */ 
+};struct BreakStmt {
+  enum StmtKind k=SBreak;
   Location loc;
   Stmt next;
-struct {
-  
-    CType decl;
-
-  };};
-struct ReturnStmt {
+ /* empty! */ 
+};struct ReturnStmt {
   enum StmtKind k=SReturn;
   Location loc;
   Stmt next;
@@ -130,6 +144,75 @@ struct {
     Expr exprbody;
 
   };};
+struct LabeledStmt {
+  enum StmtKind k=SLabeled;
+  Location loc;
+  Stmt next;
+struct {
+  
+    IdentRef label;
+    Stmt labledstmt;
+
+  };};
+struct IfStmt {
+  enum StmtKind k=SIf;
+  Location loc;
+  Stmt next;
+struct {
+  
+    Expr iftest;
+    Stmt ifbody, elsebody;
+
+  };};
+struct DoWhileStmt {
+  enum StmtKind k=SDoWhile;
+  Location loc;
+  Stmt next;
+struct {
+  
+    Expr dowhiletest;;
+    Stmt dowhilebody;
+
+  };};
+struct WhileStmt {
+  enum StmtKind k=SWhile;
+  Location loc;
+  Stmt next;
+struct {
+  
+    Expr whiletest;
+    Stmt whilebody;
+
+  };};
+struct ForStmt {
+  enum StmtKind k=SFor;
+  Location loc;
+  Stmt next;
+struct {
+  
+    Stmt forinit, forbody;
+    Expr forcond, forincl;
+
+  };};
+struct SwitchStmt {
+  enum StmtKind k=SSwitch;
+  Location loc;
+  Stmt next;
+struct {
+  
+    Expr swtest;
+    Stmt swbody;
+
+  };};
+struct DeclOnlyStmt {
+  enum StmtKind k=SDeclOnly;
+  Location loc;
+  Stmt next;
+struct {
+  
+    CType decl;
+
+  };};
 struct AsmStmt {
   enum StmtKind k=SAsm;
   Location loc;
@@ -137,6 +220,15 @@ struct AsmStmt {
 struct {
   
     xstring asms;
+
+  };};
+struct LoopStmt {
+  enum StmtKind k=SLoop;
+  Location loc;
+  Stmt next;
+struct {
+  
+    Stmt loop;
 
   };};
 struct VarDeclStmt {
@@ -148,6 +240,25 @@ struct {
     xvector<VarDecl> vars;
 
   };};
+struct DefaultStmt {
+  enum StmtKind k=SDefault;
+  Location loc;
+  Stmt next;
+struct {
+  
+    Stmt default_stmt;
+
+  };};
+struct CaseStmt {
+  enum StmtKind k=SCase;
+  Location loc;
+  Stmt next;
+struct {
+  
+    Stmt case_stmt;
+    Expr case_expr;
+
+  };};
 struct FunctionStmt {
   enum StmtKind k=SFunction;
   Location loc;
@@ -157,20 +268,29 @@ struct {
     IdentRef funcname;
     CType functy;
     Stmt funcbody;
-    unsigned numLabels;
+    xvector<IdentRef> labels = xvector<IdentRef>::get();
 
   };};
 static uint8_t stmt_size_map[] = {
     sizeof(HeadStmt),
     sizeof(CompoundStmt),
-    sizeof(LabelStmt),
     sizeof(GotoStmt),
-    sizeof(CondJumpStmt),
-    sizeof(DeclOnlyStmt),
+    sizeof(ContinueStmt),
+    sizeof(BreakStmt),
     sizeof(ReturnStmt),
     sizeof(ExprStmt),
+    sizeof(LabeledStmt),
+    sizeof(IfStmt),
+    sizeof(DoWhileStmt),
+    sizeof(WhileStmt),
+    sizeof(ForStmt),
+    sizeof(SwitchStmt),
+    sizeof(DeclOnlyStmt),
     sizeof(AsmStmt),
+    sizeof(LoopStmt),
     sizeof(VarDeclStmt),
+    sizeof(DefaultStmt),
+    sizeof(CaseStmt),
     sizeof(FunctionStmt)
 };
-static constexpr size_t stmt_max_size = std::max({sizeof(HeadStmt), sizeof(CompoundStmt), sizeof(LabelStmt), sizeof(GotoStmt), sizeof(CondJumpStmt), sizeof(DeclOnlyStmt), sizeof(ReturnStmt), sizeof(ExprStmt), sizeof(AsmStmt), sizeof(VarDeclStmt), sizeof(FunctionStmt)});
+static constexpr size_t stmt_max_size = std::max({sizeof(HeadStmt), sizeof(CompoundStmt), sizeof(GotoStmt), sizeof(ContinueStmt), sizeof(BreakStmt), sizeof(ReturnStmt), sizeof(ExprStmt), sizeof(LabeledStmt), sizeof(IfStmt), sizeof(DoWhileStmt), sizeof(WhileStmt), sizeof(ForStmt), sizeof(SwitchStmt), sizeof(DeclOnlyStmt), sizeof(AsmStmt), sizeof(LoopStmt), sizeof(VarDeclStmt), sizeof(DefaultStmt), sizeof(CaseStmt), sizeof(FunctionStmt)});

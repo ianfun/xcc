@@ -65,7 +65,7 @@ void TextDiagnosticPrinter::printSource(Location loc) {
             bool cond = line_chars == loc.col;
             if (cond)
                 OS.changeColor(raw_ostream::RED);
-            if (c == '\t' || isprint((unsigned char)c)) {
+            if (isprint((unsigned char)c)) {
                 OS << c;
             } else {
                 (OS << "<0x").write_hex((unsigned char)c) << '>';

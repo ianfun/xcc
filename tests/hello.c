@@ -1,11 +1,4 @@
-int next();
-int global_declaration();
-int token;
-
-void program() {
-    // get next token
-    next();
-    while (token > 0) {
-        global_declaration();
-    }
+int main(int argc, char **argv){
+	//printf("Hello world!\n");
+	//exit(1);
 }

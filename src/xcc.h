@@ -13,7 +13,6 @@
 #include <llvm/Support/Casting.h>
 #include <llvm/Support/CommandLine.h>
 #include <llvm/Support/raw_ostream.h>
-#include <llvm/Support/SaveAndRestore.h>
 #include <llvm/Support/ConvertUTF.h>
 #include <llvm/Support/FileSystem.h>
 #include <llvm/Support/Errno.h>
@@ -240,8 +239,7 @@ static const char* show(enum PostFixOp o){
 
 #define kw_start Kextern
 #define kw_end K_Generic
-typedef unsigned label_t;
-#define INVALID_LABEL ((label_t)-1)
+
 typedef uint16_t fileid_t;
 typedef uint16_t column_t;
 typedef uint32_t line_t;
@@ -499,11 +497,7 @@ struct Type_info {
 };
 
 static constexpr uint16_t INFO_USED = 2;
-struct Label_Info {
-  label_t idx;
-  uint8_t flags;
-  Label_Info(): flags{LBL_UNDEFINED} {}
-};
+
 struct Variable_Info {
     CType ty;
     uint16_t tags;

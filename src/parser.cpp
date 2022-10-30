@@ -1,6 +1,7 @@
 // TODO:     if (l.tok.tok == K_Static_assert) return consume_static_assert();
 // TODO:     zero extend: getelementptr
 // TODO:     JSON Dumper, Ast Console Dumper, SVG Dumper
+
 struct Parser : public DiagnosticHelper {
   Lexer l;
   struct Sema { // Semantics processor
@@ -8,30 +9,21 @@ struct Parser : public DiagnosticHelper {
           currentCase = nullptr;
     IdentRef pfunc = nullptr;           // current function name: `__func__`
     uint32_t currentAlign = 0;          // current align(bytes)
+    DenseMap<IdentRef, uint8_t> labels; // lable scope
     SmallVector<BScope, 8> scopes{};    // block scope
     size_t scopeTop = 0;
+    unsigned char ctx = CTX_NONE;
     bool type_error = false; // type error
   } sema;
-  struct JumpBuilder {
-    DenseMap<IdentRef, Label_Info> labels{}; // named labels
-    unsigned cur = 0;
-    label_t topBreak = INVALID_LABEL, topContinue = INVALID_LABEL;
-    unsigned createLabel() {
-      return cur++;
-    }
-    Label_Info &lookupLabel(IdentRef Name) {
-      return labels.insert(std::make_pair(Name, Label_Info())).first->second;
-    }
-  } jumper;
   IRGen &irgen;
-  Stmt InsertPt = nullptr;
   Parser(SourceMgr &SM, xcc_context &context, IRGen &irgen)
       : DiagnosticHelper{context}, l(SM, *this, context), irgen{irgen} {}
   template <typename T> auto getsizeof(T a) { return irgen.getsizeof(a); }
   template <typename T> auto getAlignof(T a) { return irgen.getAlignof(a); }
   Expr binop(Expr a, BinOp op, Expr b, CType ty) {
     // construct a binary operator
-    return ENEW(BinExpr){.loc = a->loc, .ty = ty, .lhs = a, .bop = op, .rhs = b};
+    return ENEW(BinExpr){
+        .loc = a->loc, .ty = ty, .lhs = a, .bop = op, .rhs = b};
   }
   Expr unary(Expr e, UnaryOp op, CType ty) {
     // construct a unary operator
@@ -59,46 +51,46 @@ struct Parser : public DiagnosticHelper {
     }
     return nullptr;
   }
-  label_t getLabel(IdentRef Name) {
-    Label_Info &ref = jumper.lookupLabel(Name);
-    switch (ref.flags) {
-    case LBL_UNDEFINED: // first label, undefined
-      ref.flags = LBL_FORWARD;
-      ref.idx = jumper.createLabel();
+  void getLabel(IdentRef name) {
+    uint8_t &ref =
+        sema.labels.insert(std::make_pair(name, LBL_UNDEFINED)).first->second;
+    switch (ref) {
+    case LBL_UNDEFINED:
+      ref = LBL_FORWARD;
       break;
-    case LBL_FORWARD: // case: stll use undefined label
+    case LBL_FORWARD:
       break;
-    case LBL_DECLARED: // defined, and used => ok!
-      ref.flags = LBL_OK;
+    case LBL_DECLARED:
+      ref = LBL_OK;
       break;
     default:
       llvm_unreachable("");
     }
-    return ref.idx;
   }
-  label_t putLable(IdentRef Name) {
-    Label_Info &ref = jumper.lookupLabel(Name);
-    switch (ref.flags) {
-    case LBL_UNDEFINED: // not used, declared
-      ref.flags = LBL_DECLARED;
-      ref.idx = jumper.createLabel();
+  void putLable(IdentRef name) {
+    uint8_t &ref =
+        sema.labels.insert(std::make_pair(name, LBL_UNDEFINED)).first->second;
+    switch (ref) {
+    case LBL_UNDEFINED:
+      ref = LBL_DECLARED;
       break;
-    case LBL_FORWARD: // used, and defined => ok!
-      ref.flags = LBL_OK;
+    case LBL_FORWARD:
+      ref = LBL_OK;
       break;
-    case LBL_DECLARED: // declared => declared twice!
-      type_error(getLoc(), "duplicate label: %I", Name);
+    case LBL_DECLARED:
+      type_error(getLoc(), "duplicate label: %I", name);
       break;
     default:
       llvm_unreachable("");
     }
-    return ref.idx;
   }
   CType gettagByName(IdentRef name, enum CTypeKind expected) {
     auto r = getTag(name);
     if (r) {
       if (r->k != expected)
-        return type_error(getLoc(), "%s %I is not a %s", expected, name, get_type_name_str(expected)), nullptr;
+        return type_error(getLoc(), "%s %I is not a %s", expected, name,
+                          get_type_name_str(expected)),
+               nullptr;
       return r;
     }
     return TNEW(IncompleteType){.align = 0, .tag = expected, .name = name};
@@ -107,7 +99,8 @@ struct Parser : public DiagnosticHelper {
     auto it = sema.scopes[sema.scopeTop].tags.insert(
         std::make_pair(ty->sname, Type_info{.ty = ty, .loc = loc}));
     if (it.second)
-      type_error(getLoc(), "%s %I aleady defined", get_type_name_str(k), ty->sname, ty);
+      error(getLoc(), "%s %I aleady defined", get_type_name_str(k), ty->sname,
+            ty);
   }
   void putenum(IdentRef name, uintmax_t val) {
     noEnum(name);
@@ -1320,20 +1313,23 @@ struct Parser : public DiagnosticHelper {
       return true;
     return type_error(getLoc(), "expression is not assignable"), false;
   }
-  void declaration() {
+  Stmt declaration() {
     // parse declaration or function definition
     CType base;
     Stmt result;
     Location loc = getLoc();
     sema.currentAlign = 0;
     if (l.tok.tok == TSemicolon)
-      return;
+      return context.getUniqueStmt();
     if (!(base = declaration_specifiers()))
-      return expect(loc, "declaration-specifiers");
+      return expect(loc, "declaration-specifiers"), nullptr;
     if (sema.currentAlign) {
       size_t m = getAlignof(base);
       if (sema.currentAlign < m) {
-        type_error(loc, "requested alignment is less than minimum alignment of %Z for type %T", m, base);
+        type_error(loc,
+                   "requested alignment is less than minimum alignment of %Z "
+                   "for type %T",
+                   m, base);
       } else {
         base->align = sema.currentAlign;
       }
@@ -1342,27 +1338,27 @@ struct Parser : public DiagnosticHelper {
       consume();
       if (base->align)
         warning(loc, "'_Alignas' can only used in variables");
-      return doinsertStmt(SNEW(DeclOnlyStmt) {.loc = loc, .decl = base});
+      return SNEW(DeclOnlyStmt){.loc = loc, .decl = base};
     }
     result = SNEW(VarDeclStmt){.loc = loc, .vars = xvector<VarDecl>::get()};
     for (;;) {
       Location loc2 = getLoc();
       NameTypePair st = declarator(base, Direct);
       if (!st.ty)
-        return;
+        return nullptr;
       if (l.tok.tok == TLcurlyBracket) {
         if (st.ty->k != TYFUNCTION)
-          return type_error(loc2, "unexpected function definition");
+          return type_error(loc2, "unexpected function definition"), nullptr;
         // function definition
         if (st.name->second.getToken() == PP_main) {
           if (irgen.options.libtrace) {
             if (st.ty->params.size() < 2) {
-              type_error("main should be at lease two arguments(argc, argv) when using libtrace.");              
+              type_error(loc, "main should be at lease two arguments(argc, argv) when using libtrace.");              
             }
           }
           if (st.ty->params.size()) {
             if (!(st.ty->params.front().ty->tags & TYINT)) {
-              type_error("first parameter of main is not 'int'");
+              type_error(loc2, "first parameter of main is not 'int'");
             }
             if (st.ty->params.size() >= 2) {
               if (!(
@@ -1370,7 +1366,7 @@ struct Parser : public DiagnosticHelper {
                   st.ty->params[1].ty->p->k == TYPOINTER && 
                   st.ty->params[1].ty->p->p->tags & (TYCHAR | TYUCHAR))
                 ) {
-                type_error("second parameter of main is not 'char**'");
+                type_error(loc2, "second parameter of main is not 'char**'");
               }
             }
           }
@@ -1378,25 +1374,27 @@ struct Parser : public DiagnosticHelper {
         putsymtype2(st.name, st.ty);
         sema.pfunc = st.name;
         if (!isTopLevel())
-          return parse_error(loc2, "function definition is not allowed here"), note("function can only declared in global scope");
-        Stmt res = SNEW(FunctionStmt){.loc = loc, .funcname = st.name, .functy = st.ty};
+          return parse_error(loc2, "function definition is not allowed here"),
+                 note("function can only declared in global scope"), nullptr;
+        Stmt res = SNEW(FunctionStmt){.loc = loc,
+                                      .funcname = st.name,
+                                      .functy = st.ty,
+                                      .labels = xvector<IdentRef>::get()};
         {
           CType oldRet = sema.currentfunctionRet;
           sema.currentfunctionRet = st.ty->ret;
-          res->funcbody = function_body(st.ty->params);
-          res->numLabels = jumper.cur;
-          jumper.cur = 0;
+          res->funcbody = function_body(st.ty->params, res->labels);
           sema.currentfunctionRet = oldRet;
         }
         if (!(res->funcbody))
-          return;
+          return nullptr;
         if (st.name->second.getToken() == PP_main) {
           // TODO
         }
-        return insertStmt(res);
+        return res;
       }
       noralizeType(st.ty);
-#if 0
+#if 0 && CC_DEBUG
       logtime();
       print_cdecl(st.name->getKey(), st.ty, llvm::errs(), true);
 #endif
@@ -1408,23 +1406,29 @@ struct Parser : public DiagnosticHelper {
         warning(loc2, "inline can only used in function declaration");
       if (!(st.ty->tags & TYEXTERN)) {
         if ((st.ty->tags & TYVOID) && !(st.ty->tags & TYTYPEDEF))
-          return type_error(loc2, "variable %I declared void", st.name);
+          return type_error(loc2, "variable %I declared void", st.name),
+                 nullptr;
         if (st.ty->k == TYINCOMPLETE)
-          return type_error(loc2, "variable %I has imcomplete type %T", st.name);
+          return type_error(loc2, "variable %I has imcomplete type %T",
+                            st.name),
+                 nullptr;
       }
       if (l.tok.tok == TAssign) {
         Expr init;
         if (st.ty->k == TYARRAY && st.ty->vla) {
-          return type_error(loc2, "variable length array may not be initialized");
+          return type_error(loc2,
+                            "variable length array may not be initialized"),
+                 nullptr;
         } else if (st.ty->k == TYFUNCTION)
-          return type_error(loc2, "function may not be initialized");
+          return type_error(loc2, "function may not be initialized"), nullptr;
         if (st.ty->tags & TYTYPEDEF)
-          return type_error(loc2, "'typedef' may not be initialized");
+          return type_error(loc2, "'typedef' may not be initialized"), nullptr;
         if (st.ty->tags & TYEXTERN) {
           type_error(loc2, "'extern' variables may not be initialized");
           if (!isTopLevel())
-            note(loc2, "place initializer after 'extern' declaration to fix this");
-          return;
+            note(loc2, "place initializer after 'extern' declaration to fix "
+                       "this\nint foo(){\n\textern int a;\n\ta = 0;");
+          return nullptr;
         }
         consume();
         {
@@ -1434,7 +1438,7 @@ struct Parser : public DiagnosticHelper {
           sema.currentInitTy = old;
         }
         if (!init)
-          return expect(loc2, "initializer-list");
+          return expect(loc2, "initializer-list"), nullptr;
         result->vars.back().init = init;
         if (isTopLevel() && !isConstant(init)) {
           type_error(loc2, "initializer element is not constant");
@@ -1446,7 +1450,8 @@ struct Parser : public DiagnosticHelper {
             type_error(
                 loc2,
                 "variable length array declaration not allowed at file scope");
-          else if (st.ty->hassize == false && !st.ty->vla && (st.ty->tag & TYEXTERN)) {
+          else if (st.ty->hassize == false && !st.ty->vla &&
+                   (st.ty->tag & TYEXTERN)) {
             if (isTopLevel()) {
               warning(loc2, "array %I assumed to have one element", st.name);
               st.ty->hassize = true, st.ty->arrsize = 1;
@@ -1463,7 +1468,7 @@ struct Parser : public DiagnosticHelper {
         break;
       }
     }
-    return doinsertStmt(result);
+    return result;
   }
   Expr cast_expression() {
     if (l.tok.tok == TLbracket) {
@@ -1787,27 +1792,40 @@ struct Parser : public DiagnosticHelper {
                      nullptr;
             info.tags |= INFO_USED;
             ty = context.clone(info.ty);
-            ty->tags &= ~(TYCONST | TYRESTRICT | TYVOLATILE | TYATOMIC | TYREGISTER | TYTHREAD_LOCAL | TYEXTERN | TYSTATIC | TYNORETURN | TYINLINE | TYPARAM);
+            // 6.3.2.1 Lvalues, arrays, and function designators
+            // If the lvalue has qualified type, the value has the unqualified
+            // version of the type of the lvalue; additionally, if the lvalue
+            // has atomic type, the value has the non-atomic version of the type
+            // of the lvalue; otherwise, the value has the type of the lvalue
+            ty->tags &= ~(TYCONST | TYRESTRICT | TYVOLATILE | TYATOMIC |
+                          TYREGISTER | TYTHREAD_LOCAL | TYEXTERN | TYSTATIC |
+                          TYNORETURN | TYINLINE | TYPARAM);
             ty->tags |= TYLVALUE;
             break;
           }
           auto ti = Table.enums.find(l.tok.s);
           if (ti != Table.enums.end())
-            return consume(), ENEW(IntLitExpr){.loc = loc, .ty = context.getInt(), .ival = ti->second};
+            return consume(), ENEW(IntLitExpr){.loc = loc,
+                                               .ty = context.getInt(),
+                                               .ival = ti->second};
         }
         if (!ty) {
           type_error(loc, "use of undeclared identifier %I", l.tok.s);
           // if (l.tok.s.size() > 2)
           //     fixName(l.tok.s);
-          consume();
           return nullptr;
         }
         switch (ty->k) {
         case TYFUNCTION:
-          result = unary(ENEW(VarExpr){.loc = loc, .ty = ty, .sval = l.tok.s}, AddressOf, TNEW(PointerType){.tags = TYLVALUE, .p = ty});
+          result =
+              unary(ENEW(VarExpr){.loc = loc, .ty = ty, .sval = l.tok.s},
+                    AddressOf, TNEW(PointerType){.tags = TYLVALUE, .p = ty});
           break;
         case TYARRAY:
-          result = ENEW(ArrToAddressExpr){.loc = loc, .ty = TNEW(PointerType){.tags = TYLVALUE, .p = ty->arrtype}, .arr3 = ENEW(VarExpr){.loc = loc, .ty = ty, .sval = l.tok.s}};
+          result = ENEW(ArrToAddressExpr){
+              .loc = loc,
+              .ty = TNEW(PointerType){.tags = TYLVALUE, .p = ty->arrtype},
+              .arr3 = ENEW(VarExpr){.loc = loc, .ty = ty, .sval = l.tok.s}};
           break;
         default:
           result = ENEW(VarExpr){.loc = loc, .ty = ty, .sval = l.tok.s};
@@ -1854,7 +1872,10 @@ struct Parser : public DiagnosticHelper {
           defaults = e;
         else if (compatible(tname, testty)) {
           if (result)
-            return type_error(loc,"more then one compatible types in Generic expression"), nullptr;
+            return type_error(
+                       loc,
+                       "more then one compatible types in Generic expression"),
+                   nullptr;
           result = e;
         }
         switch (l.tok.tok) {
@@ -1873,11 +1894,16 @@ struct Parser : public DiagnosticHelper {
         return result;
       if (defaults)
         return defaults;
-      return type_error(loc, "Generic expression(has type %T) not compatible with any generic association type", testty), nullptr;
+      return type_error(loc,
+                        "Generic expression(has type %T) not compatible with "
+                        "any generic association type",
+                        testty),
+             nullptr;
     } break;
     default:
-      return parse_error(loc, "unexpected token in primary_expression: %s\n", show(l.tok.tok)), consume(), nullptr;
-    
+      return parse_error(loc, "unexpected token in primary_expression: %s\n",
+                         show(l.tok.tok)),
+             nullptr;
     }
     return result;
   }
@@ -1941,16 +1967,28 @@ struct Parser : public DiagnosticHelper {
             goto CONTINUE;
           }
         }
-        return type_error(getLoc(), "struct/union %I has no member %I", result->ty->sname, l.tok.s), nullptr;
+        return type_error(getLoc(), "struct/union %I has no member %I",
+                          result->ty->sname, l.tok.s),
+               nullptr;
       CONTINUE:;
       } break;
       case TLbracket: // function call
       {
-        CType ty = (result->k == EUnary && result->uop == AddressOf) ? result->ty->p : ((result->ty->k == TYPOINTER) ? result->ty->p : result->ty);
+        CType ty =
+            (result->k == EUnary && result->uop == AddressOf)
+                ? result->ty->p
+                : ((result->ty->k == TYPOINTER) ? result->ty->p : result->ty);
         Expr f = result;
-        result = ENEW(CallExpr){.loc = result->loc, .ty = ty->ret, .callfunc = f, .callargs = xvector<Expr>::get()};
+        result = ENEW(CallExpr){.loc = result->loc,
+                                .ty = ty->ret,
+                                .callfunc = f,
+                                .callargs = xvector<Expr>::get()};
         if (ty->k != TYFUNCTION)
-          return type_error(getLoc(), "expect function or function pointer, but the expression has type %T",ty), nullptr;
+          return type_error(getLoc(),
+                            "expect function or function pointer, but the "
+                            "expression has type %T",
+                            ty),
+                 nullptr;
         consume();
         if (l.tok.tok == TRbracket)
           consume();
@@ -1992,7 +2030,9 @@ struct Parser : public DiagnosticHelper {
           }
         } else {
           if (params.size() != result->callargs.size())
-            return type_error(getLoc(), "expect %z parameters, %z arguments provided", (size_t)params.size(), (size_t)result->callargs.size()),
+            return type_error(
+                       getLoc(), "expect %z parameters, %z arguments provided",
+                       (size_t)params.size(), (size_t)result->callargs.size()),
                    nullptr;
           for (size_t j = 0; j < result->callargs.size(); ++j) {
             Expr e = castto(result->callargs[j], params[j].ty);
@@ -2006,7 +2046,8 @@ struct Parser : public DiagnosticHelper {
       {
         Expr rhs;
         if (result->ty->k != TYPOINTER)
-          return type_error(getLoc(), "array subscript is not a pointer"), nullptr;
+          return type_error(getLoc(), "array subscript is not a pointer"),
+                 nullptr;
         consume();
         if (!(rhs = expression()))
           return nullptr;
@@ -2025,12 +2066,14 @@ struct Parser : public DiagnosticHelper {
     }
   }
   void tryBreak() {
-    if (jumper.topBreak == INVALID_LABEL)
-      type_error(getLoc(), "%s", "connot break: no outer for/while/switch/do-while");
+    if (!(sema.ctx & CTX_HAS_BREAK))
+      type_error(getLoc(), "%s",
+                 "connot break: no outer for/while/switch/do-while");
   }
   void tryContinue() {
-    if (jumper.topContinue == INVALID_LABEL)
-      type_error(getLoc(), "%s", "connot continue: no outer for/while/do-while");
+    if (!(sema.ctx & CTX_HAS_CONTINUE))
+      type_error(getLoc(), "%s",
+                 "connot continue: no outer for/while/do-while");
   }
   Expr Bexpression() {
     Expr e;
@@ -2047,53 +2090,21 @@ struct Parser : public DiagnosticHelper {
     consume();
     return e;
   }
-  void setInsertPoint(Stmt I) {
-    InsertPt = I;
-  }
-  Stmt getInsertPoint() {
-    return InsertPt;
-  }
-  void jumpIfTrue(Expr test, label_t dst, Location loc = Location()) {
-    label_t thenBB = jumper.createLabel();
-    doinsertStmt(SNEW(CondJumpStmt) {.loc = loc, .test = test, .T = dst, .F = thenBB});
-    return insertLabel(thenBB, loc);
-  }
-  void jumpIfFalse(Expr test, label_t dst, Location loc = Location()) {
-    label_t thenBB = jumper.createLabel();
-    doinsertStmt(SNEW(CondJumpStmt) {.loc = loc, .test = test, .T = thenBB, .F = dst});
-    return insertLabel(thenBB, loc);
-  }
-  void insertBr(label_t L, Location loc = Location()) {
-    return doinsertStmt(SNEW(GotoStmt) {.loc = loc, .location = L});
-  }
-  void insertLabel(label_t L, Location loc = Location()) {
-    return doinsertStmt(SNEW(LabelStmt) {.loc = loc, .label = L, .labelName = nullptr});
-  }
-  void doinsertStmt(Stmt s) {
-    if (s) {
-      InsertPt->next = s;
-      InsertPt = s;
-    }
-  }
-  void insertStmt(Stmt s) {
-    if (s) {
-      doinsertStmt(s);
-    }
-  }
-  void insertStmtEnd() {
-    InsertPt->next = nullptr;
-  }
-  void statement() {
+  Stmt statement() {
     // parse a statement
+    Stmt result;
     Location loc = getLoc();
     switch (l.tok.tok) {
     case TSemicolon:
-      return consume();
+      consume();
+      return context.getUniqueStmt();
     case K__asm__:
-      return parse_asm(), checkSemicolon();
+      result = parse_asm();
+      checkSemicolon();
+      return result;
     case TLcurlyBracket:
       return compound_statement();
-    /*case Kcase: {
+    case Kcase: {
       Expr e, c;
       Stmt body;
       consume();
@@ -2117,29 +2128,26 @@ struct Parser : public DiagnosticHelper {
       if (!(s = statement()))
         return nullptr;
       return SNEW(DefaultStmt){.loc = loc, .default_stmt = s};
-    }*/
-    case Kgoto: 
-    {
+    }
+    case Kgoto: {
+      IdentRef location;
       consume();
       if (l.tok.tok != TIdentifier)
-        return expect(loc, "identifier");
-      IdentRef Name = l.tok.s;
-      label_t L = getLabel(Name);
-      consume();
-      checkSemicolon();
-      return doinsertStmt(SNEW(GotoStmt) {.loc = loc, .location = L});
+        return expect(loc, "identifier"), nullptr;
+      return location = l.tok.s, consume(), checkSemicolon(),
+             getLabel(location),
+             SNEW(GotoStmt){.loc = loc, .location = location};
     }
     case Kcontinue:
       tryContinue();
       consume();
       checkSemicolon();
-      return doinsertStmt(SNEW(GotoStmt){.loc = loc, .location = jumper.topContinue});
-    case Kbreak: 
-    {
+      return SNEW(ContinueStmt){.loc = loc};
+    case Kbreak: {
       tryBreak();
       consume();
       checkSemicolon();
-      return doinsertStmt(SNEW(GotoStmt){.loc = loc, .location = jumper.topBreak});
+      return SNEW(BreakStmt){.loc = loc};
     }
     case Kreturn: {
       Expr e, r;
@@ -2147,155 +2155,209 @@ struct Parser : public DiagnosticHelper {
       if (l.tok.tok == TSemicolon) {
         consume();
         if (sema.currentfunctionRet->tags & TYVOID)
-          return doinsertStmt(SNEW(ReturnStmt){.loc = loc});
-        return warning(loc, "function should not return void in a function return %T", sema.currentfunctionRet),
-               note("%s", "A return statement without an expression shall only appear in a function whose return type is void"),
-               doinsertStmt(SNEW(ReturnStmt){.loc = loc, .ret = ENEW(DefaultExpr){.loc = loc, .ty = sema.currentfunctionRet}});
+          return SNEW(ReturnStmt){.loc = loc};
+        return warning(
+                   loc,
+                   "function should not return void in a function return %T",
+                   sema.currentfunctionRet),
+               note("%s", "A return statement without an expression shall only "
+                          "appear in a function whose return type is void"),
+               SNEW(ReturnStmt){.loc = loc,
+                                .ret = ENEW(DefaultExpr){
+                                    .loc = loc, .ty = sema.currentfunctionRet}};
       }
       if (!(e = expression()))
-        return;
+        return nullptr;
       checkSemicolon();
       if (sema.currentfunctionRet->tags & TYVOID)
-        return warning(loc,"function should return a value in a function return void"),
-               note("A return statement with an expression shall not appear in a function whose return type is void"),
-               doinsertStmt(SNEW(ReturnStmt){.loc = loc});
+        return warning(
+                   loc,
+                   "function should return a value in a function return void"),
+               note("A return statement with an expression shall not appear in "
+                    "a function whose return type is void"),
+               SNEW(ReturnStmt){.loc = loc};
       // warn_if_bad_cast(e, sema.currentfunctionRet, " returning '" & $e->ty &
       // "' from a function with return type '" & $sema.currentfunctionRet &
       // "'")
       if (!(r = castto(e, sema.currentfunctionRet)))
-        return;
-      return doinsertStmt(SNEW(ReturnStmt){.loc = loc, .ret = r});
+        return nullptr;
+      return SNEW(ReturnStmt){.loc = loc, .ret = r};
     }
     case Kwhile:
     case Kswitch: {
+      Stmt body;
       Expr test;
       Token tok = l.tok.tok;
+      auto oldCtx = sema.ctx;
       if (!(test = Bexpression()))
-        return;
+        return nullptr;
       if (tok == Kswitch) {
         integer_promotions(test);
-        statement();
-        llvm_unreachable("");
-        return;
+        auto oldcase = sema.currentCase;
+        sema.currentCase = test->ty;
+        sema.ctx = oldCtx | CTX_HAS_BREAK;
+        if (!(body = statement()))
+          return nullptr;
+        sema.currentCase = oldcase;
+        sema.ctx = oldCtx;
+        return SNEW(SwitchStmt){.loc = loc, .swtest = test, .swbody = body};
       }
-      label_t BODY = jumper.createLabel();
-      label_t CMP = jumper.createLabel();
-      label_t LEAVE = jumper.createLabel();
-      llvm::SaveAndRestore<label_t> saved_c(jumper.topContinue, CMP);
-      llvm::SaveAndRestore<label_t> saved_b(jumper.topBreak, LEAVE);
-      insertBr(CMP);
-      insertLabel(BODY);
-      statement();
-      insertLabel(CMP, loc);
-      doinsertStmt(SNEW(CondJumpStmt) {.loc = loc, .test = test, .T = BODY, .F = LEAVE});
-      return insertLabel(LEAVE, loc);
+      sema.ctx = oldCtx | CTX_HAS_BREAK | CTX_HAS_CONTINUE;
+      if (!(body = statement()))
+        return nullptr;
+      sema.ctx = oldCtx;
+      auto i = l.evaluator.withQuiet(test);
+      if (!l.evaluator.error) {
+        if (i == 0) {
+          dbgprint("lower: while statement => empty statement\n");
+          return context.getUniqueStmt();
+        }
+        dbgprint("lower: while statement => loop statement\n");
+        return SNEW(LoopStmt){.loc = loc, .loop = body};
+      }
+      l.evaluator.error = false;
+      return SNEW(WhileStmt){
+          .loc = loc, .whiletest = test, .whilebody = body};
     }
-    case Kfor: 
-    {
+    case Kfor: {
+      // this are valid in C
+      // for(int a;;)
+      // {
+      //    int a;
+      // }
+      Stmt init = nullptr, body;
       Expr cond = nullptr, forincl = nullptr;
-      consume();
-      enterBlock();
+      consume(), enterBlock();
       if (l.tok.tok != TLbracket)
-        return expectLB(getLoc());
+        return expectLB(getLoc()), nullptr;
       consume();
+      // init-clause may be an expression or a declaration
       if (istype(l.tok.tok)) {
-        declaration();
+        if (!(init = declaration()))
+          return expect(loc, "declaration"), nullptr;
       } else {
         if (l.tok.tok != TSemicolon) {
           Expr ex = expression();
           if (!ex)
-            return;
-          doinsertStmt(SNEW(ExprStmt) {.loc = ex->loc, .exprbody = ex});
+            return nullptr;
+          init = SNEW(ExprStmt){.loc = ex->loc, .exprbody = ex};
           if (l.tok.tok != TSemicolon)
-            expect(getLoc(), "';'");
+            return expect(getLoc(), "';'"), nullptr;
         }
         consume();
       }
+      //  cond-expression
       if (l.tok.tok != TSemicolon) {
         if (!(cond = expression()))
-          return;
+          return nullptr;
         if (!cond->ty->isScalar())
           type_error(loc, "expect scalar");
         if (l.tok.tok != TSemicolon)
-          expect(loc, "';'");
+          return expect(loc, "';'"), nullptr;
       }
       consume();
+      // incl-expression
       if (l.tok.tok != TRbracket) {
         if (!(forincl = expression()))
-          return;
+          return nullptr;
         if (l.tok.tok != TRbracket)
-          expectRB(loc);
+          return expectRB(loc), nullptr;
       }
       consume();
-      label_t CMP = jumper.createLabel();
-      label_t LEAVE = jumper.createLabel();
-      llvm::SaveAndRestore<label_t> saved_b(jumper.topBreak, LEAVE);
-      llvm::SaveAndRestore<label_t> saved_c(jumper.topContinue, CMP);
-      insertLabel(CMP, loc);
-      if (cond)
-        jumpIfFalse(cond, LEAVE, loc);
-      if (forincl)
-        doinsertStmt(SNEW(ExprStmt) {.loc = forincl->loc, .exprbody = forincl});
-      statement();
-      insertBr(CMP, loc);
-      insertLabel(LEAVE, loc);
-      leaveBlock();
-      return;
+      {
+        auto oldCtx = sema.ctx;
+        sema.ctx = oldCtx | CTX_HAS_BREAK | CTX_HAS_CONTINUE;
+        if (!(body = statement()))
+          return nullptr;
+        sema.ctx = oldCtx;
+        leaveBlock();
+        return SNEW(ForStmt){.loc = loc,
+                             .forinit = init,
+                             .forbody = body,
+                             .forcond = cond,
+                             .forincl = forincl};
+      }
     }
-    case Kdo: 
-    {
+    case Kdo: {
       Expr test;
-      label_t CMP = jumper.createLabel();
-      label_t LEAVE = jumper.createLabel();
-      llvm::SaveAndRestore<label_t> saved_b(jumper.topBreak, LEAVE);
-      llvm::SaveAndRestore<label_t> saved_c(jumper.topContinue, CMP);
-      insertLabel(CMP, loc);
+      Stmt body;
+
       consume();
-      statement();
+      auto oldCtx = sema.ctx;
+      sema.ctx = oldCtx | CTX_HAS_BREAK | CTX_HAS_CONTINUE;
+      sema.ctx = oldCtx;
+      if (!(body = statement()))
+        return nullptr;
       if (l.tok.tok != Kwhile)
-        return expect(loc, "'while'");
+        return expect(loc, "'while'"), nullptr;
       consume();
       if (l.tok.tok != TLbracket)
-        return expectLB(loc);
+        return expectLB(loc), nullptr;
       consume();
       if (!(test = Bexpression()))
-        return;
+        return nullptr;
       checkSemicolon();
-      jumpIfTrue(test, CMP, loc);
-      insertLabel(LEAVE, loc);
+
+      // do stmt while (0); => stmt
+      // do stmt while (1); => loop stmt
+      auto i = l.evaluator.withQuiet(test);
+      if (!l.evaluator.error) {
+        if (!i) {
+          dbgprint("lower: do-while statement => body\n");
+          return body;
+        }
+        dbgprint("lower: do-while statement => loop statement\n");
+        return SNEW(LoopStmt){.loc = loc, .loop = body};
+      }
+      l.evaluator.error = false;
+      return SNEW(DoWhileStmt){
+          .loc = loc, .dowhiletest = test, .dowhilebody = body};
     }
-    case Kif: 
-    {
-      label_t IF_END = jumper.createLabel();
+    case Kif: {
+      Stmt body, elsebody = nullptr;
       Expr test;
       if (!(test = Bexpression()))
-        return;
-      jumpIfFalse(test, IF_END, loc);
-      statement();
+        return nullptr;
+      if (!(body = statement()))
+        return nullptr;
       if (l.tok.tok == Kelse) {
-        label_t END = jumper.createLabel();
         consume();
-        insertBr(END, loc);
-        insertLabel(IF_END, loc);
-        statement();
-        insertLabel(END, loc);
-        return;
+        if (!(elsebody = statement()))
+          return nullptr;
       }
-      return insertLabel(IF_END, loc);
+      auto i = l.evaluator.withQuiet(test);
+      if (!l.evaluator.error) {
+        if (i == 0) {
+          if (elsebody) {
+            // if (0) else stmt2 stmt => stmt2
+            dbgprint("lower: if statement => else body");
+            return elsebody;
+          }
+          dbgprint("lower: if statement => empty statement");
+          return context.getUniqueStmt();
+        } else {
+          dbgprint("lower: if statement => body");
+          return body;
+        }
+      }
+      l.evaluator.error = false;
+      return SNEW(IfStmt){
+          .loc = loc, .iftest = test, .ifbody = body, .elsebody = elsebody};
     }
     case Kelse:
-      return parse_error("'else' without a previous 'if'"), consume();
-    case TIdentifier: 
-    {
+      return parse_error("'else' without a previous 'if'"), nullptr;
+    case TIdentifier: {
       TokenV tok = l.tok;
       consume();
       if (l.tok.tok == TColon) { // labeled-statement
+        Stmt s;
         consume();
-        label_t L = putLable(tok.s);
-        doinsertStmt(SNEW(LabelStmt) {.loc = loc, .label = L, .labelName = tok.s});
-        return statement();
-      }
-      l.tokenq.push_back(l.tok), l.tok = tok;
+        if (!(s = statement()))
+          return nullptr;
+        putLable(tok.s);
+        return SNEW(LabeledStmt){.loc = loc, .label = tok.s, .labledstmt = s};
+      } else
+        l.tokenq.push_back(l.tok), l.tok = tok;
       // goto default!
     }
     default:
@@ -2303,9 +2365,10 @@ struct Parser : public DiagnosticHelper {
     }
     Expr e = expression();
     if (!e)
-      return;
+      return nullptr;
     checkSemicolon();
-    return doinsertStmt(SNEW(ExprStmt){.loc = loc, .exprbody = e});
+
+    return SNEW(ExprStmt){.loc = loc, .exprbody = e};
   }
   Expr multiplicative_expression() {
     Expr r, result = cast_expression();
@@ -2643,16 +2706,20 @@ struct Parser : public DiagnosticHelper {
       return result;
   }
   Stmt translation_unit() {
-    assert(!getInsertPoint());
-    Stmt head = SNEW(HeadStmt) {.loc = getLoc()};
-    setInsertPoint(head);
-    while (l.tok.tok != TEOF) {
-      if (l.tok.tok == Kasm)
-        parse_asm(), checkSemicolon();
-      else 
-        declaration();
+    Stmt head = SNEW(HeadStmt) {.loc = getLoc()}, ptr = head;
+
+    for (; l.tok.tok != TEOF; ptr = ptr->next) {
+      Stmt s;
+      if (l.tok.tok == Kasm) {
+        s = parse_asm();
+        checkSemicolon();
+      } else {
+        s = declaration();
+      }
+      if (!(ptr->next = s))
+        break;
     }
-    insertStmtEnd();
+    ptr->next = nullptr;
     return head;
   }
   Stmt run() {
@@ -2664,47 +2731,125 @@ struct Parser : public DiagnosticHelper {
     leaveBlock2();
     return ast;
   }
-  void compound_statement() {
+  Stmt compound_statement() {
     NullStmt nullstmt;
     // parse mant statements
-    Stmt head = SNEW(CompoundStmt) {.loc = getLoc(), .inner = reinterpret_cast<Stmt>(&nullstmt)};
-    Stmt old = getInsertPoint();
-    setInsertPoint(head->inner);
+    Stmt head = SNEW(CompoundStmt){.loc = getLoc(), .inner = reinterpret_cast<Stmt>(&nullstmt)}, ptr = head->inner;
     consume();
     enterBlock();
-    while (l.tok.tok != TRcurlyBracket) {
-      if (istype(l.tok.tok)) 
-        declaration();
-      else
-        statement();
+    for (; l.tok.tok != TRcurlyBracket;) {
+      Stmt s;
+      if (!(s = istype(l.tok.tok) ? declaration() : statement()))
+        return leaveBlock(), nullptr;
+      if (s != context.getUniqueStmt()) 
+        ptr->next = s, ptr = ptr->next;
     }
-    insertStmtEnd();
-    setInsertPoint(old);
+    ptr->next = nullptr;
     head->inner = head->inner->next;
     leaveBlock();
     consume();
+    return head;
   }
-  Stmt function_body(xvector<NameTypePair> &params) {
-    Stmt head = SNEW(HeadStmt) {.loc = getLoc()}; 
-    Stmt old = getInsertPoint();
-    setInsertPoint(head);
+  static ReachableKind maybe(ReachableKind o) {
+    return o == Unreachable ? MayReachable : o;
+  }
+  ReachableKind reachable(Stmt s, ReachableKind o) {
+    assert(o != Unreachable);
+    switch (s->k) {
+        case SFunction:
+            return reachable(s->funcbody, o);
+        case SLoop:
+            return reachable(s->loop, o);
+        case SDoWhile:
+            return reachable(s->whilebody, o);
+        case SWhile:
+            return maybe(reachable(s->whilebody, o));
+        case SSwitch:
+            return maybe(reachable(s->whilebody, o));
+        case SFor:
+            return maybe(reachable(s->forbody, o));
+        case SHead:
+        case SCompound:
+        {
+            Stmt ptr = s->k == SHead ? s->next : s->inner;
+            for (;ptr;ptr = ptr->next) 
+                if ((o = reachable(ptr, o)) == Unreachable)
+                    break;
+            if (o == Unreachable && ptr && ptr->next) {
+                warning(ptr->loc, "unreachable code after this statement");
+                ptr->next = nullptr;
+            }
+            return o;
+        }
+        case SDefault:
+            return reachable(s->default_stmt, Reachable);
+        case SCase:
+            return reachable(s->case_stmt, Reachable);
+        case SGoto: 
+        case SReturn: 
+        case SBreak: 
+        case SContinue:
+            return Unreachable;
+        case SLabeled:
+            return reachable(s->labledstmt, Reachable);
+        case SIf:
+            if (!s->elsebody) {
+                auto ifs = reachable(s->ifbody, o);
+                if (ifs == Unreachable)
+                  return MayReachable;
+                return ifs;
+            } else {
+                auto ifs = reachable(s->ifbody, o);
+                auto elses = reachable(s->elsebody, o);
+                if (ifs == Unreachable && elses == Unreachable)
+                    return Unreachable;
+                if (ifs == Reachable && elses == Reachable)
+                    return Reachable;
+                return MayReachable;
+            }
+        case SExpr:
+            if (s->exprbody->k == ECall && (s->exprbody->callfunc->ty->tags & TYNORETURN)) {
+                return Unreachable;
+            }
+            return o;
+        case SAsm:
+        case SVarDecl:
+        case SDeclOnly:
+            return o;
+    }
+    llvm_unreachable("");
+}
+static bool isATerminator(StmtKind k) {
+    switch (k) {
+        case SReturn:
+        case SBreak:
+        case SContinue:
+        case SGoto:
+            return true;
+        default: 
+            return false;
+    }
+}
+  Stmt function_body(xvector<NameTypePair> &params, xvector<IdentRef> &labels) {
+    Stmt head = SNEW(HeadStmt) {.loc = getLoc()}, ptr = head; 
     Location loc = getLoc();
     consume();
     enterBlock();
-    assert(jumper.cur == 0 && "labels scope should be empty in start of function");
+    assert(sema.labels.empty() &&
+           "labels scope should be empty in start of function");
     for (const auto &it : params)
       putsymtype(it.name, it.ty);
-    while (l.tok.tok != TRcurlyBracket) {
-      if (istype(l.tok.tok))
-        declaration();
-      else
-        statement();
+    for (; l.tok.tok != TRcurlyBracket;) {
+      Stmt s;
+      if (!(s = istype(l.tok.tok) ? declaration() : statement()))
+        return leaveBlock(), nullptr;
+      if (s != context.getUniqueStmt())
+        ptr->next = s, ptr = ptr->next;
     }
-    insertStmtEnd();
-    setInsertPoint(old);
-    for (const auto &it: jumper.labels) {
-      IdentRef name = it.first;
-      switch (it.second.flags) {
+    ptr->next = nullptr;
+    for (auto it = sema.labels.begin(); it != sema.labels.end(); ++it) {
+      IdentRef name = it->first;
+      switch (it->second) {
       case LBL_FORWARD:
         type_error(loc, "use of undeclared label: %I", name);
         break;
@@ -2713,12 +2858,12 @@ struct Parser : public DiagnosticHelper {
         break;
       case LBL_OK:
         dbgprint("push label into function: %s\n", name->getKey().data());
-        break;
+        labels.push_back(name);
       default:
         llvm_unreachable("");
       }
     }
-    /*auto r = reachable(head, Reachable);
+    auto r = reachable(head, Reachable);
     if (r != Unreachable) {
       Location locend = getLoc();
       if (sema.currentfunctionRet->tags & TYVOID) {
@@ -2735,8 +2880,9 @@ struct Parser : public DiagnosticHelper {
         }
       }
       ptr->next->next = nullptr;
-    }*/
+    }
     // TODO: add return
+    sema.labels.clear();
     leaveBlock();
     consume();
     return head;
