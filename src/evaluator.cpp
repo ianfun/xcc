@@ -125,7 +125,7 @@ uintmax_t Evaluator::evali(Expr e) {
                     return eval_error();
             }
         case EIntLit:
-            return e->ival;
+            return e->ival.getLimitedValue();
         case EFloatLit:
             if (verbose)
                 pp_error("floating constant in constant-expression");

@@ -37,10 +37,10 @@ struct OpaqueExpr {
       enum UnaryOp uop;
     };
     struct {
-      uintmax_t ival;
+      APInt ival;
     };
     struct {
-      double fval;
+      APFloat fval;
     };
     struct {
       Expr voidexpr;
@@ -109,7 +109,7 @@ struct IntLitExpr {
   Location loc;
   CType ty;
 struct {
-      uintmax_t ival;
+      APInt ival;
 
   };};
 struct FloatLitExpr {
@@ -117,7 +117,7 @@ struct FloatLitExpr {
   Location loc;
   CType ty;
 struct {
-      double fval;
+      APFloat fval;
 
   };};
 struct VoidExpr {

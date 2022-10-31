@@ -13,19 +13,46 @@ enum CTypeKind: uint8_t {
 struct OpaqueCType {
 	auto isSigned(CType ty) {
 	    // `_Bool` is not signed
-	    return tags & (TYINT8 | TYINT16 | TYINT16 | TYINT32 | TYINT64);
+	    return tags & (TYINT8 | TYINT16 | TYINT16 | TYINT32 | TYINT64 | TYINT128);
 	}
 	bool isSigned() const {
 	    return k == TYPRIM && (tags & (
 	            TYINT8 | TYINT16 | TYINT32 | TYINT64 | 
 	            TYUINT8 | TYUINT16 | TYUINT32 | TYUINT64 | 
-	            TYBOOL
+	            TYUINT128 | TYBOOL
 	        ));
 	}
 	bool isScalar() const {
 	    return k == TYPOINTER ||
 	    (k == TYPRIM && !(tags & TYVOID));
 	}
+unsigned getBitWidth() const {
+    if (tags & TYINT8)
+        return 8;
+    if (tags & TYUINT8)
+        return 8;
+    if (tags & TYINT16)
+        return 16;
+    if (tags & TYUINT16)
+        return 16;
+    if (tags & TYINT32)
+        return 32;
+    if (tags & TYUINT32)
+        return 32;
+    if (tags & TYINT64)
+        return 64;
+    if (tags & TYUINT64)
+        return 64;
+    if (tags & TYINT128)
+        return 128;
+    if (tags & TYUINT128)
+        return 128;
+    if (tags & TYDOUBLE)
+        return 64;
+    if (tags & TYFLOAT)
+        return 32;
+    llvm_unreachable("getting bitWidth in no floating type or integer type");
+}
   CTypeKind k;
   uint32_t align, tags;
   union {

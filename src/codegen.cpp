@@ -52,6 +52,7 @@ IRGen(xcc_context &context, SourceMgr &SM, LLVMContext &ctx, const Options &opti
     auto i32 = llvm::Type::getInt32Ty(ctx);
     types[x32] = i32;
     types[x64] = llvm::Type::getInt64Ty(ctx);
+    types[x128] = llvm::Type::getInt128Ty(ctx);
     types[xfloat] = llvm::Type::getFloatTy(ctx);
     types[xdouble] = llvm::Type::getDoubleTy(ctx);
 
@@ -391,15 +392,17 @@ void addModule(StringRef source_file, StringRef ModuleID = "main") {
         lexBlocks.push_back(D().createCompileUnit(llvm::dwarf::DW_LANG_C99, file, CC_VERSION_FULL, false, "", 0));
         ditypes = new DIType[(size_t)TypeIndexHigh];
         ditypes[voidty] = nullptr;
-        ditypes[i1ty] = D().createBasicType("_Bool", getSizeInBits(types[x1]), llvm::dwarf::DW_ATE_boolean);
-        ditypes[i8ty] = D().createBasicType("char", getSizeInBits(types[x8]), llvm::dwarf::DW_ATE_signed_char);
-        ditypes[u8ty] = D().createBasicType("unsigned char", getSizeInBits(types[x8]), llvm::dwarf::DW_ATE_unsigned_char);
-        ditypes[i16ty] = D().createBasicType("short", getSizeInBits(types[x16]), llvm::dwarf::DW_ATE_signed);
-        ditypes[u16ty] = D().createBasicType("unsigned short", getSizeInBits(types[x16]), llvm::dwarf::DW_ATE_unsigned);
-        ditypes[i32ty] = D().createBasicType("int", getSizeInBits(types[x32]), llvm::dwarf::DW_ATE_signed);
-        ditypes[u32ty] = D().createBasicType("unsigned", getSizeInBits(types[x32]), llvm::dwarf::DW_ATE_unsigned);
-        ditypes[i64ty] = D().createBasicType("long long", getSizeInBits(types[x64]), llvm::dwarf::DW_ATE_signed);
-        ditypes[u64ty] = D().createBasicType("unsigned long long", getSizeInBits(types[x64]), llvm::dwarf::DW_ATE_unsigned);
+        ditypes[i1ty] = D().createBasicType("_Bool", 1, llvm::dwarf::DW_ATE_boolean);
+        ditypes[i8ty] = D().createBasicType("char", 8, llvm::dwarf::DW_ATE_signed_char);
+        ditypes[u8ty] = D().createBasicType("unsigned char", 8, llvm::dwarf::DW_ATE_unsigned_char);
+        ditypes[i16ty] = D().createBasicType("short", 16, llvm::dwarf::DW_ATE_signed);
+        ditypes[u16ty] = D().createBasicType("unsigned short", 16, llvm::dwarf::DW_ATE_unsigned);
+        ditypes[i32ty] = D().createBasicType("int", 32, llvm::dwarf::DW_ATE_signed);
+        ditypes[u32ty] = D().createBasicType("unsigned", 32, llvm::dwarf::DW_ATE_unsigned);
+        ditypes[i64ty] = D().createBasicType("long long", 64, llvm::dwarf::DW_ATE_signed);
+        ditypes[u64ty] = D().createBasicType("unsigned long long", 64, llvm::dwarf::DW_ATE_unsigned);
+        ditypes[i128ty] = D().createBasicType("__int128", 128, llvm::dwarf::DW_ATE_unsigned);
+        ditypes[u128ty] = D().createBasicType("__uint128", 128, llvm::dwarf::DW_ATE_unsigned);
         ditypes[floatty] = D().createBasicType("float", getSizeInBits(types[xfloat]), llvm::dwarf::DW_ATE_decimal_float);
         ditypes[doublety] = D().createBasicType("double", getSizeInBits(types[xdouble]), llvm::dwarf::DW_ATE_decimal_float);
         ditypes[ptrty] = D().createPointerType(nullptr, layout->getPointerTypeSizeInBits(types[xptr]), 0, llvm::None, "void*");
@@ -1050,7 +1053,7 @@ LLVM_NODISCARD Value gen(Expr e) {
             }
         }
         case EIntLit:
-           return llvm::ConstantInt::get(types[getNoSignTypeIndex(e->ty->tags)], e->ival);
+           return llvm::ConstantInt::get(cast<llvm::IntegerType>(types[getNoSignTypeIndex(e->ty->tags)]), e->ival);
         case EFloatLit:
           return llvm::ConstantFP::get((e->ty->tags & TYDOUBLE) ? types[xdouble] : types[xfloat], e->fval);
         case EVoid:

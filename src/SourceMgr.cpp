@@ -23,6 +23,7 @@ enum StreamType: uint8_t {
 };
 
 struct Stream /*FileStream*/ {
+    // null terminated file name
     const char *name; // maybe any of <stdin>, <built-in>, <string>, ../x.c, /x.c, ~/x.c
     uint32_t line = 1, column = 1;
     enum StreamType k;

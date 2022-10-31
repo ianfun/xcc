@@ -99,6 +99,8 @@ static void logtime() {
       hStderr = GetStdHandle(STD_ERROR_HANDLE);
 #endif
 
+using llvm::APInt;
+using llvm::APFloat;
 using llvm::GlobalValue;
 using llvm::sys::ProcessInfo;
 using llvm::isa;
@@ -300,6 +302,7 @@ enum TypeIndex {
     i16ty, u16ty,
     i32ty, u32ty,
     i64ty, u64ty,
+    i128ty, u128ty,
     floatty, doublety,
     ptrty,
     TypeIndexHigh
@@ -311,6 +314,7 @@ enum NoSignTypeIndex {
     x16,
     x32,
     x64,
+    x128,
     xfloat,
     xdouble,
     xptr,
@@ -335,6 +339,10 @@ static TypeIndex getTypeIndex(uint32_t tags) {
         return i64ty;
     if (tags & TYUINT64)
         return u64ty;
+    if (tags & TYINT128)
+        return i128ty;
+    if (tags & TYUINT128)
+        return u128ty;
     if (tags & TYDOUBLE)
         return doublety;
     if (tags & TYFLOAT)
@@ -352,6 +360,8 @@ static NoSignTypeIndex getNoSignTypeIndex(uint32_t tags) {
         return x32;
     if (tags & (TYINT64 | TYUINT64))
         return x64;
+    if (tags & (TYINT128 | TYUINT128))
+        return x128;
     if (tags & TYFLOAT)
         return xfloat;
     if (tags & TYDOUBLE)
@@ -372,7 +382,6 @@ static enum BinOp getAtomicrmwOp(Token tok) {
 #include "ctypes.inc"
 #include "statements.inc"
 #include "printer.cpp"
-
 static const char hexs[] = "0123456789ABCDEF";
 
 static char hexed(unsigned a) {
@@ -464,7 +473,7 @@ static const char months[12][4] = {
     "Dec"  // December
 };
 static bool isFloating(const CType ty) {
-    return ty->tags & (TYFLOAT | TYDOUBLE);
+    return ty->tags & (TYFLOAT | TYDOUBLE | TYF128);
 }
 static bool compatible(const CType p, const CType expected) {
     // https://en.cppreference.com/w/c/language/type
@@ -621,7 +630,9 @@ static unsigned intRank(uint32_t a){
         return 3;
     if (a & (TYINT32 | TYUINT32))
         return 4;
-    return 5;
+    if (a & (TYINT64 | TYUINT64))
+        return 5;
+    return 6;
 }
 #include "option.cpp"
 #include "State.cpp"
@@ -633,7 +644,6 @@ static unsigned intRank(uint32_t a){
 #include "utf8.cpp"
 #include "evaluator.cpp"
 #include "lexer.h"
-#include "LiteralSupport.cpp"
 #include "parser.cpp"
 #include "lexer.cpp"
 #include "linker.cpp"

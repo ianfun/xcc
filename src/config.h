@@ -90,3 +90,7 @@ static constexpr inline unsigned long long cstrlen(const char (&str)[n]) noexcep
 #ifndef CC_ARENA_BLOCK_SIZE
   #define CC_ARENA_BLOCK_SIZE 8192
 #endif
+
+#ifndef CC_SHOW_TAB_SIZE
+  #define CC_SHOW_TAB_SIZE 4
+#endif

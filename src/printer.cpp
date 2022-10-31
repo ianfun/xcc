@@ -10,7 +10,8 @@ raw_ostream &operator<<(llvm::raw_ostream &OS, const Expr e) {
         case EIntLit:
             return OS << e->ival;
         case EFloatLit:
-            return OS << e->fval;
+            e->fval.print(OS);
+            return OS;
         case EVoid:
             return OS << e->voidexpr;
         case EVar:
@@ -153,8 +154,11 @@ static StringRef get_prim_str(uint32_t tags){
     if (tags & TYUINT16) return "unsigned short";
     if (tags & TYUINT32) return "unsigned int";
     if (tags & TYUINT64) return "unsigned long long";
+    if (tags & TYINT128) return "__int128";
+    if (tags & TYUINT128) return "__uint128";
     if (tags & TYFLOAT) return "float";
     if (tags & TYDOUBLE) return "double";
+    if (tags & TYF128) return "__float128";
     return "(unknown basic type)";
 }
 static const char *get_type_name_str(enum CTypeKind t) {

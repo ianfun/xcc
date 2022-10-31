@@ -141,10 +141,15 @@ struct Parser : public DiagnosticHelper {
       warning(loc, "'_Thread_local' in function has no effect");
     if (base->tags & (TYCONST | TYRESTRICT | TYVOLATILE))
       warning(loc, "type qualifiers ignored in function");
-    auto it = Table.find(name);
+    const auto it = Table.find(name);
     if (it != Table.end()) {
       if (!compatible(yt, it->second.ty)) {
-        warning(loc, "conflicting types for function declaration %I", name);
+        type_error(loc, "conflicting types for function declaration %I", name);
+      } else if (!(it->second.ty->ret->tags & TYSTATIC) && base->tags & TYSTATIC) {
+        type_error(loc, "static declaration of %I follows non-static declaration", name);
+        note(it->second.loc, "previous declaration of %I was here", name);
+      } else {
+        yt->tags |= it->second.ty->ret->tags & (TYSTATIC);
       }
     }
     Table[name] = Variable_Info{.ty = yt, .loc = getLoc()};
@@ -161,25 +166,15 @@ struct Parser : public DiagnosticHelper {
       if (isTopLevel() || (yt->tags & (TYEXTERN | TYSTATIC))) {
         CType old = it->second.ty;
         bool err = true;
-        constexpr auto q = TYATOMIC | TYCONST | TYRESTRICT;
+        constexpr auto q = TYATOMIC | TYCONST | TYRESTRICT | TYVOLATILE;
         if ((yt->tags & TYSTATIC) && !(old->tags & TYSTATIC))
-          type_error(
-              loc, "static declaration case %I follows non-static declaration",
-              name);
+          type_error(loc, "static declaration case %I follows non-static declaration", name);
         else if ((old->tags & TYSTATIC) && !(yt->tags & TYSTATIC))
-          type_error(
-              loc, "non-static declaration case %I follows static declaration",
-              name);
+          type_error(loc, "non-static declaration case %I follows static declaration", name);
         else if ((yt->tags & TYTHREAD_LOCAL) && !(old->tags & TYTHREAD_LOCAL))
-          type_error(loc,
-                     "thread-local declaration case %I  follows "
-                     "non-thread-local declaration",
-                     name);
+          type_error(loc, "thread-local declaration case %I follows non-thread-local declaration", name);
         else if ((old->tags & TYTHREAD_LOCAL) && !(yt->tags & TYTHREAD_LOCAL))
-          type_error(loc,
-                     "non-thread-local declaration case %I follows "
-                     "thread-local declaration",
-                     name);
+          type_error(loc, "non-thread-local declaration case %I follows thread-local declaration", name);
         else if ((yt->tags & q) != (old->tags & q))
           type_error(loc, "conflicting type qualifiers for %I", name);
         else if (!compatible(old, yt))
@@ -215,23 +210,16 @@ struct Parser : public DiagnosticHelper {
         .loc = from->loc, .ty = to, .castop = op, .castval = from};
   }
   Expr intcast(Expr e, CType to) {
-    if ((to->tags & (TYINT8 | TYINT16 | TYINT32 | TYINT64 | TYUINT8 | TYUINT16 |
-                     TYUINT32 | TYUINT64)) &&
-        (e->ty->tags & (TYINT8 | TYINT16 | TYINT32 | TYINT64 | TYUINT8 |
-                        TYUINT16 | TYUINT32 | TYUINT64 | TYBOOL))) {
+    if ((to->tags & (TYINT8 | TYINT16 | TYINT32 | TYINT64 | TYINT128 | TYUINT8 | TYUINT16 | TYUINT32 | TYUINT64 | TYUINT128)) && (e->ty->tags & (TYINT8 | TYINT16 | TYINT32 | TYINT64 | TYINT128 | TYUINT8 | TYUINT16 | TYUINT32 | TYUINT64 | TYUINT128 | TYBOOL))) {
       if (to->tags == e->ty->tags) {
-        return ENEW(CastExpr){
-            .loc = e->loc, .ty = to, .castop = CastOp::BitCast, .castval = e};
+        return ENEW(CastExpr){.loc = e->loc, .ty = to, .castop = CastOp::BitCast, .castval = e};
       }
       if (intRank(to->tags) > intRank(e->ty->tags)) {
-        return make_cast(
-            e, (to->isSigned() && !(e->ty->tags & TYBOOL)) ? SExt : ZExt, to);
+        return make_cast(e, (to->isSigned() && !(e->ty->tags & TYBOOL)) ? SExt : ZExt, to);
       }
       return make_cast(e, Trunc, to);
     }
-    return type_error(getLoc(), "cannot cast %E(has type %T) to %T", e, e->ty,
-                      to),
-           nullptr;
+    return type_error(getLoc(), "cannot cast %E(has type %T) to %T", e, e->ty, to), nullptr;
   }
   static bool type_equal(CType a, CType b) {
     if (a->k != b->k)
@@ -291,17 +279,21 @@ struct Parser : public DiagnosticHelper {
       return make_cast(e, FPTrunc, to);
     if ((e->ty->tags & TYFLOAT) && (to->tags & TYDOUBLE))
       return make_cast(e, FPExt, to);
+    if ((e->ty->tags & (TYFLOAT | TYDOUBLE)) && (to->tags & TYF128))
+      return make_cast(e, FPExt, to);
+    if ((e->ty->tags & TYF128) && (to->tags & (TYFLOAT | TYDOUBLE)))
+      return make_cast(e, FPTrunc, to);
     if (e->ty->tags & (TYINT8 | TYINT16 | TYINT32 | TYINT64 | TYUINT8 |
                        TYUINT16 | TYUINT32 | TYUINT64 | TYBOOL)) {
       if (to->k == TYPOINTER)
         return make_cast(e, IntToPtr, to);
-      if (to->tags & (TYFLOAT | TYDOUBLE))
+      if (isFloating(to))
         return make_cast(e, e->ty->isSigned() ? SIToFP : UIToFP, to);
-    } else if (to->tags & (TYINT8 | TYINT16 | TYINT32 | TYINT64 | TYUINT8 |
-                           TYUINT16 | TYUINT32 | TYUINT64)) {
+    } else if (to->tags & (TYINT8 | TYINT16 | TYINT32 | TYINT64 | TYINT128 | TYUINT8 |
+                           TYUINT16 | TYUINT32 | TYUINT64 | TYUINT128)) {
       if (e->ty->k == TYPOINTER)
         return make_cast(e, PtrToInt, to);
-      if (e->ty->tags & (TYFLOAT | TYDOUBLE))
+      if (isFloating(e->ty))
         return make_cast(e, to->isSigned() ? FPToSI : FPToUI, to);
     }
     return intcast(e, to);
@@ -1593,10 +1585,11 @@ struct Parser : public DiagnosticHelper {
       if (!assignable(e))
         return nullptr;
       Expr e2 = context.clone(e);
-      Expr one = ENEW(IntLitExpr){
+      CType ty = e->ty->k == TYPOINTER ? context.getSize_t() : e->ty;
+      Expr one = ENEW(IntLitExpr) {
           .loc = e->loc,
-          .ty = e->ty->k == TYPOINTER ? context.typecache.i32 : e->ty,
-          .ival = 1};
+          .ty = ty,
+          .ival = APInt(ty->getBitWidth(), 1)};
       (tok == TAddAdd) ? make_add(e, one) : make_sub(e, one);
       return binop(e2, Assign, e, e->ty);
     }
@@ -1613,7 +1606,7 @@ struct Parser : public DiagnosticHelper {
             return expectRB(getLoc()), nullptr;
           consume();
           return ENEW(IntLitExpr){
-              .loc = loc, .ty = context.getSize_t(), .ival = getsizeof(ty)};
+              .loc = loc, .ty = context.getSize_t(), .ival = APInt(context.getSize_t()->getBitWidth(), getsizeof(ty))};
         }
         if (!(e = unary_expression()))
           return nullptr;
@@ -1621,12 +1614,12 @@ struct Parser : public DiagnosticHelper {
           return expectRB(getLoc()), nullptr;
         consume();
         return ENEW(IntLitExpr){
-            .loc = loc, .ty = context.getSize_t(), .ival = getsizeof(e)};
+            .loc = loc, .ty = context.getSize_t(), .ival = APInt(context.getSize_t()->getBitWidth(), getsizeof(e))};
       }
       if (!(e = unary_expression()))
         return nullptr;
       return ENEW(IntLitExpr){
-          .loc = loc, .ty = context.getSize_t(), .ival = getsizeof(e)};
+          .loc = loc, .ty = context.getSize_t(), .ival = APInt(context.getSize_t()->getBitWidth(), getsizeof(e))};
     }
     case K_Alignof: {
       Expr result;
@@ -1639,13 +1632,13 @@ struct Parser : public DiagnosticHelper {
         if (!ty)
           return expect(getLoc(), "type-name"), nullptr;
         result = ENEW(IntLitExpr){
-            .loc = loc, .ty = context.getSize_t(), .ival = getAlignof(ty)};
+            .loc = loc, .ty = context.getSize_t(), .ival = APInt(context.getSize_t()->getBitWidth(), getAlignof(ty))};
       } else {
         Expr e = constant_expression();
         if (!e)
           return nullptr;
         result = ENEW(IntLitExpr){
-            .loc = loc, .ty = context.getSize_t(), .ival = getAlignof(e)};
+            .loc = loc, .ty = context.getSize_t(), .ival = APInt(context.getSize_t()->getBitWidth(), getAlignof(e))};
       }
       if (l.tok.tok != TRbracket)
         return expectRB(getLoc()), nullptr;
@@ -1656,6 +1649,246 @@ struct Parser : public DiagnosticHelper {
       return postfix_expression();
     }
   }
+static bool alwaysFitsInto64Bits(unsigned Radix, unsigned NumDigits) {
+    switch (Radix) {
+        case 2:
+            return NumDigits <= 64;
+        case 8:
+            return NumDigits <= 64 / 3;
+        case 10:
+            return NumDigits <= 19;
+        case 16:
+            return NumDigits <= 64 / 4;
+        default:
+            llvm_unreachable("impossible Radix");
+    }
+}
+
+// the input must be null-terminated
+Expr parse_pp_number(const xstring str) {
+    Location loc = getLoc();
+    const unsigned char *DigitsBegin = nullptr;
+    bool isFPConstant = false;
+    uint64_t radix;
+    const unsigned char *s = reinterpret_cast<const unsigned char*>(str.data());
+    if (str.size() == 2) {
+        if (!llvm::isDigit(str.front()))
+            return lex_error(loc, "expect one digit"), nullptr;
+        return ENEW(IntLitExpr) {.ty = context.getInt(),  .ival = APInt(32, static_cast<uint64_t>(*s) - '0')};
+    }
+    if (*s == '0') {
+        s++;
+        switch (*s) {
+            case '.':
+                DigitsBegin = s;
+                goto common;
+            case 'X':
+            case 'x':
+                ++s;
+                if (!(llvm::isHexDigit(*s) || *s == '.'))
+                    return lex_error(loc, "expect hexdecimal digits"), nullptr;
+                DigitsBegin = s;
+                radix = 16;
+                do 
+                    s++;
+                while (llvm::isHexDigit(*s));
+                goto common;
+            case 'b':
+            case 'B':
+                ++s;
+                if (*s != '0' && *s != '1')
+                    return lex_error(loc, "expect binary digits"), nullptr;
+                DigitsBegin = s;
+                radix = 2;
+                do 
+                    s++;
+                while (*s == '0' || *s == '1');
+                goto common;
+            default:
+                if (*s < '0' || *s > '7')
+                    return lex_error(loc, "expect octal digits"), nullptr;
+                DigitsBegin = s;
+                radix = 8;
+                do 
+                    s++;
+                while (*s >= '0' && *s <= '7');
+                goto common;
+        }
+    } else {
+        radix = 10;
+        DigitsBegin = s;
+        while (llvm::isDigit(*s))
+            s++;
+        common:
+        if (*s != '\0') {
+            if (llvm::isHexDigit(*s) && *s != 'E' && *s != 'e')
+                return lex_error(loc, "invalid digit '%c'", *s), nullptr;
+            if (*s == '.') {
+                if (radix == 2)
+                  return lex_error(loc, "binary literal cannot be floating constant"), nullptr;
+                isFPConstant = true;
+                do
+                    s++;
+                while (llvm::isDigit(*s));
+            }
+            if (*s == 'E' || *s == 'e') {
+                if (radix == 16)
+                    return lex_error(loc, "hexdecimal constant requires 'p' or 'P' exponent"), nullptr;
+                goto READ_EXP;
+            }
+            if (*s == 'P' || *s == 'p') {
+                if (radix != 16)
+                    return lex_error(loc, "exponent 'p' and 'p' can only used in hexdecimal constant"), nullptr;
+                READ_EXP:
+                isFPConstant = true;
+                ++s;
+                if (*s == '+' || *s == '-') s++;
+                if (!llvm::isDigit(*s))
+                    return lex_error(loc, "expect exponent digits"), nullptr;
+                do 
+                    s++;
+                while (llvm::isDigit(*s));
+            }
+        }
+    }
+    struct Suffixs {
+        bool isUnsigned: 1,
+             isLongLong: 1,
+             isLong: 1,
+             isFloat: 1,
+             isFloat128: 1,
+             HasSize: 1,
+             isImaginary: 1;
+    } su{};
+    const unsigned char *SuffixBegin = s;
+    for (;;) {
+        unsigned char c1;
+        switch ((c1 = *s++)) {
+            case '\0': goto NEXT;
+            case 'f':
+            case 'F':
+                if (!isFPConstant || su.HasSize) break;
+                su.HasSize = su.isFloat = true;
+                continue;
+            case 'u':
+            case 'U':
+                if (isFPConstant || su.isUnsigned) break;
+                su.isUnsigned = true;
+                continue;
+            case 'l':
+            case 'L':
+                if (su.HasSize) break;
+                su.HasSize = true;
+                if (c1 == *s) {
+                    if (isFPConstant) break;
+                    su.isLongLong = true;
+                    ++s;
+                } else 
+                    su.isLong = true;
+                continue;
+            case 'i':
+            case 'I':
+            case 'j':
+            case 'J':
+                if (su.isImaginary) break;
+                su.isImaginary = true;
+                continue;
+            case 'q':
+            case 'Q':
+                if (!isFPConstant || su.HasSize) break;
+                su.isFloat128 = true;
+                continue;
+        }
+        lex_error(loc, "invalid suffix '%c' in %s constant", c1, isFPConstant ? "floating" : "integer");
+        break;
+    }
+    NEXT:
+    const uintptr_t NumDigits = (uintptr_t)SuffixBegin - (uintptr_t)DigitsBegin;
+    if (isFPConstant) {
+        StringRef fstr(str.data(), std::min(
+            (uintptr_t)str.size() - 1,
+            (uintptr_t)SuffixBegin - (uintptr_t)str.data()
+        ));
+        CType ty = context.typecache.fdoublety;
+        const llvm::fltSemantics *Format = &llvm::APFloat::IEEEdouble();
+        if (su.isFloat128) {
+            ty = context.typecache.f128ty;
+            Format = &APFloat::IEEEquad();
+        } else if (su.isFloat) {
+            Format = &APFloat::IEEEsingle();
+            ty = context.typecache.ffloatty;
+        }
+        Expr result = ENEW(FloatLitExpr) {.ty = ty, .fval = APFloat(*Format)};
+        auto it = result->fval.convertFromString(fstr, APFloat::rmNearestTiesToEven);
+        if (auto err = it.takeError()) {
+            SmallString<32> msg;
+            llvm::raw_svector_ostream OS(msg);
+            OS << err;
+            lex_error(loc, "error parsing floating literal: %R", msg.str());
+        } else {
+            auto status = *it;
+            SmallString<20> buffer;
+            if ((status & APFloat::opOverflow) ||
+                ((status & APFloat::opUnderflow) && result->fval.isZero())) {
+                const char *diag;
+                if (status & APFloat::opOverflow) {
+                    APFloat::getLargest(*Format).toString(buffer);
+                    diag = "floating point constant overflow: %R";
+                } else {
+                    APFloat::getSmallest(*Format).toString(buffer);
+                    diag = "float point constant opUnderflow: %R";
+                }
+                lex_error(loc, diag, buffer.str());
+            }
+        }
+        return result;
+    }
+    Expr result;
+    if (alwaysFitsInto64Bits(radix, NumDigits)) {
+        uint64_t N = 0;
+        for (auto Ptr = DigitsBegin; Ptr < SuffixBegin; ++Ptr)
+            N = N * radix + llvm::hexDigitValue(*Ptr);
+        result = ENEW(IntLitExpr) {.ival = APInt::getZero(64)};
+        result->ival = N;
+    } else {
+        dbgprint("large integer literal found...\n");
+        result = ENEW(IntLitExpr) {.ival = APInt::getZero(128)};
+        bool overflow = false;
+        for (auto Ptr = DigitsBegin; Ptr < SuffixBegin; ++Ptr) {
+            APInt old = result->ival;
+            result->ival *= radix;
+            overflow |= result->ival.udiv(radix) != old;
+            old = result->ival;
+            result->ival += llvm::hexDigitValue(*Ptr);
+            overflow |= old.ugt(result->ival);
+        }
+        if (overflow)
+          warning("integer constant is too large to fit 128 bit");
+    }
+    // bool AllowUnsigned = su.isUnsigned || radix != 10;
+    CType ty = context.getInt();
+    if (su.isLongLong) {
+        ty = su.isUnsigned ? context.getULongLong() : context.getLongLong();
+    } else if (su.isLong) {
+        ty = su.isUnsigned ? context.getULong() : context.getLong();
+    } else {
+        unsigned acts = result->ival.getActiveBits();
+        if (acts > 64) {
+            ty = context.typecache.u128;
+        } else if (acts > 32) {
+            ty = context.typecache.u64;
+        } else {
+            ty = context.typecache.u32;
+        }
+    }
+    APInt N = result->ival.trunc(ty->getBitWidth());
+    if (!su.isUnsigned && result->ival.ult(N))
+        warning("integer constant %R too large for type %T", str.str(), ty);
+    result->ival = N;
+    result->ty = ty;
+    return result;
+}
+
   Expr primary_expression() {
     // primary expressions:
     //      constant
@@ -1682,7 +1915,7 @@ struct Parser : public DiagnosticHelper {
       default:
         llvm_unreachable("");
       }
-      result = ENEW(IntLitExpr){.loc = loc, .ty = ty, .ival = l.tok.i};
+      result = ENEW(IntLitExpr){.loc = loc, .ty = ty, .ival = APInt(ty->getBitWidth(), l.tok.i)};
       consume();
     } break;
     case TStringLit: {
@@ -1722,49 +1955,18 @@ struct Parser : public DiagnosticHelper {
         llvm_unreachable("bad encoding");
       }
     } break;
-    case PPNumber: {
-      double f;
-      uintmax_t n;
-
-      switch (l.read_pp_number(loc, l.tok.str, f, n)) {
-      case 0:
-        return nullptr;
-      case 1:
-        result = ENEW(IntLitExpr){.ty = context.getInt(), .ival = n};
-        break;
-      case 2:
-        result =
-            ENEW(FloatLitExpr){.ty = context.typecache.fdoublety, .fval = f};
-        break;
-      case 3:
-        result =
-            ENEW(FloatLitExpr){.ty = context.typecache.ffloatty, .fval = f};
-        break;
-      case 4:
-        result = ENEW(IntLitExpr){.ty = context.getLong(), .ival = n};
-        break;
-      case 5:
-        result = ENEW(IntLitExpr){.ty = context.getULong(), .ival = n};
-        break;
-      case 6:
-        result = ENEW(IntLitExpr){.ty = context.getLongLong(), .ival = n};
-        break;
-      case 7:
-        result = ENEW(IntLitExpr){.ty = context.getULongLong(), .ival = n};
-        break;
-      case 8:
-        result = ENEW(IntLitExpr){.ty = context.getUInt(), .ival = n};
-        break;
-      default:
-        llvm_unreachable("bad status for read_pp_number returned");
-      }
-      result->loc = getLoc();
+    case PPNumber: 
+    {
+      result = parse_pp_number(l.tok.str);
+      if (result)
+        result->loc = getLoc();
+      else
+        result = context.getIntZero();
       consume();
     } break;
     case TIdentifier: {
       if (l.want_expr)
-        result =
-            ENEW(IntLitExpr){.ty = context.getInt(), .ival = 0}; // no location!
+        result = context.getIntZero();
       else if (l.tok.s->second.getToken() == PP__func__) {
         CType ty =
             TNEW(ArrayType){.arrtype = context.typecache.i8,
@@ -1794,7 +1996,7 @@ struct Parser : public DiagnosticHelper {
           }
           auto ti = Table.enums.find(l.tok.s);
           if (ti != Table.enums.end())
-            return consume(), ENEW(IntLitExpr){.loc = loc, .ty = context.getInt(), .ival = ti->second};
+            return consume(), ENEW(IntLitExpr){.loc = loc, .ty = context.getInt(), .ival = APInt(32, ti->second)};
         }
         if (!ty) {
           type_error(loc, "use of undeclared identifier %I", l.tok.s);
@@ -1897,10 +2099,7 @@ struct Parser : public DiagnosticHelper {
         if (!assignable(result))
           return nullptr;
         consume();
-        result = ENEW(PostFixExpr){.loc = result->loc,
-                                   .ty = result->ty,
-                                   .pop = isadd,
-                                   .poperand = result};
+        result = ENEW(PostFixExpr){.loc = result->loc,.ty = result->ty,.pop = isadd,.poperand = result};
       }
         continue;
       case TArrow:
@@ -1915,9 +2114,7 @@ struct Parser : public DiagnosticHelper {
           return expect(getLoc(), "identifier"), nullptr;
         if (isarrow) {
           if (result->ty->k != TYPOINTER)
-            return type_error(getLoc(),
-                              "pointer member access('->') requires a pointer"),
-                   nullptr;
+            return type_error(getLoc(),"pointer member access('->') requires a pointer"), nullptr;
           result = unary(result, Dereference, result->ty->p);
           isLvalue = true;
         }
@@ -1928,10 +2125,7 @@ struct Parser : public DiagnosticHelper {
         for (size_t i = 0; i < result->ty->selems.size(); ++i) {
           NameTypePair pair = result->ty->selems[i];
           if (l.tok.s == pair.name) {
-            result = ENEW(MemberAccessExpr){.loc = result->loc,
-                                            .ty = pair.ty,
-                                            .obj = result,
-                                            .idx = (uint32_t)i};
+            result = ENEW(MemberAccessExpr){.loc = result->loc,.ty = pair.ty,.obj = result,.idx = (uint32_t)i};
             if (isLvalue) {
               result->ty = context.clone(result->ty);
               result->ty->tags |= TYLVALUE;
@@ -2718,8 +2912,8 @@ struct Parser : public DiagnosticHelper {
     Stmt head = SNEW(HeadStmt) {.loc = loc};
     enterBlock();
     assert(jumper.cur == 0 && "labels scope should be empty in start of function");
-    for (const auto &it : params)
-      putsymtype(it.name, it.ty);
+    for (const auto &it: params)
+      sema.scopes[sema.scopeTop].typedefs[it.name] = Variable_Info {.ty = it.ty, .loc = loc};
     {
       llvm::SaveAndRestore<Stmt> saved_ip(InsertPt, head);
       eat_compound_statement();
@@ -2727,7 +2921,7 @@ struct Parser : public DiagnosticHelper {
         Stmt s = getInsertPoint();
         Location loc2 = getLoc();
         if (sema.pfunc->second.getToken() == PP_main) {
-          insertStmt(SNEW(ReturnStmt) {.loc = loc2, .ret = ENEW(IntLitExpr) {.loc = loc2, .ty = context.getInt(), .ival = 0}});
+          insertStmt(SNEW(ReturnStmt) {.loc = loc2, .ret = context.getIntZero()});
         } else {
           if (sema.currentfunctionRet->tags & TYVOID) {
             insertStmt(SNEW(ReturnStmt) {.loc = loc2, .ret = nullptr});

@@ -1,42 +1,29 @@
 void TextDiagnosticPrinter::printSource(Location loc) {
-
 #if WINDOWS
     LARGE_INTEGER saved_posl;
 #else
     off_t saved_posl;
 #endif
-    Stream saved_stream = SM.streams[loc.id];
-
-    if (saved_stream.k != AFileStream)
-        return;
-
     Stream &stream_ref = SM.streams[loc.id];
-    
-    bool shouldSeek = saved_stream.line >= loc.line;
-
-    if (shouldSeek) {
+    if (stream_ref.k != AFileStream)
+        return;
+    uint32_t old_line = stream_ref.line;
+    uint32_t old_col = stream_ref.column;
 #if WINDOWS
-        if (!::SetFilePointerEx(saved_stream.fd, LARGE_INTEGER(), &saved_posl, FILE_CURRENT))
-            return;
-
-        if (!::SetFilePointerEx(saved_stream.fd, LARGE_INTEGER(), nullptr, FILE_BEGIN))
-            return;
+    LARGE_INTEGER seek_pos;
+    seek_pos.QuadPart = -static_cast<ULONGLONG>(stream_ref.pos);
+    if (!::SetFilePointerEx(stream_ref.fd, seek_pos, &saved_posl, FILE_CURRENT))
+        return;
+    seek_pos.QuadPart = 0;
+    ::SetFilePointerEx(stream_ref.fd, seek_pos, nullptr, FILE_BEGIN);
 #else
-        if ((saved_posl = ::lseek(saved_stream.fd, 0, SEEK_CUR)) < 0)
-            return;
-
-        if (::lseek(saved_stream.fd, 0, SEEK_SET) < 0)
-            return;
+    if ((saved_posl = ::lseek(stream_ref.fd, -static_cast<off_t>(stream_ref.pos), SEEK_CUR)) < 0)
+        return;
+    ::lseek(stream_ref.fd, 0, SEEK_SET);
 #endif
-
-        stream_ref.p = 0;
-        stream_ref.pos = 0;
-        stream_ref.line = 1;
-        stream_ref.column = 1;
-    }
-    // saved_stream.p = 0;
-    // saved_stream.pos = 0;
-
+    stream_ref.pos = 0;
+    stream_ref.line = 1;
+    stream_ref.column = 1;
     {
         char lastc, c = '\0';
         while (stream_ref.line < loc.line) {
@@ -57,40 +44,58 @@ void TextDiagnosticPrinter::printSource(Location loc) {
             int len = snprintf(buf, sizeof(buf), "%5d", loc.line);
             OS << StringRef(buf, (unsigned)len) << " | ";
         }
-        unsigned line_chars = 0;
+        unsigned line_chars = 0, displayed_chars = 0, real = 0;
+
         for(;;) {
-            char c = SM.raw_read_from_id(loc.id);
-            if (c == '\0' || c == '\n' || c == '\r') 
+            unsigned char c = SM.raw_read_from_id(loc.id);
+            if (c == '\0' || c == '\n' || c == '\r') {
+                if (real == 0)
+                    real = displayed_chars;
                 break;
+            }
             bool cond = line_chars == loc.col;
-            if (cond)
+            if (cond) {
                 OS.changeColor(raw_ostream::RED);
-            if (c == '\t' || isprint((unsigned char)c)) {
-                OS << c;
+                real = displayed_chars;
+            }
+            if (c == '\t') {
+                displayed_chars += CC_SHOW_TAB_SIZE;
+                for (unsigned i = 0;i < CC_SHOW_TAB_SIZE;++i)
+                    OS << ' ';
+            } else if (/*std::iscntrl(c)*/ !llvm::isPrint(c)) {
+                OS << "<0x"
+                   << (hexed(c) >> 4)
+                   << hexed(c)
+                   << '>';
+                   displayed_chars += 6;
             } else {
-                (OS << "<0x").write_hex((unsigned char)c) << '>';
+                displayed_chars++;
+                OS << c;
             }
             if (cond)
                 OS.resetColor();
             ++line_chars;
         }
         OS << "\n      | ";
-        for (unsigned i = 0;i < loc.col;i++)
-            OS << ' ';
+        {
+            const std::string buffer(real, ' ');
+            OS << buffer;
+        }
         OS.changeColor(raw_ostream::RED);
         OS << '^';
         OS.resetColor();
         OS << '\n';
     }
+
     EXIT:
-    SM.streams[loc.id] = saved_stream;
-    if (shouldSeek) {
+    stream_ref.pos = 0;
+    stream_ref.line = old_line;
+    stream_ref.column = old_col;
 #if WINDOWS
-        ::SetFilePointerEx(saved_stream.fd, saved_posl, nullptr, FILE_BEGIN);
+    ::SetFilePointerEx(stream_ref.fd, saved_posl, nullptr, FILE_BEGIN);
 #else
-        ::lseek(saved_stream.fd, saved_posl, SEEK_SET);
+    ::lseek(stream_ref.fd, saved_posl, SEEK_SET);
 #endif
-    }
 }
 void TextDiagnosticPrinter::realHandleDiagnostic(enum DiagnosticLevel level, const Diagnostic &Info) {
     bool locValid = Info.loc.isValid();

@@ -24,8 +24,6 @@ struct Lexer: public DiagnosticHelper
     : DiagnosticHelper{context}, parser{parser}, SM{SM}, evaluator{context} {
 
     }
-    unsigned read_pp_float(Location loc, const unsigned char *s, size_t len, double &o, size_t i, uintmax_t base, double f = 0.0);
-    unsigned read_pp_number(Location loc, xstring str, double &f, uintmax_t &n);
     Location getLoc() { return loc; }
     void updateLoc() { loc = SM.getLoc(); }
     void validUCN(Codepoint codepoint, Location loc) {
@@ -46,7 +44,7 @@ Codepoint lexHexChar(){
     Codepoint n = 0;
     for(;;){
         unsigned char t = c;
-        if (isdigit(t))
+        if (llvm::isDigit(t))
             n = (n << 4) | (t - '0' + 0);
         else if (t >= 'a' && t <= 'f')
             n = (n << 4) | (t - 'a' + 10);
@@ -64,7 +62,7 @@ Codepoint lexUChar(unsigned count) {
     for(;;){
         unsigned char t = c;
         i++;
-        if (isdigit(t))
+        if (llvm::isDigit(t))
             n = (n << 4) | (t - '0');
         else if (t >= 'a' && t <= 'f')
             n = (n << 4) | (t - 'a' + 10);
@@ -259,6 +257,8 @@ TokenV lexPPNumberEnd(xstring &s) {
         }
         default:
         {
+            if (c == '\'')
+                eat();
             if (isalnum(c) || c == '.') {
                 return lexPPNumberDigits(s);
             }
@@ -276,6 +276,7 @@ TokenV lexPPNumberEnd(xstring &s) {
                 END:
                 return lexPPNumberEnd(s);
             }
+            s.make_eos();
             TokenV theTok = TokenV(ATokenVNumLit, PPNumber);
             theTok.str = s;
             return theTok;
@@ -286,7 +287,9 @@ TokenV lexPPNumberDigits(xstring &s) {
     do {
         s.push_back(c);
         eat();
-    } while (isalnum(c) || c == '.');
+        if (c == '\'') 
+            eat();
+    } while (isalnum(c) || c == '\'');
     return lexPPNumberEnd(s);
 }
 TokenV lexPPNumberAfterDot() {

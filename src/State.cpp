@@ -3,34 +3,44 @@
 #define ENEW(TY) (Expr)new(getAllocator())TY
 
 struct xcc_context {
-    xcc_context(struct TextDiagnosticPrinter *printer = nullptr) : table{}, printer{printer}, typecache {
-      .b=make_primitive(TYBOOL),
-      .v=make_primitive(TYVOID),
-      .i8=make_primitive(TYINT8),
-      .u8=make_primitive(TYUINT8),
-      .i16=make_primitive(TYINT16),
-      .u16=make_primitive(TYINT16),
-      .i32=make_primitive(TYINT32),
-      .u32=make_primitive(TYUINT32),
-      .i64=make_primitive(TYINT64),
-      .u64=make_primitive(TYUINT64),
-      .ffloatty=make_primitive(TYFLOAT),
-      .fdoublety=make_primitive(TYDOUBLE),
-      .strty=getPointerType(make_primitive(TYINT8))
+    xcc_context(struct TextDiagnosticPrinter *printer = nullptr) : table{}, printer{printer},  
+    typecache {
+      .b=make(TYBOOL),
+      .v=make(TYVOID),
+      .i8=make(TYINT8),
+      .u8=make(TYUINT8),
+      .i16=make(TYINT16),
+      .u16=make(TYINT16),
+      .i32=make(TYINT32),
+      .u32=make(TYUINT32),
+      .i64=make(TYINT64),
+      .u64=make(TYUINT64),
+      .i128=make(TYINT128),
+      .u128=make(TYUINT128),
+      .ffloatty=make(TYFLOAT),
+      .fdoublety=make(TYDOUBLE),
+      .f128ty=make(TYF128),
+      .strty=getPointerType(make(TYINT8)) 
     }
-    {}
+    {
+        intzero = ENEW(IntLitExpr) {.loc = Location(), .ty = typecache.i32, .ival = APInt::getZero(32)};
+    }
     IdentifierTable table; // contains allocator!
     struct TextDiagnosticPrinter *printer;
+    Expr intzero;
     void setPrinter(struct TextDiagnosticPrinter *thePrinter) {
         printer = thePrinter;
     }
+    Expr getIntZero() {
+        return intzero;
+    }
     struct TypeCache {
         CType 
-            b, v, i8, u8, i16, u16, i32, u32, i64, u64, 
-            ffloatty, fdoublety, 
+            b, v, i8, u8, i16, u16, i32, u32, i64, u64, i128, u128,
+            ffloatty, fdoublety, f128ty,
             strty;
     } typecache;
-    CType make_primitive(uint32_t tag) {
+    CType make(uint32_t tag) {
         return (CType)(TNEW(PrimType) {.align = 0, .tags = tag});
     }
     CType getPointerType(CType base) {

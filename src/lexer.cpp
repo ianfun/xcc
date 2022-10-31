@@ -300,13 +300,13 @@ RUN:
                 case PPline:
                 {
                     uint32_t line = 0;
-                    if (!isdigit(c)) {
+                    if (!llvm::isDigit(c)) {
                         pp_error(loc, "%s", "expect digits (positive line number)");
                         break;
                     }
                     do 
                         line =  line * 10 + (unsigned char)c;
-                    while (eat(), isdigit(c));
+                    while (eat(), llvm::isDigit(c));
                     SM.setLine(line);
                     while (isCSkip(c))
                         eat();
@@ -430,7 +430,7 @@ RUN:
                     eat(); // third
                     return TEllipsis;
                 }
-                if (isdigit(c))
+                if (llvm::isDigit(c))
                     return lexPPNumberAfterDot();
                 return TDot;
             case '0': case '1': case '2': case '3': case '4': case '5': 
