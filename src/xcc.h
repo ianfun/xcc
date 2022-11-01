@@ -233,6 +233,7 @@ static const char* show(enum PostFixOp o){
         default: return "(unknown postfix operator)";
     }
 }
+#include "xint128.cpp"
 #include "Arena.cpp"
 #include "tempAllocator.h"
 #include "tokens.inc"

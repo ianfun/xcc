@@ -1843,27 +1843,21 @@ Expr parse_pp_number(const xstring str) {
         }
         return result;
     }
-    Expr result;
+    xint128_t bigVal = xint128_t::get();
     if (alwaysFitsInto64Bits(radix, NumDigits)) {
         uint64_t N = 0;
         for (auto Ptr = DigitsBegin; Ptr < SuffixBegin; ++Ptr)
             N = N * radix + llvm::hexDigitValue(*Ptr);
-        result = ENEW(IntLitExpr) {.ival = APInt::getZero(64)};
-        result->ival = N;
+        bigVal.m64[1] = N;
     } else {
         dbgprint("large integer literal found...\n");
-        result = ENEW(IntLitExpr) {.ival = APInt::getZero(128)};
         bool overflow = false;
         for (auto Ptr = DigitsBegin; Ptr < SuffixBegin; ++Ptr) {
-            APInt old = result->ival;
-            result->ival *= radix;
-            overflow |= result->ival.udiv(radix) != old;
-            old = result->ival;
-            result->ival += llvm::hexDigitValue(*Ptr);
-            overflow |= old.ugt(result->ival);
+            overflow |= umul_overflow(bigVal, radix, bigVal);
+            overflow |= uadd_overflow(bigVal, llvm::hexDigitValue(*Ptr));
         }
         if (overflow)
-          warning("integer constant is too large to fit 128 bit");
+          warning("integer literal is too large to be represented in any integer type");
     }
     // bool AllowUnsigned = su.isUnsigned || radix != 10;
     CType ty = context.getInt();
@@ -1872,20 +1866,19 @@ Expr parse_pp_number(const xstring str) {
     } else if (su.isLong) {
         ty = su.isUnsigned ? context.getULong() : context.getLong();
     } else {
-        unsigned acts = result->ival.getActiveBits();
+        /*unsigned acts = result->ival.getActiveBits();
         if (acts > 64) {
             ty = context.typecache.u128;
         } else if (acts > 32) {
             ty = context.typecache.u64;
         } else {
             ty = context.typecache.u32;
-        }
+        }*/
+      ty = context.typecache.i32;
     }
-    APInt N = result->ival.trunc(ty->getBitWidth());
-    if (!su.isUnsigned && result->ival.ult(N))
-        warning("integer constant %R too large for type %T", str.str(), ty);
-    result->ival = N;
-    result->ty = ty;
+    Expr result = ENEW(IntLitExpr) {.loc = loc, .ty = ty, .ival =
+       bigVal.m64[0] ? APInt(ty->getBitWidth(), ArrayRef<uint64_t>(bigVal.m64, 2)) : APInt(ty->getBitWidth(), bigVal.m64[1])
+    };
     return result;
 }
 
