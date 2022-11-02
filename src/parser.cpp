@@ -417,6 +417,96 @@ struct Parser : public DiagnosticHelper {
     checkScalar(a, b);
     conv(a, b);
   }
+  bool issimple(Expr e) {
+    switch (e->k) {
+      case EIntLit:
+      case EFloatLit:
+      case EVar:
+      case EString:
+      case EStruct:
+      case EArray:
+      case EUndef:
+        return true;
+      default: 
+        return false;
+    }
+  }
+  bool isAssignOp(enum BinOp op) {
+    switch (op) {
+      case Assign:
+      case AtomicrmwAdd:
+      case AtomicrmwSub:
+      case AtomicrmwAnd:
+      case AtomicrmwOr:
+      case AtomicrmwXor:
+        return true;
+      default:
+        return false;
+    }
+  }
+  Expr comma(Expr a, Expr b) {
+    return binop(simplify(a), Comma, simplify(b), b->ty);
+  }
+  Expr simplify(const Expr e) {
+    switch (e->k) {
+        case EBin:
+          if (isAssignOp(e->bop) || e->bop == LogicalAnd || e->bop == LogicalOr)
+            return e;
+          if (issimple(e->rhs)) {
+            warning(e->rhs->loc, "unused binary expression result in right-hand side (%E)", e->rhs);
+            note("simplify %E to %E", e, e->lhs);
+            return simplify(e->lhs);
+          }
+          if (issimple(e->lhs)) {
+            warning(e->rhs->loc, "unused binary expression result in left-hand side (%E)", e->rhs);
+            note("simplify %E to %E", e, e->rhs);
+            return simplify(e->rhs);
+          }
+          return comma(simplify(e->lhs), simplify(e->rhs));
+        case EUnary:
+          if (e->uop != Dereference) {
+            warning(e->loc, "unused unary expression result");
+            note("simplify %E to %E", e, e->uoperand);
+            return simplify(e->uoperand);
+          }
+          return e;
+        case EIntLit:
+            return e;
+        case EFloatLit:
+            return e;
+        case EVoid:
+            return simplify(e->castval);
+        case ECondition:
+            // if the cond is simple, we should simplify it in constant folding
+            if (issimple(e->cleft) && issimple(e->cright)) {
+              warning("unused conditional-expression left-hand side and right-hand result");
+              note("simplify %E to %E", e, e->cond);
+              return simplify(e->cond);
+            }
+        case ECast:
+            warning(e->loc, "unused cast expression, replace '(type)x' with 'x'");
+            return simplify(e->castval);
+        case ECall:
+            return e;
+        case ESubscript:
+            if (issimple(e->right)) {
+              warning("unused array substract, replace 'a[b]' with a");
+              return simplify(e->left);
+            }
+            warning("unused subscript expression");
+            return comma(e->left, e->right);
+        case EPostFix:
+        case EDefault:
+        case EArray:
+        case EStruct:
+        case EString:
+        case EUndef:
+        case EMemberAccess:
+        case EVar:
+        case EArrToAddress:
+            return e;
+    }
+  }
   void make_add(Expr &result, Expr &r) {
     if (isFloating(result->ty)) {
       result = binop(result, FAdd, r, r->ty);
@@ -467,7 +557,6 @@ struct Parser : public DiagnosticHelper {
     integer_promotions(r);
     result = binop(result, Shl, r, result->ty);
   }
-
   void make_shr(Expr &result, Expr &r) {
     checkInteger(result, r);
     integer_promotions(result);
@@ -482,35 +571,29 @@ struct Parser : public DiagnosticHelper {
   void make_mul(Expr &result, Expr &r) {
     checkArithmetic(result, r);
     conv(result, r);
-    result = binop(result,
-                   isFloating(r->ty) ? FMul : (r->ty->isSigned() ? SMul : UMul),
-                   r, r->ty);
+    result = binop(result, isFloating(r->ty) ? FMul : (r->ty->isSigned() ? SMul : UMul), r, r->ty);
   }
-
   void make_div(Expr &result, Expr &r) {
     checkArithmetic(result, r);
     conv(result, r);
-    result = binop(result,
-                   isFloating(r->ty) ? FDiv : (r->ty->isSigned() ? SDiv : UDiv),
-                   r, r->ty);
+    result = binop(result, isFloating(r->ty) ? FDiv : (r->ty->isSigned() ? SDiv : UDiv), r, r->ty);
   }
   void make_rem(Expr &result, Expr &r) {
     checkInteger(result, r);
     conv(result, r);
-    result = binop(result,
-                   isFloating(r->ty) ? FRem : (r->ty->isSigned() ? SRem : URem),
-                   r, r->ty);
+    result = binop(result, isFloating(r->ty) ? FRem : (r->ty->isSigned() ? SRem : URem), r, r->ty);
   }
   Expr boolToInt(Expr e) {
-    return ENEW(CastExpr){
-        .loc = e->loc, .ty = context.getInt(), .castop = ZExt, .castval = e};
+    return ENEW(CastExpr){.loc = e->loc, .ty = context.getInt(), .castop = ZExt, .castval = e};
   }
   enum DeclaratorFlags {
-    Direct,   // declarator with name
-    Abstract, // declarator without name
-    Function  // function parameter-type-list
+    Direct = 0,   // declarator with name
+    Abstract = 1, // declarator without name
+    Function = 2 // function parameter-type-list = Direct or Abstract
   };
-  CType declaration_specifiers() { return specifier_qualifier_list(); }
+  CType declaration_specifiers() { 
+    return specifier_qualifier_list(); 
+  }
   NameTypePair abstract_decorator(CType base, enum DeclaratorFlags flags) {
     // abstract decorator has no name
     // for example: `static int        ()(int, char)`
@@ -518,14 +601,18 @@ struct Parser : public DiagnosticHelper {
     return declarator(base, flags);
   }
   void consume() {
-    // eat token from preprocesser
+    // eat token from preprocessor
     l.cpp();
     if (l.tok.tok >= TIdentifier)
+      // make preprocessor identfiers to normal identfier
       l.tok.tok = TIdentifier;
-    // TODO: builtin lookup, keyword lookup
   }
-  inline Location getLoc() { return l.getLoc(); }
-  inline Expr constant_expression() { return conditional_expression(); }
+  Location getLoc() { 
+    return l.getLoc(); 
+  }
+  Expr constant_expression() { 
+    return conditional_expression(); 
+  }
   bool addTag(CType &ty, Token theTok) {
     // add a tag to type
     switch (theTok) {
@@ -1064,16 +1151,12 @@ struct Parser : public DiagnosticHelper {
       if (l.tok.tok != TLcurlyBracket) // struct Foo
         return gettagByName(name, tok == Kstruct ? TYSTRUCT : TYUNION);
     } else if (l.tok.tok != TLcurlyBracket) {
-      return parse_error(getLoc(),
-                         "expect '{' for start anonymous struct/union"),
-             nullptr;
+      return parse_error(getLoc(), "expect '{' for start anonymous struct/union"), nullptr;
     }
     CType result =
         tok == Kstruct
-            ? TNEW(StructType){.sname = name,
-                               .selems = xvector<NameTypePair>::get()}
-            : TNEW(UnionType){.uname = name,
-                              .uelems = xvector<NameTypePair>::get()};
+            ? TNEW(StructType){.sname = name, .selems = xvector<NameTypePair>::get()}
+            : TNEW(UnionType){.uname = name, .uelems = xvector<NameTypePair>::get()};
     consume();
     if (l.tok.tok != TRcurlyBracket) {
       for (;;) {
@@ -1821,10 +1904,8 @@ Expr parse_pp_number(const xstring str) {
         Expr result = ENEW(FloatLitExpr) {.ty = ty, .fval = APFloat(*Format)};
         auto it = result->fval.convertFromString(fstr, APFloat::rmNearestTiesToEven);
         if (auto err = it.takeError()) {
-            SmallString<32> msg;
-            llvm::raw_svector_ostream OS(msg);
-            OS << err;
-            lex_error(loc, "error parsing floating literal: %R", msg.str());
+            std::string msg = llvm::toString(std::move(err));
+            lex_error(loc, "error parsing floating literal: %R", StringRef(msg));
         } else {
             auto status = *it;
             SmallString<20> buffer;
@@ -1843,41 +1924,57 @@ Expr parse_pp_number(const xstring str) {
         }
         return result;
     }
-    xint128_t bigVal = xint128_t::get();
+    bool overflow = false;
+    xint128_t bigVal = xint128_t::getZero();
     if (alwaysFitsInto64Bits(radix, NumDigits)) {
         uint64_t N = 0;
         for (auto Ptr = DigitsBegin; Ptr < SuffixBegin; ++Ptr)
             N = N * radix + llvm::hexDigitValue(*Ptr);
-        bigVal.m64[1] = N;
+        bigVal.setLow(N);
     } else {
-        dbgprint("large integer literal found...\n");
-        bool overflow = false;
         for (auto Ptr = DigitsBegin; Ptr < SuffixBegin; ++Ptr) {
             overflow |= umul_overflow(bigVal, radix, bigVal);
             overflow |= uadd_overflow(bigVal, llvm::hexDigitValue(*Ptr));
         }
         if (overflow)
-          warning("integer literal is too large to be represented in any integer type");
+          warning(loc, "integer literal is too large to be represented in any integer type(exceed 128 bits)");
     }
-    // bool AllowUnsigned = su.isUnsigned || radix != 10;
     CType ty = context.getInt();
+    uint64_t H = bigVal.high(),
+             L = bigVal.low();
     if (su.isLongLong) {
         ty = su.isUnsigned ? context.getULongLong() : context.getLongLong();
+        if (bigVal >> ty->getBitWidth())
+          warning("integer constant is too large with 'll' suffix");
     } else if (su.isLong) {
         ty = su.isUnsigned ? context.getULong() : context.getLong();
+        if (bigVal >> ty->getBitWidth())
+          warning("integer constant is too large with 'l' suffix");
     } else {
-        /*unsigned acts = result->ival.getActiveBits();
-        if (acts > 64) {
-            ty = context.typecache.u128;
-        } else if (acts > 32) {
-            ty = context.typecache.u64;
+        if (H) {
+          /* 128 bits */
+            if ((int64_t)H < 0)
+              ty = context.typecache.u128;
+            else
+              ty = context.typecache.i128;
         } else {
-            ty = context.typecache.u32;
-        }*/
-      ty = context.typecache.i32;
+          /* 64 bits */
+          if ((int64_t)L < 0) /* test MSB */
+            ty = context.typecache.u64;
+          else {
+            if (L >> 32) { /* more than 32 bits ? */
+              ty = context.typecache.i64;
+            } else { /* 32 bits */
+              if ((int32_t)L < 0) /* test MSB */
+                ty = context.typecache.u32;
+              else
+                ty = context.typecache.i32;
+            }
+          }
+        }
     }
     Expr result = ENEW(IntLitExpr) {.loc = loc, .ty = ty, .ival =
-       bigVal.m64[0] ? APInt(ty->getBitWidth(), ArrayRef<uint64_t>(bigVal.m64, 2)) : APInt(ty->getBitWidth(), bigVal.m64[1])
+       H ? APInt(ty->getBitWidth(), {H, L}) : APInt(ty->getBitWidth(), L)
     };
     return result;
 }
@@ -2515,6 +2612,10 @@ Expr parse_pp_number(const xstring str) {
     Expr e = expression();
     if (!e)
       return;
+    e = simplify(e);
+    if (issimple(e)) {
+      warning(loc, "expression statement has no effect");
+    }
     checkSemicolon();
     return doinsertStmt(SNEW(ExprStmt){.loc = loc, .exprbody = e});
   }

@@ -3,6 +3,7 @@
 #define ENEW(TY) (Expr)new(getAllocator())TY
 
 struct xcc_context {
+    xcc_context(xcc_context&) = delete;
     xcc_context(struct TextDiagnosticPrinter *printer = nullptr) : table{}, printer{printer},  
     typecache {
       .b=make(TYBOOL),

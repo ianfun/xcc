@@ -40,7 +40,7 @@ int main(int argc, const char **argv)
     llvmcontext->setOpaquePointers(true);
     llvmcontext->setDiagnosticHandler(std::make_unique<xcc::XCCDiagnosticHandler>());
 
-    xcc::IRGen ig(ctx, SM, llvmcontext, options);
+    xcc::IRGen ig(ctx, SM, *llvmcontext, options);
 
     xcc::Parser parser(SM, ctx, ig);
 

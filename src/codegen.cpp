@@ -748,15 +748,28 @@ void gen(Stmt s) {
                     newFunction(cast<llvm::FunctionType>(wrap(varty)), name, varty->tags);
                 }
                 else if (!currentfunction || varty->tags & (TYEXTERN | TYSTATIC)) {
-                    auto old = cast_or_null<llvm::GlobalVariable>(getVar(name));
-                    if (old) {
-                        if (varty->tags & TYEXTERN)
-                            break;
-                        old->eraseFromParent();
+                    llvm::GlobalVariable *GV;
+                    GV = cast_or_null<llvm::GlobalVariable>(getVar(name));
+                    if (GV) {
+                        auto L = GV->getLinkage();
+                        if (!(varty->tags & TYEXTERN)) {
+                            if (L == ExternalLinkage) {
+                                if (varty->tags & TYSTATIC)
+                                    GV->setLinkage(InternalLinkage); // make it from extern declaration to static
+                                else
+                                    GV->setLinkage(ExternalLinkage); // a definition!
+                            }
+                        }
+                        if (init) {
+                            GV->setInitializer(cast<llvm::Constant>(gen(init))); // now update initializer
+                            if (!(varty->tags & TYSTATIC))
+                                GV->setLinkage(ExternalLinkage); // a definition!
+                        }
+                        break;
                     }
                     Type ty = wrap(varty);
                     llvm::Constant *ginit = init ? cast<llvm::Constant>(gen(init)) : llvm::Constant::getNullValue(ty);
-                    llvm::GlobalVariable *GV = new llvm::GlobalVariable(M(), ty, false, ExternalLinkage, nullptr, name->getKey());
+                    GV = new llvm::GlobalVariable(M(), ty, false, ExternalLinkage, nullptr, name->getKey());
                     auto tags = varty->tags;
                     if (align)
                         GV->setAlignment(llvm::Align(align));
