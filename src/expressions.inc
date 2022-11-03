@@ -46,7 +46,7 @@ struct OpaqueExpr {
       Expr voidexpr;
     };
     struct {
-      IdentRef sval;
+      size_t sval;
     };
     struct {
       Expr cond, cleft, cright;
@@ -133,7 +133,7 @@ struct VarExpr {
   Location loc;
   CType ty;
 struct {
-      IdentRef sval;
+      size_t sval;
 
   };};
 struct ConditionExpr {

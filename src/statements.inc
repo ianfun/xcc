@@ -10,6 +10,8 @@ enum StmtKind: uint8_t {
   SExpr,
   SAsm,
   SVarDecl,
+  SDecl,
+  SUpdateForwardDecl,
   SFunction
 };
 struct NullStmt {
@@ -53,10 +55,21 @@ struct OpaqueStmt {
       xvector<VarDecl> vars;
   };
   struct {
-      IdentRef funcname;
+      size_t decl_idx;
+    CType decl_ty;
+  };
+  struct {
+      size_t prev_idx;
+    CType prev;
+    CType now;
+  };
+  struct {
+      size_t func_idx;
+    IdentRef funcname;
     CType functy;
     Stmt funcbody;
     unsigned numLabels;
+    xvector<size_t> args;
   };
 };};
 struct HeadStmt {
@@ -148,16 +161,39 @@ struct {
     xvector<VarDecl> vars;
 
   };};
+struct DeclStmt {
+  enum StmtKind k=SDecl;
+  Location loc;
+  Stmt next;
+struct {
+  
+    size_t decl_idx;
+    CType decl_ty;
+
+  };};
+struct UpdateForwardDeclStmt {
+  enum StmtKind k=SUpdateForwardDecl;
+  Location loc;
+  Stmt next;
+struct {
+  
+    size_t prev_idx;
+    CType prev;
+    CType now;
+
+  };};
 struct FunctionStmt {
   enum StmtKind k=SFunction;
   Location loc;
   Stmt next;
 struct {
   
+    size_t func_idx;
     IdentRef funcname;
     CType functy;
     Stmt funcbody;
     unsigned numLabels;
+    xvector<size_t> args;
 
   };};
 static uint8_t stmt_size_map[] = {
@@ -171,6 +207,8 @@ static uint8_t stmt_size_map[] = {
     sizeof(ExprStmt),
     sizeof(AsmStmt),
     sizeof(VarDeclStmt),
+    sizeof(DeclStmt),
+    sizeof(UpdateForwardDeclStmt),
     sizeof(FunctionStmt)
 };
-static constexpr size_t stmt_max_size = std::max({sizeof(HeadStmt), sizeof(CompoundStmt), sizeof(LabelStmt), sizeof(GotoStmt), sizeof(CondJumpStmt), sizeof(DeclOnlyStmt), sizeof(ReturnStmt), sizeof(ExprStmt), sizeof(AsmStmt), sizeof(VarDeclStmt), sizeof(FunctionStmt)});
+static constexpr size_t stmt_max_size = std::max({sizeof(HeadStmt), sizeof(CompoundStmt), sizeof(LabelStmt), sizeof(GotoStmt), sizeof(CondJumpStmt), sizeof(DeclOnlyStmt), sizeof(ReturnStmt), sizeof(ExprStmt), sizeof(AsmStmt), sizeof(VarDeclStmt), sizeof(DeclStmt), sizeof(UpdateForwardDeclStmt), sizeof(FunctionStmt)});

@@ -1,13 +1,14 @@
 #include "common.h"
 
-    auto ast = parser.run();
+    unsigned num_typedefs, num_tags;
+    auto ast = parser.run(num_typedefs, num_tags);
 
     if (ctx.printer->NumErrors)
         return 1;
 
-    ig.run(ast);
+    ig.run(ast, num_typedefs, num_tags);
 
-    xcc::IRModuleOutputFileHelper output(ctx, &ig.M(), "example.ll");
+    xcc::IRModuleOutputFileHelper output(ctx, ig.module, "example.ll");
 
     output.verify();
     //output.dump();
@@ -15,6 +16,5 @@
     output.IR();
     output.finalize();
 
-    delete &ig.M();
     return 0;
 }

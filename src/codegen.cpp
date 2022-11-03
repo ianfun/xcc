@@ -24,7 +24,7 @@ static constexpr auto
     DLLExportStorageClass = llvm::GlobalValue::DLLExportStorageClass;
 
 IRGen(xcc_context &context, SourceMgr &SM, LLVMContext &ctx, const Options &options): 
-    DiagnosticHelper{context}, SM{SM}, ctx{ctx}, builder{ctx}, options{options}, triple{options.triple} {
+    DiagnosticHelper{context}, SM{SM}, ctx{ctx}, B{ctx}, options{options}, triple{options.triple} {
     std::string Error;
     // auto theTriple = llvm::Triple(options.triple);
     auto target = llvm::TargetRegistry::lookupTarget(options.triple, Error);
@@ -66,7 +66,7 @@ IRGen(xcc_context &context, SourceMgr &SM, LLVMContext &ctx, const Options &opti
 llvm::Module *module = nullptr;
 SourceMgr &SM;
 LLVMContext &ctx;
-llvm::IRBuilder<> builder;
+llvm::IRBuilder<> B;
 SmallVector<DIScope, 7> lexBlocks;
 llvm::DIBuilder *di = nullptr;
 
@@ -80,7 +80,6 @@ llvm::Function *currentfunction = nullptr;
 llvm::ConstantInt *i32_1, *i32_0, *i32_n1;
 // LLVM false/true constant
 llvm::ConstantInt *i1_0, *i1_1;
-uint32_t last_line = -1;
 unsigned lastFileID = -1;
 llvm::DIFile *lastFile = nullptr;
 OnceAllocator alloc {};
@@ -89,53 +88,45 @@ DIType *ditypes = nullptr;
 // jump labels
 llvm::SmallVector<Label, 5> labels{};
 // struct/union
-size_t scopeTop = 0;
-using tags_type = DenseMap<IdentRef, Type>;
-SmallVector<tags_type> tags{}; // variables
-using vars_type = DenseMap<IdentRef, Value>;
-SmallVector<vars_type> vars{};
-using dtags_type = DenseMap<IdentRef, DIType>;
-SmallVector<dtags_type> dtags{};
+llvm::Value **vars;
+llvm::Type **tags;
+llvm::DIType **dtags;
+llvm::DIType **dtypes;
 Location debugLoc;
+DenseMap<CType, llvm::FunctionType*> function_type_cache{};
 
-llvm::IRBuilder<> &B() {
-    return builder;
-}
-llvm::Module &M() {
-    return *module;
-}
 llvm::DIBuilder &D() {
     return *di;
 }
 void store(Value p, Value v, uint32_t align = 0){
-    llvm::StoreInst *s = B().CreateStore(v, p);
+    llvm::StoreInst *s = B.CreateStore(v, p);
     if (align)
       s->setAlignment(llvm::Align(align));
 }
-LLVM_NODISCARD llvm::LoadInst *load(Value p, Type t, uint32_t align = 0) {
+llvm::LoadInst *load(Value p, Type t, uint32_t align = 0) {
     assert(p);
     assert(t);
-    llvm::LoadInst *i = B().CreateLoad(t, p, false);
+    llvm::LoadInst *i = B.CreateLoad(t, p, false);
     if (align)
         i->setAlignment(llvm::Align(align));
     return i;
 }
-LLVM_NODISCARD const llvm::Instruction *getTerminator() {
-    return B().GetInsertBlock()->getTerminator();
+const llvm::Instruction *getTerminator() {
+    return B.GetInsertBlock()->getTerminator();
 }
-LLVM_NODISCARD llvm::ValueAsMetadata *mdNum(uint64_t num) {
+llvm::ValueAsMetadata *mdNum(uint64_t num) {
     Value v = llvm::ConstantInt::get(types[x32], num);
     return llvm::ValueAsMetadata::get(v);
 }
-LLVM_NODISCARD DIScope getLexScope() {
+DIScope getLexScope() {
     return lexBlocks.back();
 }
-LLVM_NODISCARD StringRef getFileStr(unsigned ID) {
+StringRef getFileStr(unsigned ID) {
     return SM.getFileName(ID);
 }
-LLVM_NODISCARD llvm::DIFile *getFile(unsigned ID) {
+llvm::DIFile *getFile(unsigned ID) {
     if (lastFileID != ID)
-        return lastFileID = ID, (lastFile = D().createFile(getFileStr(ID), StringRef(options.CWD.data(), options.CWD.size())));
+        return lastFileID = ID, (lastFile = di->createFile(getFileStr(ID), StringRef(options.CWD.data(), options.CWD.size())));
     return lastFile;
 }
 llvm::DILocation *wrap(Location loc){
@@ -143,106 +134,38 @@ llvm::DILocation *wrap(Location loc){
 }
 void append(Label theBB) {
     currentfunction->getBasicBlockList().push_back(theBB);
-    B().SetInsertPoint(theBB);
+    B.SetInsertPoint(theBB);
 }
 void after(Label loc) {
-    B().SetInsertPoint(loc);
-}
-LLVM_NODISCARD Label addBlock(Twine Name = "") {
-  return llvm::BasicBlock::Create(ctx, Name, currentfunction);
+    B.SetInsertPoint(loc);
 }
 void emitDebugLocation() {
-    B().SetCurrentDebugLocation(llvm::DebugLoc());
+    B.SetCurrentDebugLocation(llvm::DebugLoc());
 }
-void enterScope() {
-    if (++scopeTop >= tags.size()) {
-        tags.push_back(tags_type());
-        vars.push_back(vars_type());
-        if (options.g)
-            dtags.push_back(dtags_type());
-    }
-}
-void leaveScope() {
-    tags.back().clear();
-    vars.back().clear();
-    if (options.g)
-        dtags.back().clear();
-    --scopeTop;
-}
-LLVM_NODISCARD Label getLabel(label_t L) {
-    return labels[L];
-}
-LLVM_NODISCARD Value getVar(IdentRef s) {
-    for (size_t i = scopeTop;i != (size_t)-1;i--) {
-        auto it = vars[i].find(s);
-        if (it != vars[i].end())
-            return it->second;
-    }
-    return nullptr;
-}
-LLVM_NODISCARD Type getTags(IdentRef s) {
-    for (size_t i = scopeTop;i != (size_t)-1;i--) {
-        auto it = tags[i].find(s);
-        if (it != tags[i].end())
-            return it->second;
-    }
-    return nullptr;
-}
-LLVM_NODISCARD DIType getDIEnum(IdentRef s) {
-    for (size_t i = scopeTop;i != (size_t)-1;i--) {
-        auto it = dtags[i].find(s);
-        if (it != dtags[i].end())
-            return it->second;    
-    }
-    return nullptr;
-}
-void putTags(IdentRef name, Type ty) {
-    tags[scopeTop][name] = ty;
-}
-void putDIEnum(IdentRef name, DIType ty) {
-    dtags[scopeTop][name] = ty;
-}
-void putVar(IdentRef name, Value val) {
-    vars[scopeTop][name] = val;
-}
-LLVM_NODISCARD Type wrap(CType ty) {
+inline void enterScope() {}
+inline void leaveScope() {}
+Type wrap(CType ty) {
     // wrap a CType to LLVM Type
     switch (ty->k) {
         case TYPRIM:
             return types[getNoSignTypeIndex(ty->tags)];
         case TYPOINTER:
             return types[xptr];
-        case TYSTRUCT:
-        case TYUNION:
-        {
-            auto hasName = ty->sname && ty->sname->getKeyLength();
-            // try to find old definition or declaration
-            llvm::StructType *result;
-
-            if (hasName) {
-                result = cast<llvm::StructType>(getTags(ty->sname));
-                if (result && !result->isOpaque())
-                    return result;
-            }
-            size_t l = ty->selems.size();
-            Type *buf = alloc.Allocate<Type>(l);
-            for (size_t i = 0;i < l;++i)
-                buf[i] = wrap(ty->selems[i].ty);
-            // set struct body
-            result = llvm::StructType::create(ArrayRef<Type>(buf, l), ty->sname->getKey(), false);
-            // record it
-            if (hasName)
-            putTags(ty->sname, result);
-            return result;
-        }
         case TYFUNCTION:
         {
+            // fast case: search cached
+            auto it = function_type_cache.find(ty);
+            if (it != function_type_cache.end())
+                return it->second;
+            // slow case: wrap all
             size_t l = ty->params.size();
             Type *buf = alloc.Allocate<Type>(l);
             size_t i = 0;
             for (const auto &it: ty->params)
                 buf[i++] = wrap(it.ty);
-            return llvm::FunctionType::get(wrap(ty->ret), ArrayRef<Type>{buf, i}, ty->isVarArg);
+            auto T = llvm::FunctionType::get(wrap(ty->ret), ArrayRef<Type>{buf, i}, ty->isVarArg);
+            function_type_cache[ty] = T; // add to cache
+            return T;
         }
         case TYARRAY:
             return llvm::ArrayType::get(wrap(ty->arrtype), ty->arrsize);
@@ -252,12 +175,7 @@ LLVM_NODISCARD Type wrap(CType ty) {
             switch (ty->tag) {
                 case TYSTRUCT:
                 case TYUNION:
-                {
-                    Type result = getTags(ty->name);
-                    if (result)
-                        return result;
-                    return llvm::StructType::create(ctx, ty->name->getKey());
-                }
+                    return tags[ty->iidx];
                 case TYENUM:
                     return types[x32];
                 default:
@@ -268,62 +186,62 @@ LLVM_NODISCARD Type wrap(CType ty) {
             llvm_unreachable("unexpected type!");
     }
 }
-LLVM_NODISCARD DIType wrap3(CType ty) {
+DIType wrap3(CType ty) {
     DIType result = wrap3Noqualified(ty);
     if (result) {
         if (ty->tags & TYCONST)
-            result = D().createQualifiedType(llvm::dwarf::DW_TAG_const_type, result);
+            result = di->createQualifiedType(llvm::dwarf::DW_TAG_const_type, result);
         if (ty->tags & TYVOLATILE)
-            result = D().createQualifiedType(llvm::dwarf::DW_TAG_volatile_type, result);
+            result = di->createQualifiedType(llvm::dwarf::DW_TAG_volatile_type, result);
         if (ty->tags & TYRESTRICT)
-            result = D().createQualifiedType(llvm::dwarf::DW_TAG_restrict_type, result);
+            result = di->createQualifiedType(llvm::dwarf::DW_TAG_restrict_type, result);
     }
     return result;
 }
 void emitDebugLocation(Expr e) {
     debugLoc = e->loc;
     if (options.g)
-        B().SetCurrentDebugLocation(wrap(e->loc));
+        B.SetCurrentDebugLocation(wrap(e->loc));
 }
 void emitDebugLocation(Stmt e) {
     debugLoc = e->loc;
     if (options.g)
-        B().SetCurrentDebugLocation(wrap(e->loc));
+        B.SetCurrentDebugLocation(wrap(e->loc));
 }
-LLVM_NODISCARD llvm::IntegerType *getIntPtr() {
+llvm::IntegerType *getIntPtr() {
     return layout->getIntPtrType(ctx);
 }
 llvm::Function *addFunction(llvm::FunctionType *ty, const Twine &N) {
-    return llvm::Function::Create(ty, ExternalLinkage, N, &M());
+    return llvm::Function::Create(ty, ExternalLinkage, N, module);
 }
 void handle_asm(StringRef s) {
     if (currentfunction)
         // module level asm
-        M().appendModuleInlineAsm(s);
+        module->appendModuleInlineAsm(s);
     else {
         auto ty = llvm::FunctionType::get(types[xvoid], false);
         auto f = llvm::InlineAsm::get(ty, s, StringRef(), true);
-        B().CreateCall(ty, f);
+        B.CreateCall(ty, f);
     }
 }
-LLVM_NODISCARD Value gen_condition(Expr test ,Expr lhs, Expr rhs) {
+Value gen_condition(Expr test ,Expr lhs, Expr rhs) {
     // build a `cond ? lhs : rhs` expression
     Type ty = wrap(lhs->ty);
-    Label iftrue = addBlock();
-    Label iffalse = addBlock();
-    Label ifend = addBlock();
-    B().CreateCondBr(gen_cond(test), iftrue, iffalse);
+    Label iftrue = llvm::BasicBlock::Create(ctx, "", currentfunction);
+    Label iffalse = llvm::BasicBlock::Create(ctx);
+    Label ifend = llvm::BasicBlock::Create(ctx);
+    B.CreateCondBr(gen_cond(test), iftrue, iffalse);
 
     after(iftrue);
     Value left = gen(lhs);
-    B().CreateBr(ifend);
-    
-    after(iffalse);
+    B.CreateBr(ifend);
+   
+    append(iffalse);
     Value right = gen(rhs);
-    B().CreateBr(ifend);
+    B.CreateBr(ifend);
 
-    after(ifend);
-    auto phi = B().CreatePHI(ty, 2);
+    append(ifend);
+    auto phi = B.CreatePHI(ty, 2);
 
     phi->addIncoming(left, iftrue);
     phi->addIncoming(right, iffalse);
@@ -334,7 +252,7 @@ llvm::DISubroutineType *createDebugFuctionType(CType ty) {
     llvm::Metadata **buf = alloc.Allocate<llvm::Metadata*>(L);
     for (size_t i = 0;i < L;++i)
         buf[i] = wrap3(ty->params[i].ty);
-    return D().createSubroutineType(D().getOrCreateTypeArray(ArrayRef<llvm::Metadata*>(buf, L)));
+    return di->createSubroutineType(di->getOrCreateTypeArray(ArrayRef<llvm::Metadata*>(buf, L)));
 }
 auto getSizeInBits(Type ty) {
     return layout->getTypeSizeInBits(ty);
@@ -363,23 +281,23 @@ auto getAlignof(CType ty) {
 auto getAlignof(Expr e) {
     return getAlignof(e->ty);
 }
-LLVM_NODISCARD llvm::MDString *mdStr(StringRef str) {
+llvm::MDString *mdStr(StringRef str) {
     return llvm::MDString::get(ctx, str);
 }
-LLVM_NODISCARD llvm::MDNode *mdNode(llvm::Metadata *m) {
+llvm::MDNode *mdNode(llvm::Metadata *m) {
     return llvm::MDNode::get(ctx, {m});
 }
-LLVM_NODISCARD llvm::MDNode *mdNode(ArrayRef<llvm::Metadata*> m) {
+llvm::MDNode *mdNode(ArrayRef<llvm::Metadata*> m) {
     return llvm::MDNode::get(ctx, m);
 }
 void addModule(StringRef source_file, StringRef ModuleID = "main") {
     module = new llvm::Module(ModuleID, ctx);
-    M().setSourceFileName(source_file);
-    M().setDataLayout(*layout);
-    M().setTargetTriple(triple.str());
+    module->setSourceFileName(source_file);
+    module->setDataLayout(*layout);
+    module->setTargetTriple(triple.str());
 
-    auto llvm_ident = M().getOrInsertNamedMetadata("llvm.ident");
-    auto llvm_flags = M().getOrInsertNamedMetadata("llvm.module.flags");
+    auto llvm_ident = module->getOrInsertNamedMetadata("llvm.ident");
+    auto llvm_flags = module->getOrInsertNamedMetadata("llvm.module.flags");
     llvm_ident->addOperand(mdNode(mdStr(CC_VERSION_FULL)));
 
     llvm_flags->addOperand(mdNode({mdNum(1), mdStr("short_enum"), mdNum(1)}));
@@ -387,54 +305,59 @@ void addModule(StringRef source_file, StringRef ModuleID = "main") {
     llvm_flags->addOperand(mdNode({mdNum(1), mdStr("short_wchar"), mdNum(1)}));
 
     if (options.g) {
-        di = new llvm::DIBuilder(M());
-        llvm::DIFile *file = D().createFile(source_file, options.CWD.str());
-        lexBlocks.push_back(D().createCompileUnit(llvm::dwarf::DW_LANG_C99, file, CC_VERSION_FULL, false, "", 0));
+        di = new llvm::DIBuilder(*module);
+        llvm::DIFile *file = di->createFile(source_file, options.CWD.str());
+        lexBlocks.push_back(di->createCompileUnit(llvm::dwarf::DW_LANG_C99, file, CC_VERSION_FULL, false, "", 0));
         ditypes = new DIType[(size_t)TypeIndexHigh];
         ditypes[voidty] = nullptr;
-        ditypes[i1ty] = D().createBasicType("_Bool", 1, llvm::dwarf::DW_ATE_boolean);
-        ditypes[i8ty] = D().createBasicType("char", 8, llvm::dwarf::DW_ATE_signed_char);
-        ditypes[u8ty] = D().createBasicType("unsigned char", 8, llvm::dwarf::DW_ATE_unsigned_char);
-        ditypes[i16ty] = D().createBasicType("short", 16, llvm::dwarf::DW_ATE_signed);
-        ditypes[u16ty] = D().createBasicType("unsigned short", 16, llvm::dwarf::DW_ATE_unsigned);
-        ditypes[i32ty] = D().createBasicType("int", 32, llvm::dwarf::DW_ATE_signed);
-        ditypes[u32ty] = D().createBasicType("unsigned", 32, llvm::dwarf::DW_ATE_unsigned);
-        ditypes[i64ty] = D().createBasicType("long long", 64, llvm::dwarf::DW_ATE_signed);
-        ditypes[u64ty] = D().createBasicType("unsigned long long", 64, llvm::dwarf::DW_ATE_unsigned);
-        ditypes[i128ty] = D().createBasicType("__int128", 128, llvm::dwarf::DW_ATE_unsigned);
-        ditypes[u128ty] = D().createBasicType("__uint128", 128, llvm::dwarf::DW_ATE_unsigned);
-        ditypes[floatty] = D().createBasicType("float", getSizeInBits(types[xfloat]), llvm::dwarf::DW_ATE_decimal_float);
-        ditypes[doublety] = D().createBasicType("double", getSizeInBits(types[xdouble]), llvm::dwarf::DW_ATE_decimal_float);
-        ditypes[ptrty] = D().createPointerType(nullptr, layout->getPointerTypeSizeInBits(types[xptr]), 0, llvm::None, "void*");
-        M().addModuleFlag(llvm::Module::Warning, "Debug Info Version", llvm::DEBUG_METADATA_VERSION);
-        M().addModuleFlag(llvm::Module::Warning, "Dwarf Version", llvm::dwarf::DWARF_VERSION);
+        ditypes[i1ty] = di->createBasicType("_Bool", 1, llvm::dwarf::DW_ATE_boolean);
+        ditypes[i8ty] = di->createBasicType("char", 8, llvm::dwarf::DW_ATE_signed_char);
+        ditypes[u8ty] = di->createBasicType("unsigned char", 8, llvm::dwarf::DW_ATE_unsigned_char);
+        ditypes[i16ty] = di->createBasicType("short", 16, llvm::dwarf::DW_ATE_signed);
+        ditypes[u16ty] = di->createBasicType("unsigned short", 16, llvm::dwarf::DW_ATE_unsigned);
+        ditypes[i32ty] = di->createBasicType("int", 32, llvm::dwarf::DW_ATE_signed);
+        ditypes[u32ty] = di->createBasicType("unsigned", 32, llvm::dwarf::DW_ATE_unsigned);
+        ditypes[i64ty] = di->createBasicType("long long", 64, llvm::dwarf::DW_ATE_signed);
+        ditypes[u64ty] = di->createBasicType("unsigned long long", 64, llvm::dwarf::DW_ATE_unsigned);
+        ditypes[i128ty] = di->createBasicType("__int128", 128, llvm::dwarf::DW_ATE_unsigned);
+        ditypes[u128ty] = di->createBasicType("__uint128", 128, llvm::dwarf::DW_ATE_unsigned);
+        ditypes[floatty] = di->createBasicType("float", getSizeInBits(types[xfloat]), llvm::dwarf::DW_ATE_decimal_float);
+        ditypes[doublety] = di->createBasicType("double", getSizeInBits(types[xdouble]), llvm::dwarf::DW_ATE_decimal_float);
+        ditypes[ptrty] = di->createPointerType(nullptr, layout->getPointerTypeSizeInBits(types[xptr]), 0, llvm::None, "void*");
+        module->addModuleFlag(llvm::Module::Warning, "Debug Info Version", llvm::DEBUG_METADATA_VERSION);
+        module->addModuleFlag(llvm::Module::Warning, "Dwarf Version", llvm::dwarf::DWARF_VERSION);
     }
 }
 void finalsizeCodeGen() {
-    if (options.g) {
-        D().finalize();
+    if (di) {
+        di->finalize();
         delete di;
-        delete [] ditypes;
     }
+    if (ditypes)
+        delete [] ditypes;
+    if (dtags)
+        delete [] dtags;
 }
-void run(Stmt s) {
-    assert(s->k == SHead && "expect translation-unit");
+void run(Stmt s, unsigned num_typedefs, unsigned num_tags) {
+    vars = new Value[num_typedefs]();
+    tags = new Type[num_tags]();
+    if (options.g)
+        dtags = new DIType[num_tags]();
     addModule("main");
     enterScope();
-    scopeTop = 0;
     for (Stmt ptr = s->next;ptr;ptr = ptr->next)
         gen(ptr);
     leaveScope();
     finalsizeCodeGen();
 }
-LLVM_NODISCARD Value gen_cond(Expr e) {
+Value gen_cond(Expr e) {
     // generate bool(conditional) expression
     Value i = gen(e);
     if (e->ty->tags & TYBOOL)
         return i;
-    return B().CreateIsNotNull(i);
+    return B.CreateIsNotNull(i);
 }
-LLVM_NODISCARD Type wrap2(CType ty) {
+Type wrap2(CType ty) {
     switch (ty->k) {
         case TYPRIM:
           return types[getNoSignTypeIndex(ty->tags)];
@@ -457,123 +380,123 @@ LLVM_NODISCARD Type wrap2(CType ty) {
           llvm_unreachable("");
     }
 }
-LLVM_NODISCARD DIType createEnum(CType ty) {
+DIType createEnum(CType ty, llvm::DICompositeType *old) {
     llvm::Metadata **buf = alloc.Allocate<llvm::Metadata*>(ty->eelems.size());
     StringRef Name;
     if (ty->ename)
         Name = ty->ename->getKey();
     for (size_t i = 0;i < ty->eelems.size();i++) {
-        buf[i] = D().createEnumerator(ty->eelems[i].name->getKey(), ty->eelems[i].val);
+        buf[i] = di->createEnumerator(ty->eelems[i].name->getKey(), ty->eelems[i].val);
     }
-    return D().createEnumerationType( 
+
+    auto MD = di->createEnumerationType( 
         getLexScope(),
         Name,
-        getFile(debugLoc.id), 0,
+        getFile(debugLoc.id), debugLoc.line,
         getSizeInBits(types[x32]), 0, 
-        D().getOrCreateArray(ArrayRef<llvm::Metadata*>(buf, ty->selems.size())),
+        di->getOrCreateArray(ArrayRef<llvm::Metadata*>(buf, ty->selems.size())),
         ditypes[i32ty]
     );
+    if (old) {
+        old = llvm::MDNode::replaceWithPermanent(llvm::TempDICompositeType(old));
+        llvm::MetadataTracking::untrack(&old, *old);
+    }
+    return MD;
 }
-LLVM_NODISCARD DIType wrap3Noqualified(CType ty) {
+DIType wrap3Noqualified(CType ty) {
     switch (ty->k) {
         case TYPRIM:
             return ditypes[getTypeIndex(ty->tags)];
         case TYPOINTER:
             if (ty->tags & TYVOID)
                 return ditypes[ptrty];
-            return D().createPointerType(wrap3(ty->p), ditypes[ptrty]->getSizeInBits());
+            return di->createPointerType(wrap3(ty->p), ditypes[ptrty]->getSizeInBits());
         case TYSTRUCT: 
         case TYUNION:
         {
-            bool hasName = ty->sname && ty->sname->getKeyLength();
+            return dtags[ty->sidx];
+            /*
             StringRef Name;
-            if (hasName) {
+            DIType T;
+            if (ty->sname) {
                 Name = ty->sname->getKey();
-                auto result = getDIEnum(ty->sname);
-                if (result)
-                    return result;
+                T = dtags[ty->sidx];
+                if (!T->isForwardDecl())
+                    return T;
             }
             auto t = cast<llvm::StructType>(wrap(ty));
             auto slayout = layout->getStructLayout(t);
             size_t L = ty->selems.size();
             llvm::Metadata **buf = alloc.Allocate<llvm::Metadata*>(L);
             for (size_t i = 0;i < L;i++) {
-                buf[i] = D().createMemberType(
+                buf[i] = di->createMemberType(
                     getLexScope(), ty->selems[i].name->getKey(),
-                    getFile(debugLoc.id), 0, getsizeof(ty->selems[i].ty),
+                    getFile(debugLoc.id), debugLoc.line, getsizeof(ty->selems[i].ty),
                     0, slayout->getElementOffsetInBits(i),
                     llvm::DINode::FlagZero,
                     wrap3(ty->selems[i].ty)
                 );
             }
             DIType result = (ty->k == TYSTRUCT) ?  
-                    D().createStructType(
+                    di->createStructType(
                     getLexScope(), Name,
-                    getFile(debugLoc.id), 0,
+                    getFile(debugLoc.id), debugLoc.line,
                     slayout->getSizeInBits(), 
                     slayout->getAlignment().value() * 8, 
-                    llvm::DINode::FlagZero, nullptr, D().getOrCreateArray(ArrayRef<llvm::Metadata*>{buf, L})) :
-                    D().createUnionType(
+                    llvm::DINode::FlagZero, nullptr, di->getOrCreateArray(ArrayRef<llvm::Metadata*>{buf, L})) :
+                    di->createUnionType(
                     getLexScope(), Name,
-                    getFile(debugLoc.id), 0,
+                    getFile(debugLoc.id), debugLoc.line,
                     slayout->getSizeInBits(), 
                     slayout->getAlignment().value() * 8, 
-                    llvm::DINode::FlagZero, D().getOrCreateArray(ArrayRef<llvm::Metadata*>{buf, L}));
-            if (hasName)
-                putDIEnum(ty->sname, result);
+                    llvm::DINode::FlagZero, di->getOrCreateArray(ArrayRef<llvm::Metadata*>{buf, L}));
+            if (ty->sname)
+                dtags[ty->sidx] = result;
             return result;
+            */
         }
         case TYARRAY:
         {
             auto size = getsizeof(ty);
             auto subscripts = ty->hassize ?
-                D().getOrCreateSubrange(0, ty->arrsize) :
-                D().getOrCreateSubrange(0, nullptr);
-            auto arr = D().getOrCreateArray(ArrayRef<llvm::Metadata*>{subscripts});
-            return D().createArrayType(size, getAlignof(ty) * 8, wrap3(ty->arrtype), arr);
+                di->getOrCreateSubrange(0, ty->arrsize) :
+                di->getOrCreateSubrange(0, nullptr);
+            auto arr = di->getOrCreateArray(ArrayRef<llvm::Metadata*>{subscripts});
+            return di->createArrayType(size, getAlignof(ty) * 8, wrap3(ty->arrtype), arr);
         }
         case TYFUNCTION:
             return createDebugFuctionType(ty);
         case TYENUM:
-        {
-            bool hasName = ty->ename && ty->ename->getKeyLength();
-            if (hasName) {
-                auto result = getDIEnum(ty->ename);
-                if (result)
-                    return result;
-            }
-            auto result = createEnum(ty);
-            if (hasName)
-                putDIEnum(ty->ename, result);
-            return result;
-        }
+            return dtags[ty->eidx];
+        case TYINCOMPLETE:
+            return dtags[ty->iidx];
         default:
             return nullptr;
     }
 }
-LLVM_NODISCARD Value gen_logical(Expr lhs, Expr rhs, bool isand = true) {
-    Label rightBB = addBlock();
+Value gen_logical(Expr lhs, Expr rhs, bool isand = true) {
+    Label rightBB = llvm::BasicBlock::Create(ctx);
     Label phiBB = llvm::BasicBlock::Create(ctx);
     auto R = gen_cond(lhs);
-    Label leftBB = B().GetInsertBlock();
+    Label leftBB = B.GetInsertBlock();
 
     isand ? 
-        B().CreateCondBr(R, rightBB, phiBB) : 
-        B().CreateCondBr(R, phiBB, rightBB);
+        B.CreateCondBr(R, rightBB, phiBB) : 
+        B.CreateCondBr(R, phiBB, rightBB);
 
-    after(rightBB);
+    append(rightBB);
     auto L = gen_cond(rhs);
     // gen_cond may change the basic block
-    rightBB = B().GetInsertBlock();
-    B().CreateBr(phiBB);
+    rightBB = B.GetInsertBlock();
+    B.CreateBr(phiBB);
 
     append(phiBB);
-    auto phi = B().CreatePHI(types[x1], 2);
+    auto phi = B.CreatePHI(types[x1], 2);
     phi->addIncoming(R, leftBB);
     phi->addIncoming(L, rightBB);
     return phi;
 }
-llvm::Instruction::CastOps getCastOp(CastOp a){
+auto getCastOp(CastOp a) {
     switch (a) {
         case Trunc:    return llvm::Instruction::Trunc;
         case ZExt:     return llvm::Instruction::ZExt;
@@ -590,27 +513,21 @@ llvm::Instruction::CastOps getCastOp(CastOp a){
         default: llvm_unreachable("bad cast operator");
     }
 }
-
-void addAttribute(llvm::Function *F, llvm::Attribute::AttrKind attrID) {
-    auto attr = llvm::Attribute::get(ctx, attrID);
-    F->addAttributeAtIndex(llvm::AttributeList::FunctionIndex, attr);
-}
-llvm::Function *newFunction(llvm::FunctionType *fty, IdentRef name, uint32_t tags) {
-    auto old = vars.front().find(name);
-    if (old != vars.front().end())
-        return cast<llvm::Function>(old->second);
-
+llvm::Function *newFunction(llvm::FunctionType *fty, IdentRef name, uint32_t tags, size_t idx) {
+    auto old = module->getFunction(name->getKey());
+    if (old)
+        return old;
     auto F = addFunction(fty, name->getKey());
     F->setDSOLocal(true);
-    addAttribute(F, llvm::Attribute::NoUnwind);
-    addAttribute(F, llvm::Attribute::OptimizeForSize);
+    F->setDoesNotThrow();
+    F->addFnAttr(llvm::Attribute::OptimizeForSize);
     if (tags & TYSTATIC)
-        F->setLinkage(llvm::GlobalValue::InternalLinkage);
+        F->setLinkage(InternalLinkage);
     if (tags & TYNORETURN)
-        addAttribute(F, llvm::Attribute::NoReturn);
+        F->setDoesNotReturn();
     if (tags & TYINLINE)
-        addAttribute(F, llvm::Attribute::InlineHint);
-    vars.front()[name] = F;
+        F->addFnAttr(llvm::Attribute::InlineHint);
+    vars[idx] = F;
     return F;
 }
 StringRef getLinkageName(uint32_t tags) {
@@ -631,13 +548,62 @@ void gen(Stmt s) {
         case SCompound:
         {
             if (options.g)
-                lexBlocks.push_back(D().createLexicalBlock(getLexScope(), getFile(s->loc.id), s->loc.line, s->loc.col));
+                lexBlocks.push_back(di->createLexicalBlock(getLexScope(), getFile(s->loc.id), s->loc.line, s->loc.col));
             enterScope();
             for (Stmt ptr = s->inner;ptr;ptr = ptr->next)
                 gen(ptr);
             leaveScope();
             if (options.g)
                 lexBlocks.pop_back();
+        } break;
+        case SDecl:
+        {
+            if (s->decl->k == TYINCOMPLETE) {
+                if (s->decl->k != TYENUM) {
+                    auto T = llvm::StructType::create(ctx, s->decl->name->getKey());
+                    tags[s->decl_idx] = T;
+                }
+                if (options.g) {
+                    unsigned tag;
+                    switch (s->decl->tag) {
+                        case TYSTRUCT: tag = llvm::dwarf::DW_TAG_structure_type;break;
+                        case TYENUM: tag = llvm::dwarf::DW_TAG_enumeration_type;break;
+                        case TYUNION: tag = llvm::dwarf::DW_TAG_union_type;break;
+                        default: llvm_unreachable("invalid type tag");
+                    }
+                    auto MD = di->createReplaceableCompositeType(
+                        tag, 
+                        s->decl->name->getKey(),
+                        getLexScope(),
+                        getFile(s->loc.line),
+                        s->loc.line
+                    );
+                    dtags[s->decl_idx] = MD;
+                }
+            } else {
+                if (s->decl->tag != TYENUM) {
+                    size_t l = s->decl->selems.size();
+                    Type *buf = alloc.Allocate<Type>(l);
+                    for (size_t i = 0;i < l;++i)
+                        buf[i] = wrap(s->decl->selems[i].ty);
+                    ArrayRef<Type> arr(buf, l);
+                    tags[s->decl_idx] = s->decl->sname ?
+                        llvm::StructType::create(arr, s->decl->sname->getKey()) :
+                        llvm::StructType::create(arr);
+                }
+            }
+        } break;
+        case SUpdateForwardDecl:
+        {
+            if (s->now->tags != TYENUM) {
+                auto T = cast<llvm::StructType>(tags[s->prev_idx]);
+                size_t L = s->now->selems.size();
+                Type *buf = alloc.Allocate<Type>(L);
+                for (size_t i = 0;i < L;++i)
+                    buf[i] = wrap(s->now->selems[i].ty);
+                T->setBody(ArrayRef<Type>(buf, L));
+            }
+            // replaceAllUsesWith
         } break;
         case SExpr:
             (void)gen(s->exprbody);
@@ -647,11 +613,10 @@ void gen(Stmt s) {
             assert(this->labels.empty());
             enterScope();
             auto ty = cast<llvm::FunctionType>(wrap(s->functy));
-            currentfunction = newFunction(ty, s->funcname, s->functy->tags);
-            auto &list = currentfunction->getBasicBlockList();
+            currentfunction = newFunction(ty, s->funcname, s->functy->tags, s->func_idx);
             llvm::DISubprogram *sp = nullptr;
             if (options.g) {
-                sp = D().createFunction(
+                sp = di->createFunction(
                     getLexScope(), 
                     s->funcname->getKey(), getLinkageName(s->functy->ret->tags), 
                     getFile(s->loc.id), 
@@ -661,21 +626,20 @@ void gen(Stmt s) {
                 emitDebugLocation();
             }
             Label entry = llvm::BasicBlock::Create(ctx, "entry");
-            list.push_back(entry);
-            B().SetInsertPoint(entry);
+            append(entry);
             for (unsigned i = 0;i < s->numLabels;i++)   
                 this->labels.push_back(llvm::BasicBlock::Create(ctx));
             unsigned arg_no = 0;
             for (auto arg = currentfunction->arg_begin();arg != currentfunction->arg_end();++arg) {
                 auto pty = ty->getParamType(arg_no);
-                auto p = B().CreateAlloca(pty);
+                auto p = B.CreateAlloca(pty);
                 auto name = s->functy->params[arg_no].name;
                 if (options.g) {
-                    auto meta = D().createParameterVariable(getLexScope(), name->getKey(), arg_no, getFile(s->loc.id), s->loc.line, wrap3(s->functy->params[arg_no].ty));
-                    D().insertDeclare(p, meta, D().createExpression(), wrap(s->loc), entry);
+                    auto meta = di->createParameterVariable(getLexScope(), name->getKey(), arg_no, getFile(s->loc.id), s->loc.line, wrap3(s->functy->params[arg_no].ty));
+                    di->insertDeclare(p, meta, di->createExpression(), wrap(s->loc), entry);
                 }
                 store(p, arg);
-                putVar(name, p);
+                vars[s->args[arg_no]] = p;
                 ++arg_no;
             }
             for (Stmt ptr = s->funcbody->next;ptr;ptr = ptr->next) 
@@ -683,21 +647,21 @@ void gen(Stmt s) {
             if (!getTerminator()) {
                 auto retTy = ty->getReturnType();
                 if (retTy->isVoidTy()) {
-                    B().CreateRetVoid();
+                    B.CreateRetVoid();
                 } else {
-                    B().CreateRet(llvm::UndefValue::get(retTy));
+                    B.CreateRet(llvm::UndefValue::get(retTy));
                 }
             }
             leaveScope();
             if (options.g) {
                 lexBlocks.pop_back();
-                D().finalizeSubprogram(sp);
+                di->finalizeSubprogram(sp);
             }
             this->labels.clear();
             this->currentfunction = nullptr;
         } break;
         case SReturn:
-            B().CreateRet(s->ret ? gen(s->ret) : nullptr);
+            B.CreateRet(s->ret ? gen(s->ret) : nullptr);
             break;
         case SDeclOnly:
             if (options.g)
@@ -706,29 +670,29 @@ void gen(Stmt s) {
             break;
         case SLabel:
         {
-            auto BB = getLabel(s->label);
+            auto BB = labels[s->label];
             if (!getTerminator())
-                B().CreateBr(BB);
+                B.CreateBr(BB);
             after(BB);
             BB->insertInto(currentfunction);
             if (options.g && s->labelName) {
                 BB->setName(s->labelName->getKey());
-                auto LabelInfo = D().createLabel(getLexScope(), s->labelName->getKey(), getFile(s->loc.id), s->loc.line);
-                D().insertLabel(LabelInfo, wrap(s->loc), BB);
+                auto LabelInfo = di->createLabel(getLexScope(), s->labelName->getKey(), getFile(s->loc.id), s->loc.line);
+                di->insertLabel(LabelInfo, wrap(s->loc), BB);
             }
         } break;
         case SGoto:
         {
-            auto BB = getLabel(s->location);
+            auto BB = labels[s->location];
             if (!getTerminator())
-                B().CreateBr(BB);
+                B.CreateBr(BB);
             //after(BB);
         } break;
         case SCondJump:
         {
             auto cond = gen_cond(s->test);
             if (!getTerminator()) {
-                B().CreateCondBr(cond, getLabel(s->T), getLabel(s->F));
+                B.CreateCondBr(cond, labels[s->T], labels[s->F]);
             }
         } break;
         case SAsm:
@@ -740,16 +704,16 @@ void gen(Stmt s) {
                 auto name = it.name;
                 auto varty = it.ty;
                 auto init = it.init;
+                auto idx = it.idx;
                 auto align = varty->align;
                 if (varty->tags & TYTYPEDEF) {
                     /* nothing */
                 }
                 else if (varty->k == TYFUNCTION) {
-                    newFunction(cast<llvm::FunctionType>(wrap(varty)), name, varty->tags);
+                    newFunction(cast<llvm::FunctionType>(wrap(varty)), name, varty->tags, idx);
                 }
                 else if (!currentfunction || varty->tags & (TYEXTERN | TYSTATIC)) {
-                    llvm::GlobalVariable *GV;
-                    GV = cast_or_null<llvm::GlobalVariable>(getVar(name));
+                    auto GV = module->getGlobalVariable(name->getKey(), true);
                     if (GV) {
                         auto L = GV->getLinkage();
                         if (!(varty->tags & TYEXTERN)) {
@@ -769,7 +733,7 @@ void gen(Stmt s) {
                     }
                     Type ty = wrap(varty);
                     llvm::Constant *ginit = init ? cast<llvm::Constant>(gen(init)) : llvm::Constant::getNullValue(ty);
-                    GV = new llvm::GlobalVariable(M(), ty, false, ExternalLinkage, nullptr, name->getKey());
+                    GV = new llvm::GlobalVariable(*module, ty, false, ExternalLinkage, nullptr, name->getKey());
                     auto tags = varty->tags;
                     if (align)
                         GV->setAlignment(llvm::Align(align));
@@ -787,26 +751,26 @@ void gen(Stmt s) {
                     } else {
                         GV->setLinkage(CommonLinkage);
                     }
-                    putVar(name, GV);
+                    vars[idx] = GV;
                     if (options.g) {
                         StringRef linkage = getLinkageName(varty->tags);
-                        auto gve = D().createGlobalVariableExpression(
+                        auto gve = di->createGlobalVariableExpression(
                             getLexScope(), 
                             name->getKey(), 
                             linkage, getFile(s->loc.id), 
                             s->loc.line, 
                             wrap3(varty), 
                             false, 
-                            D().createExpression()
+                            di->createExpression()
                         );
                         GV->addDebugInfo(gve);
                     }
                 } else {
                     Type ty = wrap(varty);
-                    auto val = B().CreateAlloca(ty, nullptr, name->getKey());
+                    auto val = B.CreateAlloca(ty, nullptr, name->getKey());
                     if (options.g) {
-                        auto v = D().createAutoVariable(getLexScope(), name->getKey(), getFile(s->loc.id), s->loc.line, wrap3(varty));
-                        D().insertDeclare(val, v, D().createExpression(), wrap(s->loc), B().GetInsertBlock());
+                        auto v = di->createAutoVariable(getLexScope(), name->getKey(), getFile(s->loc.id), s->loc.line, wrap3(varty));
+                        di->insertDeclare(val, v, di->createExpression(), wrap(s->loc), B.GetInsertBlock());
                     }
                     if (align) {
                         val->setAlignment(llvm::Align(align));
@@ -820,29 +784,28 @@ void gen(Stmt s) {
                             auto initv = gen(init);
                             store(val, initv);
                         }
-                        putVar(name, val);
+                        vars[idx] = val;
                     }
                 }
             }
         } break;
     }
 }
-
-LLVM_NODISCARD Value getStruct(Expr e) {
+Value getStruct(Expr e) {
     return nullptr;
 }
-LLVM_NODISCARD Value getArray(Expr e) {
+Value getArray(Expr e) {
     return nullptr;
 }
-LLVM_NODISCARD llvm::GlobalVariable *CreateGlobalString(StringRef bstr, Type &ty) {
+llvm::GlobalVariable *CreateGlobalString(StringRef bstr, Type &ty) {
     auto str = llvm::ConstantDataArray::getString(ctx, bstr, true);
     ty = str->getType();
-    auto GV = new llvm::GlobalVariable(M(), ty, true, PrivateLinkage, str);
+    auto GV = new llvm::GlobalVariable(*module, ty, true, PrivateLinkage, str);
     GV->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
     GV->setAlignment(llvm::Align(1));
     return GV;
 }
-LLVM_NODISCARD Value subscript(Expr e, Type &ty) {
+Value subscript(Expr e, Type &ty) {
     Value v;
     ty = wrap(e->left->ty->p);
     if (e->left->k == EArrToAddress) {
@@ -852,7 +815,7 @@ LLVM_NODISCARD Value subscript(Expr e, Type &ty) {
         Type ty;
         auto str = CreateGlobalString(e->left->str.str(), ty);
         ArrayRef<Value> indices = {i32_0, gen(e->right)};
-        return B().CreateInBoundsGEP(ty, str, indices);
+        return B.CreateInBoundsGEP(ty, str, indices);
         }
     }
     else {
@@ -860,19 +823,19 @@ LLVM_NODISCARD Value subscript(Expr e, Type &ty) {
     }
     Value r = gen(e->right);
     if (e->left->k == EArrToAddress && e->left->voidexpr->ty->k == TYARRAY)
-      return B().CreateInBoundsGEP(wrap(e->left->voidexpr->ty), v, {i32_0, r});
-    return B().CreateInBoundsGEP(ty, v, {r});
+      return B.CreateInBoundsGEP(wrap(e->left->voidexpr->ty), v, {i32_0, r});
+    return B.CreateInBoundsGEP(ty, v, {r});
 }
-LLVM_NODISCARD Value getAddress(Expr e) {
+Value getAddress(Expr e) {
     emitDebugLocation(e);
     switch (e->k) {
         case EVar:
-          return getVar(e->sval);
+          return vars[e->sval];
         case EMemberAccess:
         {
             auto basep = e->k == EMemberAccess ? getAddress(e->obj) : gen(e->obj);
             auto ty = wrap(e->obj->ty);
-            return B().CreateStructGEP(ty, basep, e->idx);
+            return B.CreateStructGEP(ty, basep, e->idx);
         }
         case EUnary:
             switch (e->uop) {
@@ -891,24 +854,24 @@ LLVM_NODISCARD Value getAddress(Expr e) {
         case EArrToAddress:
             return getAddress(e->voidexpr);
         case EString:
-            return B().CreateGlobalStringPtr(e->str.str(), "", 0, &M());
+            return B.CreateGlobalStringPtr(e->str.str(), "", 0, module);
         case EArray: case EStruct:
         {
             auto v = e->k == EArray ? getArray(e) : getStruct(e);
             if (!currentfunction) {
-                auto g = new llvm::GlobalVariable(M(), v->getType(), false, InternalLinkage, nullptr, "");
+                auto g = new llvm::GlobalVariable(*module, v->getType(), false, InternalLinkage, nullptr, "");
                 //g->setInitializer(v);
                 return g;
             }
-            auto local = B().CreateAlloca(v->getType());
-            B().CreateStore(v, local);
+            auto local = B.CreateAlloca(v->getType());
+            B.CreateStore(v, local);
             return local;
         }
         default:
             llvm_unreachable("");
     }
 }
-LLVM_NODISCARD Value gen(Expr e) {
+Value gen(Expr e) {
     emitDebugLocation(e);
     switch (e->k) {
         case EPostFix:
@@ -919,12 +882,12 @@ LLVM_NODISCARD Value gen(Expr e) {
             Value v;
             if (e->ty->k == TYPOINTER) {
                 ty = wrap(e->poperand->ty->p);
-                v =  B().CreateInBoundsGEP(ty, r, {e->pop == PostfixIncrement ? i32_1 : i32_n1});
+                v =  B.CreateInBoundsGEP(ty, r, {e->pop == PostfixIncrement ? i32_1 : i32_n1});
             }
             else {
                 v = (e->pop == PostfixIncrement) ? 
-                B().CreateAdd(r, llvm::ConstantInt::get(ty, 1)) :
-                B().CreateSub(r, llvm::ConstantInt::get(ty, 1));
+                B.CreateAdd(r, llvm::ConstantInt::get(ty, 1)) :
+                B.CreateSub(r, llvm::ConstantInt::get(ty, 1));
             }
             store(p, v, e->poperand->ty->align);
             return r;
@@ -944,10 +907,10 @@ LLVM_NODISCARD Value gen(Expr e) {
             auto base = gen(e->obj);
             //if (e->k == EPointerMemberAccess)
             //  base = load(base, wrap(e->obj->ty), e->obj->ty->align);
-            return B().CreateExtractValue(base, e->idx);
+            return B.CreateExtractValue(base, e->idx);
         }
         case EString:
-            return B().CreateGlobalStringPtr(e->str.str(), "", 0, &M());
+            return B.CreateGlobalStringPtr(e->str.str(), "", 0, module);
         case EBin:
         {
             if (e->bop == LogicalAnd) 
@@ -957,7 +920,7 @@ LLVM_NODISCARD Value gen(Expr e) {
             if (e->bop == Assign) {
                 auto basep = getAddress(e->lhs);
                 auto rhs = gen(e->rhs);
-                auto s = B().CreateAlignedStore(rhs, basep, e->lhs->ty->align ? llvm::Align(e->lhs->ty->align) : llvm::MaybeAlign());
+                auto s = B.CreateAlignedStore(rhs, basep, e->lhs->ty->align ? llvm::Align(e->lhs->ty->align) : llvm::MaybeAlign());
                 if (e->lhs->ty->tags & TYVOLATILE)
                   s->setVolatile(true);
                 if (e->lhs->ty->tags & TYATOMIC)
@@ -980,30 +943,30 @@ LLVM_NODISCARD Value gen(Expr e) {
                 case AtomicrmwOr:  pop = static_cast<unsigned>(llvm::AtomicRMWInst::Or); goto BINOP_ATOMIC_RMW;
                 case AtomicrmwAnd: pop = static_cast<unsigned>(llvm::AtomicRMWInst::And); goto BINOP_ATOMIC_RMW;
                 BINOP_ATOMIC_RMW:
-                    return B().CreateAtomicRMW(static_cast<llvm::AtomicRMWInst::BinOp>(pop), lhs, rhs, llvm::None,
+                    return B.CreateAtomicRMW(static_cast<llvm::AtomicRMWInst::BinOp>(pop), lhs, rhs, llvm::None,
                         llvm::AtomicOrdering::SequentiallyConsistent);
                 case SAdd:
-                  return B().CreateNSWAdd(lhs, rhs);
+                  return B.CreateNSWAdd(lhs, rhs);
                 case SSub:
-                  return B().CreateNSWSub(lhs, rhs);
+                  return B.CreateNSWSub(lhs, rhs);
                 case SMul:
-                  return B().CreateNSWMul(lhs, rhs);
+                  return B.CreateNSWMul(lhs, rhs);
                 case PtrDiff:
                 {
-                    auto sub = B().CreateSub(lhs, rhs);
+                    auto sub = B.CreateSub(lhs, rhs);
                     auto s = getsizeof(e->lhs->castval->ty->p);
                     if (s != 1) {
                         auto c = llvm::ConstantInt::get(getIntPtr(), s);
-                        return B().CreateExactSDiv(sub, c);
+                        return B.CreateExactSDiv(sub, c);
                     }
                     return sub;
                 }
                 case SAddP:
                     // getelementptr treat operand as signed, so we need to prmote to intptr type
                     if (!e->rhs->ty->isSigned()) {
-                        lhs = B().CreateZExt(lhs, getIntPtr());
+                        lhs = B.CreateZExt(lhs, getIntPtr());
                     }
-                    return B().CreateInBoundsGEP(
+                    return B.CreateInBoundsGEP(
                     (
                         (e->lhs->ty->p->tags & TYVOID) || (e->lhs->k == EUnary && e->lhs->uop == AddressOf && e->lhs->ty->p->k == TYFUNCTION)
                     ) ? types[x8] : wrap(e->ty->p), lhs, {rhs});
@@ -1028,7 +991,7 @@ LLVM_NODISCARD Value gen(Expr e) {
                 case SLE:
                     pop = static_cast<unsigned>(llvm::CmpInst::ICMP_SLE); goto BINOP_ICMP;
                 BINOP_ICMP:
-                    return B().CreateICmp(static_cast<llvm::CmpInst::Predicate>(pop), lhs, rhs);
+                    return B.CreateICmp(static_cast<llvm::CmpInst::Predicate>(pop), lhs, rhs);
                 case FEQ: pop = static_cast<unsigned>(llvm::FCmpInst::FCMP_OEQ); goto BINOP_FCMP;
                 case FNE: pop = static_cast<unsigned>(llvm::FCmpInst::FCMP_ONE); goto BINOP_FCMP;
                 case FGT: pop = static_cast<unsigned>(llvm::FCmpInst::FCMP_OGT); goto BINOP_FCMP;
@@ -1036,7 +999,7 @@ LLVM_NODISCARD Value gen(Expr e) {
                 case FLT: pop = static_cast<unsigned>(llvm::FCmpInst::FCMP_OLT); goto BINOP_FCMP;
                 case FLE: pop = static_cast<unsigned>(llvm::FCmpInst::FCMP_OLE); goto BINOP_FCMP;
                 BINOP_FCMP:
-                    return B().CreateFCmp(static_cast<llvm::CmpInst::Predicate>(pop), lhs, rhs);
+                    return B.CreateFCmp(static_cast<llvm::CmpInst::Predicate>(pop), lhs, rhs);
                 case Comma:
                     return rhs;
                 case UAdd: pop = llvm::Instruction::Add; goto BINOP_ARITH;
@@ -1062,7 +1025,7 @@ LLVM_NODISCARD Value gen(Expr e) {
                 BINOP_ARITH:
                 BINOP_BITWISE:
                 BINOP_SHIFT:
-                return B().CreateBinOp(static_cast<llvm::Instruction::BinaryOps>(pop), lhs, rhs);
+                return B.CreateBinOp(static_cast<llvm::Instruction::BinaryOps>(pop), lhs, rhs);
             }
         }
         case EIntLit:
@@ -1073,10 +1036,10 @@ LLVM_NODISCARD Value gen(Expr e) {
           return (void)gen(e->voidexpr), nullptr;
         case EUnary:
             switch (e->uop) {
-                case SNeg: return B().CreateNSWNeg(gen(e->uoperand));
-                case UNeg: return B().CreateNeg(gen(e->uoperand));
-                case FNeg: return B().CreateFNeg(gen(e->uoperand));
-                case Not:  return B().CreateNot(gen(e->uoperand));
+                case SNeg: return B.CreateNSWNeg(gen(e->uoperand));
+                case UNeg: return B.CreateNeg(gen(e->uoperand));
+                case FNeg: return B.CreateFNeg(gen(e->uoperand));
+                case Not:  return B.CreateNot(gen(e->uoperand));
                 case AddressOf: return getAddress(e->uoperand);
                 case Dereference:
                 {
@@ -1091,11 +1054,11 @@ LLVM_NODISCARD Value gen(Expr e) {
                   return r;
                 }
                 case LogicalNot:
-                  return B().CreateIsNull(gen(e->uoperand));
+                  return B.CreateIsNull(gen(e->uoperand));
             }
         case EVar:
         {
-            auto pvar = getVar(e->sval);
+            auto pvar = vars[e->sval];
             auto r = load(pvar, wrap(e->ty), e->ty->align);
             if (e->ty->tags & TYVOLATILE)
                 r->setVolatile(true);
@@ -1106,7 +1069,7 @@ LLVM_NODISCARD Value gen(Expr e) {
         case ECondition:
             return gen_condition(e->cond, e->cleft, e->cright);
         case ECast:
-            return B().CreateCast(getCastOp(e->castop), gen(e->castval), wrap(e->ty));
+            return B.CreateCast(getCastOp(e->castop), gen(e->castval), wrap(e->ty));
         case EDefault:
             return llvm::Constant::getNullValue(wrap(e->ty));
         case ECall:
@@ -1123,7 +1086,7 @@ LLVM_NODISCARD Value gen(Expr e) {
             Value *buf = alloc.Allocate<Value>(l);
             for (size_t i = 0;i < l;++i)
                 buf[i] = gen(e->callargs[i]); // eval argument from left to right
-            auto r = B().CreateCall(ty, f, ArrayRef<Value>(buf, l));
+            auto r = B.CreateCall(ty, f, ArrayRef<Value>(buf, l));
             return r;
         }
         case EStruct:

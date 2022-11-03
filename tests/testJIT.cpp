@@ -44,13 +44,14 @@ int main(int argc, const char **argv)
 
     xcc::Parser parser(SM, ctx, ig);
 
-    auto ast = parser.run();
+    unsigned num_typedefs, num_tags;
+    auto ast = parser.run(num_typedefs, num_tags);
     if (ctx.printer->NumErrors)
         return 1;
 
-    ig.run(ast);
+    ig.run(ast, num_typedefs, num_tags);
     std::unique_ptr<llvm::Module> M;
-    M.reset(&ig.M());
+    M.reset(ig.module);
     
     auto JITE = xcc::JITRunner::Create();
     if (!JITE)

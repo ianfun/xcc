@@ -71,6 +71,8 @@
 #include <unistd.h>
 #include <cstdint> // intmax_t, uintmax_t
 #include <cmath> // pow
+#include <ctime>
+#include <cstdio>
 #include <algorithm> // std::max
 #include <deque>
 
@@ -271,21 +273,25 @@ typedef struct OpaqueStmt *Stmt;
 typedef struct OpaqueExpr *Expr;
 typedef struct OpaqueCType *CType;
 
-struct NameTypePair {
+struct Declator {
     IdentRef name;
     CType ty;
-    NameTypePair(): name{nullptr}, ty{nullptr} {};
-    NameTypePair(IdentRef name, CType ty): name{name}, ty{ty} {}
+    Declator(IdentRef Name = nullptr, CType ty = nullptr): name{Name}, ty{ty} {}
+};
+struct Param: public Declator {
+    Param(IdentRef Name = nullptr, CType ty = nullptr): Declator {Name, ty} {}
+    Param(const Declator &decl): Declator(decl) {}
 };
 struct EnumPair {
     IdentRef name;
-    uintmax_t val;
+    uint64_t val;
 };
 struct VarDecl
 {
     IdentRef name;
     CType ty;
     Expr init; // maybe null
+    size_t idx;
 };
 enum ReachableKind {
     Reachable, MayReachable, Unreachable
@@ -512,33 +518,6 @@ static bool compatible(const CType p, const CType expected) {
     }
     llvm_unreachable("");
 }
-struct Type_info {
-    CType ty;
-    Location loc;
-};
-
-static constexpr uint16_t INFO_USED = 2;
-struct Label_Info {
-  label_t idx;
-  uint8_t flags;
-  Label_Info(): flags{LBL_UNDEFINED} {}
-};
-struct Variable_Info {
-    CType ty;
-    uint16_t tags;
-    Location loc;
-};
-// Block scope
-struct BScope final {
-    DenseMap<IdentRef, Type_info> tags; // struct/union/enums
-    DenseMap<IdentRef, Variable_Info> typedefs; // typedef, variables
-    DenseMap<IdentRef, uintmax_t> enums; // enum constants
-};
-// also for chars
-// char,   char16,  char32,  wchar
-//  u8       u        U       L
-
-// float tags
 enum FTag: uint8_t  {
     Fdobule, Ffloat
 };
@@ -635,6 +614,7 @@ static unsigned intRank(uint32_t a){
         return 5;
     return 6;
 }
+#include "Scope.cpp"
 #include "option.cpp"
 #include "State.cpp"
 #include "Diagnostic.cpp"

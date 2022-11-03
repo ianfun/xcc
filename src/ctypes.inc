@@ -60,14 +60,17 @@ unsigned getBitWidth() const {
       CType p;
     };
     struct {
+      size_t sidx;
       IdentRef sname;
-      xvector<NameTypePair> selems;
+      xvector<Declator> selems;
     };
     struct {
+      size_t uidx;
       IdentRef uname;
-      xvector<NameTypePair> uelems;
+      xvector<Declator> uelems;
     };
     struct {
+      size_t eidx;
       IdentRef ename;
       xvector<EnumPair> eelems;
     };
@@ -83,12 +86,13 @@ unsigned getBitWidth() const {
     };
     struct {
       CType ret;
-      xvector<NameTypePair> params;
+      xvector<Param> params;
       bool isVarArg;
     };
     struct {
       enum CTypeKind tag;
-      IdentRef name;;
+      IdentRef name;
+      size_t iidx;
     };
   };
 };
@@ -109,8 +113,9 @@ struct StructType {
   uint32_t align, tags;
 struct {
   
+    size_t sidx;
     IdentRef sname;
-    xvector<NameTypePair> selems;
+    xvector<Declator> selems;
 
   };};
 struct UnionType {
@@ -118,8 +123,9 @@ struct UnionType {
   uint32_t align, tags;
 struct {
   
+    size_t uidx;
     IdentRef uname;
-    xvector<NameTypePair> uelems;
+    xvector<Declator> uelems;
 
   };};
 struct EnumType {
@@ -127,6 +133,7 @@ struct EnumType {
   uint32_t align, tags;
 struct {
   
+    size_t eidx;
     IdentRef ename;
     xvector<EnumPair> eelems;
 
@@ -157,7 +164,7 @@ struct FunctionType {
 struct {
   
     CType ret;
-    xvector<NameTypePair> params;
+    xvector<Param> params;
     bool isVarArg;
 
   };};
@@ -167,7 +174,8 @@ struct IncompleteType {
 struct {
   
     enum CTypeKind tag;
-    IdentRef name;;
+    IdentRef name;
+    size_t iidx;
 
   };};
 static size_t ctype_size_map[] = {

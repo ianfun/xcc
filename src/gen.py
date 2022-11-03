@@ -71,7 +71,16 @@ stmts = {
 	"SExpr": ["Expr exprbody"],
 	"SAsm": ["xstring asms"],
 	"SVarDecl": ["xvector<VarDecl> vars"],
-	"SFunction": ["IdentRef funcname", "CType functy", "Stmt funcbody", "unsigned numLabels"],
+	"SDecl": ["size_t decl_idx", "CType decl_ty"],
+	"SUpdateForwardDecl": ["size_t prev_idx", "CType prev", "CType now"],
+	"SFunction": [
+		"size_t func_idx", 
+		"IdentRef funcname", 
+		"CType functy", 
+		"Stmt funcbody", 
+		"unsigned numLabels", 
+		"xvector<size_t> args"
+	]
 }
 exprs = {
 	"EBin": ["Expr lhs", "enum BinOp bop", "Expr rhs"],
@@ -79,7 +88,7 @@ exprs = {
 	"EIntLit": ["APInt ival"],
 	"EFloatLit": ["APFloat fval"],
 	"EVoid": ["Expr voidexpr"],
-	"EVar": ["IdentRef sval"],
+	"EVar": ["size_t sval"],
 	"ECondition": ["Expr cond, cleft, cright"],
 	"ECast": ["enum CastOp castop", "Expr castval"],
 	"ECall": ["Expr callfunc", "xvector<Expr> callargs"],
@@ -96,13 +105,13 @@ exprs = {
 ctypes = {
 	"TYPRIM": [],
 	"TYPOINTER": ["CType p"],
-	"TYSTRUCT": ["IdentRef sname", "xvector<NameTypePair> selems"],
-	"TYUNION": ["IdentRef uname", "xvector<NameTypePair> uelems"],
-	"TYENUM": ["IdentRef ename", "xvector<EnumPair> eelems"],
+	"TYSTRUCT": ["size_t sidx", "IdentRef sname", "xvector<Declator> selems"],
+	"TYUNION":  ["size_t uidx", "IdentRef uname", "xvector<Declator> uelems"],
+	"TYENUM":   ["size_t eidx", "IdentRef ename", "xvector<EnumPair> eelems"],
 	"TYBITFIELD": ["CType bittype", "unsigned bitsize"],
 	"TYARRAY": ["Expr vla", "CType arrtype", "bool hassize", "unsigned arrsize"],
-	"TYFUNCTION": ["CType ret", "xvector<NameTypePair> params", "bool isVarArg"],
-	"TYINCOMPLETE": ["enum CTypeKind tag", "IdentRef name;"]
+	"TYFUNCTION": ["CType ret", "xvector<Param> params", "bool isVarArg"],
+	"TYINCOMPLETE": ["enum CTypeKind tag", "IdentRef name", "size_t iidx"]
 }
 
 def verbose(msg):

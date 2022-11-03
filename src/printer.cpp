@@ -1,4 +1,3 @@
-raw_ostream &operator<<(llvm::raw_ostream &, const Stmt);
 raw_ostream &operator<<(llvm::raw_ostream &, const CType);
 
 raw_ostream &operator<<(llvm::raw_ostream &OS, const Expr e) {
@@ -15,7 +14,7 @@ raw_ostream &operator<<(llvm::raw_ostream &OS, const Expr e) {
         case EVoid:
             return OS << e->voidexpr;
         case EVar:
-            return OS << e->sval->getKey();
+            return OS << e->sval;
         case ECondition:
             return OS << e->cond << " ? " << e->cleft << " : " << e->cright;
         case ECast:
@@ -53,88 +52,6 @@ raw_ostream &operator<<(llvm::raw_ostream &OS, const Expr e) {
             return OS << e->poperand << show(e->pop);
     }
     llvm_unreachable("");
-}
-
-struct StmtPrinter {
-    llvm::raw_ostream &OS;
-    StringRef NL;
-    unsigned Indentation;
-    unsigned space;
-    StmtPrinter(raw_ostream &OS = llvm::errs(), StringRef NL = "\n", unsigned Indentation = 0, unsigned space = 4):
-    OS{OS}, NL{NL}, Indentation{Indentation}, space{space} {}
-    void print(const Stmt s) {
-        p(s);
-    }
-    void indent() {
-        if (!space) {
-            for (unsigned i = 0;i < Indentation;++i)
-                OS << '\t';
-        } else {
-            for (unsigned i = 0;i < Indentation * space;++i)
-                OS << ' ';
-        }
-    }
-    void p(const Stmt s) {
-        indent();
-        ++Indentation;
-        switch (s->k) {
-            case SCondJump:
-                OS << "br " << s->test << " " << s->T << ", " << s->F << NL;
-                break;
-            case SHead:
-                OS << '{' << NL;
-                for (Stmt ptr = s->next;ptr;ptr = ptr->next)
-                    p(ptr);
-                OS << '}';
-                break;
-            case SCompound:
-                OS << '{' << NL;
-                for (Stmt ptr = s->inner;ptr;ptr = ptr->next)
-                    p(ptr);
-                OS << '}';
-                break;
-            case SGoto:
-                OS << "goto xxx" << ';' << NL;
-                break;
-            case SReturn:
-                OS << "return";
-                if (s->ret) {
-                    OS << ' ' << s->ret;
-                }
-                OS << ';' << NL;
-                break;
-            case SExpr:
-                OS << s->exprbody << ';';
-                break;
-            case SLabel:
-                OS << s->label;
-                break;
-            case SAsm:
-                OS << "__asm__(" << s->asms.str() << ')' << ';';
-                break;
-            case SDeclOnly:
-                OS << s->decl;
-            case SVarDecl:
-                for (const auto decl: s->vars) {
-                    OS << decl.ty << ' ' << decl.name;
-                    if (decl.init)
-                        OS << " = " << decl.init;
-                    OS << ';' << NL;
-                }
-                break;
-            case SFunction:
-                OS << "Function " << s->funcname << ": " << s->functy << "" << NL;
-                p(s->funcbody);
-                break;
-        }
-        --Indentation;
-    }
-};
-
-raw_ostream &operator<<(llvm::raw_ostream &OS, const Stmt s) {
-    StmtPrinter printer(OS);
-    printer.print(s);
-    return OS;
 }
 static StringRef get_pointer_qual_str(uint32_t a){
     if (a & TYCONST) return "const";
@@ -212,11 +129,11 @@ raw_ostream &operator<<(llvm::raw_ostream &OS, const CType ty) {
             return OS;
         }
         case TYSTRUCT:
-            return OS << "struct " << ty->ename;
+            return OS << "struct " << ty->ename->getKey();
         case TYUNION:
-            return OS << "union " << ty->ename;
+            return OS << "union " << ty->ename->getKey();
         case TYENUM:
-            return OS << "enum " << ty->ename;
+            return OS << "enum " << ty->ename->getKey();
         case TYBITFIELD:
             return OS << ty->bittype << " : " << ty->bitsize;
         case TYARRAY:
@@ -253,7 +170,7 @@ raw_ostream &operator<<(llvm::raw_ostream &OS, const CType ty) {
             return OS << ')' << ')';
         }
         case TYINCOMPLETE:
-            return OS << get_type_name_str(ty->tag) << ' ' << ty->name;
+            return OS << get_type_name_str(ty->tag) << ' ' << ty->name->getKey();
     }
     llvm_unreachable("");
 }
@@ -280,11 +197,11 @@ raw_ostream &operator>>(llvm::raw_ostream &OS, const CType ty) {
             return OS << "]";
         }
         case TYSTRUCT:
-            return OS << "struct " << ty->ename;
+            return OS << "struct " << ty->ename->getKey();
         case TYUNION:
-            return OS << "union " << ty->ename;
+            return OS << "union " << ty->ename->getKey();
         case TYENUM:
-            return OS << "enum " << ty->ename;
+            return OS << "enum " << ty->ename->getKey();
         case TYBITFIELD:
             return OS << ty->bittype << " : " << ty->bitsize;
         case TYARRAY:
@@ -323,7 +240,7 @@ raw_ostream &operator>>(llvm::raw_ostream &OS, const CType ty) {
             return OS << ']';
         }
         case TYINCOMPLETE:
-            return OS << get_type_name_str(ty->tag) << ' ' << ty->name;
+            return OS << get_type_name_str(ty->tag) << ' ' << ty->name->getKey();
     }
     llvm_unreachable("");
 }
@@ -352,13 +269,13 @@ void print_cdecl(const CType ty, raw_ostream &OS) {
             break;
         }
         case TYSTRUCT:
-            OS << "struct " << ty->ename;
+            OS << "struct " << ty->ename->getKey();
             break;
         case TYUNION:
-            OS << "union " << ty->ename;
+            OS << "union " << ty->ename->getKey();
             break;
         case TYENUM:
-            OS << "enum " << ty->ename;
+            OS << "enum " << ty->ename->getKey();
             break;
         case TYBITFIELD:
             OS << "bitfield " << ty->bitsize << " of ";
@@ -401,7 +318,7 @@ void print_cdecl(const CType ty, raw_ostream &OS) {
             break;
         }
         case TYINCOMPLETE:
-            OS << get_type_name_str(ty->tag) << ' ' << ty->name;
+            OS << get_type_name_str(ty->tag) << ' ' << ty->name->getKey();
             break;
     }
 }
