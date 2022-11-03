@@ -308,7 +308,7 @@ void addModule(StringRef source_file, StringRef ModuleID = "main") {
         di = new llvm::DIBuilder(*module);
         llvm::DIFile *file = di->createFile(source_file, options.CWD.str());
         lexBlocks.push_back(di->createCompileUnit(llvm::dwarf::DW_LANG_C99, file, CC_VERSION_FULL, false, "", 0));
-        ditypes = new DIType[(size_t)TypeIndexHigh];
+        ditypes = new DIType[(size_t)TypeIndexHigh]; // not initialized!
         ditypes[voidty] = nullptr;
         ditypes[i1ty] = di->createBasicType("_Bool", 1, llvm::dwarf::DW_ATE_boolean);
         ditypes[i8ty] = di->createBasicType("char", 8, llvm::dwarf::DW_ATE_signed_char);
@@ -339,10 +339,10 @@ void finalsizeCodeGen() {
         delete [] dtags;
 }
 void run(Stmt s, unsigned num_typedefs, unsigned num_tags) {
-    vars = new Value[num_typedefs]();
-    tags = new Type[num_tags]();
+    vars = new Value[num_typedefs](); // not initialized!
+    tags = new Type[num_tags](); // not initialized!
     if (options.g)
-        dtags = new DIType[num_tags]();
+        dtags = new DIType[num_tags](); // not initialized!
     addModule("main");
     enterScope();
     for (Stmt ptr = s->next;ptr;ptr = ptr->next)
@@ -558,14 +558,14 @@ void gen(Stmt s) {
         } break;
         case SDecl:
         {
-            if (s->decl->k == TYINCOMPLETE) {
-                if (s->decl->k != TYENUM) {
-                    auto T = llvm::StructType::create(ctx, s->decl->name->getKey());
+            if (s->decl_ty->k == TYINCOMPLETE) {
+                if (s->decl_ty->tag != TYENUM) {
+                    auto T = llvm::StructType::create(ctx, s->decl_ty->name->getKey());
                     tags[s->decl_idx] = T;
                 }
                 if (options.g) {
                     unsigned tag;
-                    switch (s->decl->tag) {
+                    switch (s->decl_ty->tag) {
                         case TYSTRUCT: tag = llvm::dwarf::DW_TAG_structure_type;break;
                         case TYENUM: tag = llvm::dwarf::DW_TAG_enumeration_type;break;
                         case TYUNION: tag = llvm::dwarf::DW_TAG_union_type;break;
@@ -573,7 +573,7 @@ void gen(Stmt s) {
                     }
                     auto MD = di->createReplaceableCompositeType(
                         tag, 
-                        s->decl->name->getKey(),
+                        s->decl_ty->name->getKey(),
                         getLexScope(),
                         getFile(s->loc.line),
                         s->loc.line
@@ -581,14 +581,14 @@ void gen(Stmt s) {
                     dtags[s->decl_idx] = MD;
                 }
             } else {
-                if (s->decl->tag != TYENUM) {
-                    size_t l = s->decl->selems.size();
+                if (s->decl_ty->k != TYENUM) {
+                    size_t l = s->decl_ty->selems.size();
                     Type *buf = alloc.Allocate<Type>(l);
                     for (size_t i = 0;i < l;++i)
-                        buf[i] = wrap(s->decl->selems[i].ty);
+                        buf[i] = wrap(s->decl_ty->selems[i].ty);
                     ArrayRef<Type> arr(buf, l);
-                    tags[s->decl_idx] = s->decl->sname ?
-                        llvm::StructType::create(arr, s->decl->sname->getKey()) :
+                    tags[s->decl_idx] = s->decl_ty->sname ?
+                        llvm::StructType::create(arr, s->decl_ty->sname->getKey()) :
                         llvm::StructType::create(arr);
                 }
             }
@@ -749,7 +749,8 @@ void gen(Stmt s) {
                     else if (tags & TYEXTERN) {
                         GV->setLinkage(ExternalLinkage);
                     } else {
-                        GV->setLinkage(CommonLinkage);
+                        if (!init)
+                            GV->setLinkage(CommonLinkage);
                     }
                     vars[idx] = GV;
                     if (options.g) {
@@ -874,6 +875,8 @@ Value getAddress(Expr e) {
 Value gen(Expr e) {
     emitDebugLocation(e);
     switch (e->k) {
+        case EConstant:
+            return e->C;
         case EPostFix:
         {
             auto p = getAddress(e->poperand);
@@ -892,8 +895,6 @@ Value gen(Expr e) {
             store(p, v, e->poperand->ty->align);
             return r;
         }
-        case EUndef:
-            return llvm::UndefValue::get(wrap(e->ty));
         case EArrToAddress:
             return getAddress(e->voidexpr);
         case ESubscript:
@@ -1028,10 +1029,6 @@ Value gen(Expr e) {
                 return B.CreateBinOp(static_cast<llvm::Instruction::BinaryOps>(pop), lhs, rhs);
             }
         }
-        case EIntLit:
-           return llvm::ConstantInt::get(cast<llvm::IntegerType>(types[getNoSignTypeIndex(e->ty->tags)]), e->ival);
-        case EFloatLit:
-          return llvm::ConstantFP::get((e->ty->tags & TYDOUBLE) ? types[xdouble] : types[xfloat], e->fval);
         case EVoid:
           return (void)gen(e->voidexpr), nullptr;
         case EUnary:
@@ -1070,8 +1067,6 @@ Value gen(Expr e) {
             return gen_condition(e->cond, e->cleft, e->cright);
         case ECast:
             return B.CreateCast(getCastOp(e->castop), gen(e->castval), wrap(e->ty));
-        case EDefault:
-            return llvm::Constant::getNullValue(wrap(e->ty));
         case ECall:
         {
             Value f;

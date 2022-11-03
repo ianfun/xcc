@@ -420,7 +420,8 @@ static bool isTerminator(enum StmtKind k) {
 }
 static bool isConstant(const Expr e) {
     // check whether a expression is a constant-expression
-    switch(e->k){
+    switch(e->k) {
+    case EConstant: return true;
     case EVoid: case ECall:case ESubscript:
         return false;
     case EPostFix:
@@ -429,7 +430,12 @@ static bool isConstant(const Expr e) {
         return isConstant(e->lhs) && isConstant(e->rhs);
     case EUnary:
         return isConstant(e->uoperand);
-    case ECast:case EIntLit:case EFloatLit:case EString:case EVar:case EArray:case EStruct:case EDefault:case EUndef:case EArrToAddress:
+    case ECast:
+    case EString:
+    case EVar:
+    case EArray:
+    case EStruct:
+    case EArrToAddress:
         return true;
     case ECondition:
         return isConstant(e->cond) && isConstant(e->cleft) && isConstant(e->cright);

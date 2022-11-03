@@ -16,8 +16,8 @@
             "defines": [
                 "_DEBUG",
                 "UNICODE",
-                "_UNICODE",
-               //"_WIN32"
+                "_UNICODE"
+                //"__MVS__"
             ],
             "compilerPath": "",
             "intelliSenseMode": "windows-gcc-x64"

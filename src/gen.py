@@ -83,21 +83,20 @@ stmts = {
 	]
 }
 exprs = {
+	"EConstant": ["llvm::Constant* C"],
 	"EBin": ["Expr lhs", "enum BinOp bop", "Expr rhs"],
 	"EUnary": ["Expr uoperand", "enum UnaryOp uop"],
-	"EIntLit": ["APInt ival"],
-	"EFloatLit": ["APFloat fval"],
+#	"EIntLit": ["APInt ival"],
+#	"EFloatLit": ["APFloat fval"],
 	"EVoid": ["Expr voidexpr"],
 	"EVar": ["size_t sval"],
 	"ECondition": ["Expr cond, cleft, cright"],
 	"ECast": ["enum CastOp castop", "Expr castval"],
 	"ECall": ["Expr callfunc", "xvector<Expr> callargs"],
 	"ESubscript": ["Expr left, right"],
-	"EDefault": [],
 	"EArray": ["xvector<Expr> arr"],
 	"EStruct": ["xvector<Expr> arr2"],
 	"EString": ["xstring str", "bool is_constant"],
-	"EUndef": [],
 	"EMemberAccess": ["Expr obj", "uint32_t idx"],
 	"EArrToAddress": ["Expr arr3"],
 	"EPostFix": ["enum PostFixOp pop", "Expr poperand"]

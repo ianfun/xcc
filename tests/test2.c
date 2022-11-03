@@ -1,5 +1,8 @@
-int main() {
-	12;
-	12 * 23;
-	"Hello!";
+enum {
+	Decl
+};
+
+int test() {
+	int bar = Decl;
 }
+

@@ -1,5 +1,4 @@
-//int printf(char*, ...);
-
 int main() {
-    return printf("%s\n", "Hello xcc Compiler!");
+    printf("Hello xcc Compiler!\n");
+    return 0;
 }

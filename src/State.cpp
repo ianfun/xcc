@@ -23,17 +23,12 @@ struct xcc_context {
       .f128ty=make(TYF128),
       .strty=getPointerType(make(TYINT8)) 
     }
-    {
-        intzero = ENEW(IntLitExpr) {.loc = Location(), .ty = typecache.i32, .ival = APInt::getZero(32)};
-    }
+    {}
     IdentifierTable table; // contains allocator!
     struct TextDiagnosticPrinter *printer;
     Expr intzero;
     void setPrinter(struct TextDiagnosticPrinter *thePrinter) {
         printer = thePrinter;
-    }
-    Expr getIntZero() {
-        return intzero;
     }
     struct TypeCache {
         CType 

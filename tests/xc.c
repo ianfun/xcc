@@ -858,7 +858,6 @@ void expression(int level) {
 
                 if (tmp > PTR) {
                     // pointer, `not char *`
-                    *++text = PUSH;
                     *++text = IMM;
                     *++text = sizeof(int);
                     *++text = MUL;
@@ -872,6 +871,7 @@ void expression(int level) {
                 *++text = (expr_type == CHAR) ? LC : LI;
             }
             else {
+                *++text = PUSH;
                 printf("%d: compiler error, token = %d\n", line, token);
                 exit(-1);
             }
@@ -1123,7 +1123,6 @@ void function_body() {
 void function_declaration() {
     // type func_name (...) {...}
     //               | this part
-
     match('(');
     function_parameter();
     match(')');

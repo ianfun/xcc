@@ -105,4 +105,10 @@ struct BlockScope: public ScopeBase<T, InitialSize>
         }
         return nullptr;
     }
+    bool containsInCurrentScope(IdentRef Name) {
+        for (size_t i = numSymsThisBlock();i < this->data.size();++i) 
+            if (this->data[i].sym == Name)
+                return true;
+        return false;
+    }
 };

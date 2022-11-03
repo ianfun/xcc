@@ -6,12 +6,12 @@
 #endif
 
 #ifndef CC_URL
-  #define CC_URL "https://github.com/ianfun/cc.git"
+  #define CC_URL "https://github.com/ianfun/xcc.git"
 #endif
 
 // long version string
 #ifndef CC_VERSION_FULL
-  #define CC_VERSION_FULL "cc version "  CC_VERSION " (" CC_URL ")"
+  #define CC_VERSION_FULL "XCC version "  CC_VERSION " (" CC_URL ")"
 #endif
 
 // true if long is 64 bit

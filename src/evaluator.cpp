@@ -42,7 +42,9 @@ uintmax_t Evaluator::casti(Expr e) {
 }
 
 uintmax_t Evaluator::evali(Expr e) {
-    switch (e->k){
+    switch (e->k) {
+    case EConstant:
+        return 0;
     case EBin:
         switch (e->bop) {
         case SAdd:case UAdd:
@@ -115,7 +117,8 @@ uintmax_t Evaluator::evali(Expr e) {
         }break;
         case ECast:
             switch(e->castop) {
-                case ZExt:case SExt:
+                case ZExt:
+                case SExt:
                     return evali(e->castval);
                 case Trunc:
                     return casti(e);
@@ -124,12 +127,6 @@ uintmax_t Evaluator::evali(Expr e) {
                         pp_error("cannot cast to %T", e->ty);
                     return eval_error();
             }
-        case EIntLit:
-            return e->ival.getLimitedValue();
-        case EFloatLit:
-            if (verbose)
-                pp_error("floating constant in constant-expression");
-            return eval_error();
         case ECondition:
             return evali(e->cond) ? evali(e->cleft) : evali(e->cright);
         default:

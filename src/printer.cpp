@@ -2,15 +2,13 @@ raw_ostream &operator<<(llvm::raw_ostream &, const CType);
 
 raw_ostream &operator<<(llvm::raw_ostream &OS, const Expr e) {
     switch (e->k) {
+        case EConstant:
+            e->C->print(OS /* IsForDebug=false */);
+            return OS << '\n';
         case EBin:
             return OS << '(' << e->lhs  << ' ' << show(e->bop) << ' ' << e->rhs << ')';
         case EUnary:
             return OS << show(e->bop) << e->uoperand;
-        case EIntLit:
-            return OS << e->ival;
-        case EFloatLit:
-            e->fval.print(OS);
-            return OS;
         case EVoid:
             return OS << e->voidexpr;
         case EVar:
@@ -28,8 +26,6 @@ raw_ostream &operator<<(llvm::raw_ostream &OS, const Expr e) {
             return OS << e->callargs.back() << ')';
         case ESubscript:
             return OS << e->left << '[' << e->right << ']';
-        case EDefault:
-            return OS << "<default-value>";
         case EArray:
             OS << '{';
             for (const auto e: e->arr)
@@ -42,8 +38,6 @@ raw_ostream &operator<<(llvm::raw_ostream &OS, const Expr e) {
             return OS << '}';
         case EString:
             return OS.write_escaped(e->str.str());
-        case EUndef:
-            return OS << "<undefined-value>";
         case EMemberAccess:
             return OS << e->obj << '.' << e->ty->selems[e->idx].name;
         case EArrToAddress:

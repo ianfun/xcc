@@ -1,16 +1,7 @@
-int a;
-int a = 1;
+enum {
+  Num = 128, Fun, Sys, Glo, Loc, Id,
+  Char, Else, Enum, If, Int, Return, Sizeof, While,
+  Assign, Cond, Lor, Lan, Or, Xor, And, Eq, Ne, Lt, Gt, Le, Ge, Shl, Shr, Add, Sub, Mul, Div, Mod, Inc, Dec, Brak
+};
 
-
-static int b;
-static int b = 10;
-
-extern int c;
-//int c = 12;
-extern int c = 12;
-
-
-int main() {
-    int a = 12;
-    return 0;
-}
+int c = Add;

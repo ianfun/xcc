@@ -48,8 +48,13 @@ struct Parser : public DiagnosticHelper {
   Stmt InsertPt = nullptr;
   bool sreachable;
   Stmt unreachable_reason = nullptr;
+  Expr intzero;
   Parser(SourceMgr &SM, xcc_context &context, IRGen &irgen)
-      : DiagnosticHelper{context}, l(SM, *this, context), irgen{irgen} {}
+      : DiagnosticHelper{context}, l(SM, *this, context), irgen{irgen},
+      intzero {
+        wrap(context.getInt(), 
+        llvm::ConstantInt::get(irgen.ctx, APInt::getZero(32)))
+      } {}
   template <typename T> auto getsizeof(T a) { 
       return irgen.getsizeof(a); 
   }
@@ -160,7 +165,7 @@ struct Parser : public DiagnosticHelper {
     return sema.tags.putSym(Name, Type_info {.ty = ty, .loc = loc});
   }
   void putenum(IdentRef Name, uint64_t val, Location loc) {
-    if (sema.typedefs.getSymInCurrentScope(Name))
+    if (sema.typedefs.containsInCurrentScope(Name))
       type_error(getLoc(), "%I redeclared", Name);
     sema.typedefs.putSym(Name,
       Variable_Info {
@@ -293,31 +298,30 @@ struct Parser : public DiagnosticHelper {
     if (type_equal(e->ty, to))
       return e;
     if (e->ty->tags & TYVOID)
-      return type_error(loc, "cannot cast 'void' expression to type %T", to), nullptr;
+      return type_error(loc, "cannot cast 'void' expression to type %T", to), e;
     if (to->k == TYINCOMPLETE || e->ty->k == TYINCOMPLETE)
-      return type_error(loc, "cannot cast to incomplete type: %T", to), nullptr;
+      return type_error(loc, "cannot cast to incomplete type: %T", to), e;
     if (to->k == TYSTRUCT || e->ty->k == TYSTRUCT || to->k == TYUNION ||
         e->ty->k == TYUNION)
-      return type_error(loc, "cannot cast between different struct/unions"), nullptr;
+      return type_error(loc, "cannot cast between different struct/unions"), e;
     if (e->ty->k == TYENUM)
       return castto(make_cast(e, BitCast, context.getInt()), to);
     if (to->k == TYENUM)
       return castto(castto(e, context.getInt()), to);
     if (!(e->ty->isScalar() && to->isScalar()))
-      return type_error(loc, "cast uoperand shall have scalar type"), nullptr;
-    if (to->tags & TYBOOL)
-      return binop(e, NE, ENEW(DefaultExpr){.loc = e->loc, .ty = e->ty},
-                   context.typecache.b);
+      return type_error(loc, "cast uoperand shall have scalar type"), e;
+    if (to->tags & TYBOOL) {
+      // simplify 'boolean(a) zext to int(b)' to 'a'
+      if (e->k == ECast && e->castop == ZExt && e->castval->ty->tags & TYBOOL) {
+        return e->castval;
+      }
+      Expr zero = wrap(e->ty, llvm::ConstantInt::get(irgen.ctx, APInt::getZero(e->ty->getBitWidth())));
+      return binop(e, NE, zero, context.typecache.b);
+    }
     if ((to->tags & (TYFLOAT | TYDOUBLE)) && e->ty->k == TYPOINTER)
-      return type_error(
-                 loc,
-                 "A floating type shall not be converted to any pointer type"),
-             nullptr;
+      return type_error(loc, "A floating type shall not be converted to any pointer type"), e;
     if ((e->ty->tags & (TYFLOAT | TYDOUBLE)) && to->k == TYPOINTER)
-      return type_error(
-                 loc,
-                 "A floating type shall not be converted to any pointer type"),
-             nullptr;
+      return type_error(loc, "A floating type shall not be converted to any pointer type"), e;
     if (e->ty->k == TYPOINTER && to->k == TYPOINTER)
       return make_cast(e, BitCast, to);
     if ((e->ty->tags & TYDOUBLE) && (to->tags & TYFLOAT))
@@ -378,7 +382,7 @@ struct Parser : public DiagnosticHelper {
   void to(Expr &e, uint32_t tag) {
     if (e->ty->tags != tag)
       e = castto(e, TNEW(PrimType){.align = 0, .tags = tag});
-    }
+  }
   void integer_promotions(Expr &e) {
     if (e->ty->k == TYBITFIELD ||
         e->ty->tags & (TYBOOL | TYINT8 | TYUINT8 | TYINT16 | TYUINT16))
@@ -457,13 +461,10 @@ struct Parser : public DiagnosticHelper {
   }
   bool issimple(Expr e) {
     switch (e->k) {
-      case EIntLit:
-      case EFloatLit:
       case EVar:
       case EString:
       case EStruct:
       case EArray:
-      case EUndef:
         return true;
       default: 
         return false;
@@ -508,10 +509,6 @@ struct Parser : public DiagnosticHelper {
             return simplify(e->uoperand);
           }
           return e;
-        case EIntLit:
-            return e;
-        case EFloatLit:
-            return e;
         case EVoid:
             return simplify(e->castval);
         case ECondition:
@@ -534,13 +531,12 @@ struct Parser : public DiagnosticHelper {
             warning("unused subscript expression");
             return comma(e->left, e->right);
         case EPostFix:
-        case EDefault:
         case EArray:
         case EStruct:
         case EString:
-        case EUndef:
         case EMemberAccess:
         case EVar:
+        case EConstant:
         case EArrToAddress:
             return e;
     }
@@ -1265,12 +1261,16 @@ struct Parser : public DiagnosticHelper {
         consume();
         if (!(e = constant_expression()))
           return nullptr;
-        c = l.evaluator.withLoc(e, getLoc());
-        if (l.evaluator.error)
-          return l.evaluator.error = false, nullptr;
+        if (e->k == EConstant) {
+          const APInt &I = cast<llvm::ConstantInt>(e->C)->getValue();
+          if (I.getActiveBits() > 32) {
+            warning("enum constant exceeds 32 bit");
+          }
+          c = I.getLimitedValue();
+        }
       }
       putenum(s, c, loc);
-      result->eelems.push_back(EnumPair{.name = s, .val = c});
+      result->eelems.push_back(EnumPair {.name = s, .val = c});
       if (l.tok.tok == TComma)
         consume();
       else
@@ -1611,27 +1611,28 @@ struct Parser : public DiagnosticHelper {
     Location loc = getLoc();
     Token tok = l.tok.tok;
     switch (tok) {
-    case TNot: {
-      Expr e;
-      consume();
-      if (!(e = cast_expression()))
-        return nullptr;
-      if (!e->ty->isScalar())
-        return type_error(getLoc(), "scalar expected"), nullptr;
-      return boolToInt(unary(e, LogicalNot, context.getInt()));
-    }
+      case TNot: 
+      {
+        Expr e;
+        consume();
+        if (!(e = cast_expression()))
+          return nullptr;
+        if (!e->ty->isScalar())
+          return type_error(getLoc(), "scalar expected"), nullptr;
+        return boolToInt(unary(e, LogicalNot, context.getInt()));
+      }
     case TMul: 
     {
-      Expr e;
-      CType ty;
-      consume();
-      if (!(e = cast_expression()))
-        return nullptr;
-      if (e->ty->k != TYPOINTER)
-        return type_error(getLoc(), "pointer expected"), nullptr;
-      ty = context.clone(e->ty->p);
-      ty->tags |= TYLVALUE;
-      return unary(e, Dereference, ty);
+        Expr e;
+        CType ty;
+        consume();
+        if (!(e = cast_expression()))
+          return nullptr;
+        if (e->ty->k != TYPOINTER)
+          return type_error(getLoc(), "pointer expected"), nullptr;
+        ty = context.clone(e->ty->p);
+        ty->tags |= TYLVALUE;
+        return unary(e, Dereference, ty);
     }
     case TBitNot: 
     {
@@ -1667,7 +1668,8 @@ struct Parser : public DiagnosticHelper {
         return e->ty->tags &= ~TYLVALUE, e;
       return unary(e, AddressOf, context.getPointerType(e->ty));
     }
-    case TDash: {
+    case TDash: 
+    {
       Expr e;
       consume();
       if (!(e = unary_expression()))
@@ -1677,7 +1679,8 @@ struct Parser : public DiagnosticHelper {
       e = unary(e, e->ty->isSigned() ? SNeg : UNeg, e->ty);
       return integer_promotions(e), e;
     }
-    case TAdd: {
+    case TAdd: 
+    {
       Expr e;
       consume();
       if (!(e = unary_expression()))
@@ -1687,7 +1690,8 @@ struct Parser : public DiagnosticHelper {
       return integer_promotions(e), e;
     }
     case TAddAdd:
-    case TSubSub: {
+    case TSubSub: 
+    {
       Expr e;
       consume();
       if (!(e = unary_expression()))
@@ -1696,14 +1700,14 @@ struct Parser : public DiagnosticHelper {
         return nullptr;
       Expr e2 = context.clone(e);
       CType ty = e->ty->k == TYPOINTER ? context.getSize_t() : e->ty;
-      Expr one = ENEW(IntLitExpr) {
-          .loc = e->loc,
-          .ty = ty,
-          .ival = APInt(ty->getBitWidth(), 1)};
+      Expr one = wrap(ty, 
+        llvm::ConstantInt::get(irgen.ctx, APInt(ty->getBitWidth(), 1)), e->loc
+      );
       (tok == TAddAdd) ? make_add(e, one) : make_sub(e, one);
       return binop(e2, Assign, e, e->ty);
     }
-    case Ksizeof: {
+    case Ksizeof: 
+    {
       Expr e;
       consume();
       if (l.tok.tok == TLbracket) {
@@ -1715,21 +1719,18 @@ struct Parser : public DiagnosticHelper {
           if (l.tok.tok != TRbracket)
             return expectRB(getLoc()), nullptr;
           consume();
-          return ENEW(IntLitExpr){
-              .loc = loc, .ty = context.getSize_t(), .ival = APInt(context.getSize_t()->getBitWidth(), getsizeof(ty))};
+          return wrap(context.getSize_t(),  llvm::ConstantInt::get(irgen.ctx, APInt(context.getSize_t()->getBitWidth(), getsizeof(ty))), loc);
         }
         if (!(e = unary_expression()))
           return nullptr;
         if (l.tok.tok != TRbracket)
           return expectRB(getLoc()), nullptr;
         consume();
-        return ENEW(IntLitExpr){
-            .loc = loc, .ty = context.getSize_t(), .ival = APInt(context.getSize_t()->getBitWidth(), getsizeof(e))};
+        return wrap(context.getSize_t(), llvm::ConstantInt::get(irgen.ctx, APInt(context.getSize_t()->getBitWidth(), getsizeof(e))), loc);
       }
       if (!(e = unary_expression()))
         return nullptr;
-      return ENEW(IntLitExpr){
-          .loc = loc, .ty = context.getSize_t(), .ival = APInt(context.getSize_t()->getBitWidth(), getsizeof(e))};
+                return wrap(context.getSize_t(),  llvm::ConstantInt::get(irgen.ctx, APInt(context.getSize_t()->getBitWidth(), getsizeof(e))), loc);
     }
     case K_Alignof: 
     {
@@ -1742,14 +1743,12 @@ struct Parser : public DiagnosticHelper {
         CType ty = type_name();
         if (!ty)
           return expect(getLoc(), "type-name"), nullptr;
-        result = ENEW(IntLitExpr){
-            .loc = loc, .ty = context.getSize_t(), .ival = APInt(context.getSize_t()->getBitWidth(), getAlignof(ty))};
+        result = wrap(context.getSize_t(), llvm::ConstantInt::get(irgen.ctx, APInt(context.getSize_t()->getBitWidth(), getAlignof(ty))), loc);
       } else {
         Expr e = constant_expression();
         if (!e)
           return nullptr;
-        result = ENEW(IntLitExpr){
-            .loc = loc, .ty = context.getSize_t(), .ival = APInt(context.getSize_t()->getBitWidth(), getAlignof(e))};
+        result = wrap(context.getSize_t(), llvm::ConstantInt::get(irgen.ctx, APInt(context.getSize_t()->getBitWidth(), getAlignof(e))), loc);
       }
       if (l.tok.tok != TRbracket)
         return expectRB(getLoc()), nullptr;
@@ -1759,7 +1758,7 @@ struct Parser : public DiagnosticHelper {
     default:
       return postfix_expression();
     }
-  }
+}
 static bool alwaysFitsInto64Bits(unsigned Radix, unsigned NumDigits) {
     switch (Radix) {
         case 2:
@@ -1785,7 +1784,7 @@ Expr parse_pp_number(const xstring str) {
     if (str.size() == 2) {
         if (!llvm::isDigit(str.front()))
             return lex_error(loc, "expect one digit"), nullptr;
-        return ENEW(IntLitExpr) {.ty = context.getInt(),  .ival = APInt(32, static_cast<uint64_t>(*s) - '0')};
+        return wrap(context.getInt(), llvm::ConstantInt::get(irgen.ctx, APInt(32, static_cast<uint64_t>(*s) - '0')));
     }
     if (*s == '0') {
         s++;
@@ -1929,8 +1928,8 @@ Expr parse_pp_number(const xstring str) {
             Format = &APFloat::IEEEsingle();
             ty = context.typecache.ffloatty;
         }
-        Expr result = ENEW(FloatLitExpr) {.ty = ty, .fval = APFloat(*Format)};
-        auto it = result->fval.convertFromString(fstr, APFloat::rmNearestTiesToEven);
+        APFloat F(*Format);
+        auto it = F.convertFromString(fstr, APFloat::rmNearestTiesToEven);
         if (auto err = it.takeError()) {
             std::string msg = llvm::toString(std::move(err));
             lex_error(loc, "error parsing floating literal: %R", StringRef(msg));
@@ -1938,7 +1937,7 @@ Expr parse_pp_number(const xstring str) {
             auto status = *it;
             SmallString<20> buffer;
             if ((status & APFloat::opOverflow) ||
-                ((status & APFloat::opUnderflow) && result->fval.isZero())) {
+                ((status & APFloat::opUnderflow) && F.isZero())) {
                 const char *diag;
                 if (status & APFloat::opOverflow) {
                     APFloat::getLargest(*Format).toString(buffer);
@@ -1950,7 +1949,7 @@ Expr parse_pp_number(const xstring str) {
                 lex_error(loc, diag, buffer.str());
             }
         }
-        return result;
+        return wrap(ty, llvm::ConstantFP::get(irgen.ctx, F), loc);
     }
     bool overflow = false;
     xint128_t bigVal = xint128_t::getZero();
@@ -2001,12 +2000,16 @@ Expr parse_pp_number(const xstring str) {
           }
         }
     }
-    Expr result = ENEW(IntLitExpr) {.loc = loc, .ty = ty, .ival =
-       H ? APInt(ty->getBitWidth(), {H, L}) : APInt(ty->getBitWidth(), L)
-    };
-    return result;
+    if (H)
+      return wrap(ty, llvm::ConstantInt::get(irgen.ctx, APInt(ty->getBitWidth(), {H, L})));
+    return wrap(ty, llvm::ConstantInt::get(irgen.ctx, APInt(ty->getBitWidth(), L)));
 }
-
+  Expr wrap(CType ty, llvm::Constant *C, Location loc = Location()) {
+    return ENEW(ConstantExpr) {.loc = loc, .ty = ty, .C = C};
+  }
+  Expr getIntZero() {
+    return intzero;
+  }
   Expr primary_expression() {
     // primary expressions:
     //      constant
@@ -2034,7 +2037,10 @@ Expr parse_pp_number(const xstring str) {
       default:
         llvm_unreachable("");
       }
-      result = ENEW(IntLitExpr){.loc = loc, .ty = ty, .ival = APInt(ty->getBitWidth(), l.tok.i)};
+      result = wrap(
+        ty, 
+        llvm::ConstantInt::get(irgen.ctx, APInt(ty->getBitWidth(), l.tok.i)), 
+        loc);
       consume();
     } break;
     case TStringLit: 
@@ -2050,7 +2056,7 @@ Expr parse_pp_number(const xstring str) {
       }
       switch (enc) {
       case 8:
-        result = ENEW(ArrToAddressExpr){.loc = loc, .ty = context.typecache.strty,.arr3 = ENEW(StringExpr){ .ty = TNEW(ArrayType){.arrtype = context.typecache.i8,.hassize = true,.arrsize = (unsigned)s.size()},.str = s,.is_constant = true}};
+        result = ENEW(ArrToAddressExpr) {.loc = loc, .ty = context.typecache.strty,.arr3 = ENEW(StringExpr){ .ty = TNEW(ArrayType){.arrtype = context.typecache.i8,.hassize = true,.arrsize = (unsigned)s.size()},.str = s,.is_constant = true}};
         break;
       default:
         llvm_unreachable("bad encoding");
@@ -2062,13 +2068,13 @@ Expr parse_pp_number(const xstring str) {
       if (result)
         result->loc = getLoc();
       else
-        result = context.getIntZero();
+        result = getIntZero();
       consume();
     } break;
     case TIdentifier: 
     {
       if (l.want_expr)
-        result = context.getIntZero();
+        result = getIntZero();
       else if (l.tok.s->second.getToken() == PP__func__) {
         CType ty = TNEW(ArrayType) {.arrtype = context.typecache.i8, .hassize = true, .arrsize = (unsigned)sema.pfunc->getKeyLength()};
         result = ENEW(ArrToAddressExpr) {.loc = loc, .ty = context.typecache.strty, .arr3 = ENEW(StringExpr){.ty = ty, .str = xstring::get(sema.pfunc->getKey()), .is_constant = true}};
@@ -2077,10 +2083,13 @@ Expr parse_pp_number(const xstring str) {
         size_t idx;
         Variable_Info *it = sema.typedefs.getSym(l.tok.s, idx);
         consume();
-        if (!it) 
-          return type_error(loc, "use of undeclared identifier %I", sym), context.getIntZero();
+        if (!it)
+          return type_error(loc, "use of undeclared identifier %I", sym), getIntZero();
+        if (it->val) {
+          return wrap(it->ty, it->val, loc);
+        }
         if (it->ty->tags & TYTYPEDEF)
-          return type_error("typedefs are not allowed here %I", sym), context.getIntZero();
+          return type_error("typedefs are not allowed here %I", sym), getIntZero();
         it->tags |= USED;
         CType ty = context.clone(it->ty);
         // lvalue conversions
@@ -2431,16 +2440,20 @@ Expr parse_pp_number(const xstring str) {
       }
       return;
     }
-    case Kreturn: {
+    case Kreturn: 
+    {
       Expr e, r;
       consume();
       if (l.tok.tok == TSemicolon) {
         consume();
         if (sema.currentfunctionRet->tags & TYVOID)
-          return insertStmt(SNEW(ReturnStmt){.loc = loc, .ret = nullptr});
+          return insertStmt(SNEW(ReturnStmt) {.loc = loc, .ret = nullptr});
+
         return warning(loc, "function should not return void in a function return %T", sema.currentfunctionRet),
-               note("%s", "A return statement without an expression shall only appear in a function whose return type is void"),
-               insertStmt(SNEW(ReturnStmt){.loc = loc, .ret = ENEW(DefaultExpr){.loc = loc, .ty = sema.currentfunctionRet}});
+          note("%s", "A return statement without an expression shall only appear in a function whose return type is void"),
+          insertStmt(SNEW(ReturnStmt) {.loc = loc, .ret = 
+            wrap(sema.currentfunctionRet, llvm::UndefValue::get(irgen.wrap2(sema.currentfunctionRet)), loc)
+          });
       }
       if (!(e = expression()))
         return;
@@ -2448,7 +2461,7 @@ Expr parse_pp_number(const xstring str) {
       if (sema.currentfunctionRet->tags & TYVOID)
         return warning(loc,"function should return a value in a function return void"),
                note("A return statement with an expression shall not appear in a function whose return type is void"),
-               insertStmt(SNEW(ReturnStmt){.loc = loc, .ret = nullptr});
+               insertStmt(SNEW(ReturnStmt) {.loc = loc, .ret = nullptr});
       // warn_if_bad_cast(e, sema.currentfunctionRet, " returning '" & $e->ty &
       // "' from a function with return type '" & $sema.currentfunctionRet &
       // "'")
@@ -2990,19 +3003,14 @@ Expr parse_pp_number(const xstring str) {
         Stmt s = getInsertPoint();
         Location loc2 = getLoc();
         if (sema.pfunc->second.getToken() == PP_main) {
-          insertStmt(SNEW(ReturnStmt) {.loc = loc2, .ret = context.getIntZero()});
+          insertStmt(SNEW(ReturnStmt) {.loc = loc2, .ret = getIntZero()});
         } else {
-          if (sema.currentfunctionRet->tags & TYVOID) {
-            insertStmt(SNEW(ReturnStmt) {.loc = loc2, .ret = nullptr});
-          } else {
+          if (!(sema.currentfunctionRet->tags & TYVOID)) {
             // if this label never reaches (never break to it)
-            if (s->k != SLabel || (!s->labelName &&
-                !jumper.used_breaks.contains(s->label))
-              ) {
-               warning(loc2, "control reaches end of non-void function");
+            if (s->k != SLabel || (!s->labelName && !jumper.used_breaks.contains(s->label))) {
+                warning(loc2, "control reaches end of non-void function");
                 note(loc, "in the definition of function %I", sema.pfunc);
             }
-            insertStmt(SNEW(ReturnStmt) {.loc = loc, .ret = ENEW(UndefExpr) {.loc = loc2, .ty = sema.currentfunctionRet}});
             // control reaches end of non-void function
             // non-void function does not return a value
             // no return statement in function returning non-void
