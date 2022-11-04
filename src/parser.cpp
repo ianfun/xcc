@@ -633,37 +633,132 @@ struct Parser : public DiagnosticHelper {
     checkInteger(result, r);
     integer_promotions(result);
     integer_promotions(r);
-    if (result->k == EConstant && r->k == EConstant) {
-      result = wrap(r->ty, llvm::ConstantExpr::getShl(result->C, r->C), r->loc);
+    if (r->k != EConstant) goto NOT_CONSTANT;
+    if (auto CI = dyn_cast<ConstantInt>(r->C)) {
+      auto width = result->ty->getBitWidth();
+      const APInt &shift = CI->getValue();
+      if (r->ty->isSigned() && shift.isNegative()) {
+        warning(r->loc, "negative shift count is undefined");
+        goto BAD;
+      }
+      if (shift.uge(width)) {
+        warning(result->loc, "shift count(%A) >= width of type(%z)", &shift, (size_t)width);
+        goto BAD;
+      }
+      if (result->k != EConstant) goto NOT_CONSTANT;
+      {
+        const APInt &obj = cast<ConstantInt>(result->C)->getValue();
+        bool overflow = false;
+        if (result->ty->isSigned() && obj.isNegative())
+          warning(result->loc, "shifting a negative signed value is undefined");
+        result = wrap(result->ty, ConstantInt::get(irgen.ctx, result->ty->isSigned() ? obj.sshl_ov(shift, overflow) : obj << shift), result->loc);
+        if (overflow)
+          warning(result->loc, "shift-left overflow, result is %A", &cast<ConstantInt>(result->C)->getValue());
+        return;
+      }
+      BAD:
+      result = wrap(result->ty, ConstantInt::get(irgen.ctx, APInt::getZero(width)), result->loc);
       return;
     }
+    if (result->k != EConstant) goto NOT_CONSTANT;
+    result = wrap(r->ty, llvm::ConstantExpr::getShl(result->C, r->C), r->loc);
+    return;
+    NOT_CONSTANT:
     result = binop(result, Shl, r, result->ty);
   }
   void make_shr(Expr &result, Expr &r) {
     checkInteger(result, r);
     integer_promotions(result);
     integer_promotions(r);
-    if (result->k == EConstant && r->k == EConstant) {
-      result = wrap(r->ty, result->ty->isSigned() ? llvm::ConstantExpr::getAShr(result->C, r->C) : llvm::ConstantExpr::getLShr(result->C, r->C), r->loc);
+    if (r->k != EConstant) goto NOT_CONSTANT;
+    if (auto CI = dyn_cast<ConstantInt>(r->C)) {
+      auto width = result->ty->getBitWidth();
+      const APInt &shift = CI->getValue();
+      if (r->ty->isSigned() && shift.isNegative()) {
+        warning(r->loc, "negative shift count is undefined");
+        goto BAD;
+      }
+      if (shift.uge(width)) {
+        warning(result->loc, "shift count(%A) >= width of type(%z)", &shift, (size_t)width);
+        goto BAD;
+      }
+      if (result->k != EConstant) goto NOT_CONSTANT;
+      {
+        APInt obj = cast<ConstantInt>(result->C)->getValue();
+        if (result->ty->isSigned())
+          obj.ashrInPlace((unsigned)shift.getZExtValue());
+        else
+          obj.lshrInPlace((unsigned)shift.getZExtValue());
+        result = wrap(result->ty, ConstantInt::get(irgen.ctx, obj), result->loc);
+        return;
+      }
+      BAD:
+      result = wrap(result->ty, ConstantInt::get(irgen.ctx, APInt::getZero(width)), result->loc);
       return;
     }
+    if (result->k != EConstant) goto NOT_CONSTANT;
+    result = wrap(r->ty, llvm::ConstantExpr::getShl(result->C, r->C), r->loc);
+    return;
+    NOT_CONSTANT:
     result = binop(result, result->ty->isSigned() ? AShr : Shr, r, result->ty);
   }
   void make_bitop(Expr &result, Expr &r, BinOp op) {
     checkInteger(result, r);
     conv(result, r);
-    if (result->k == EConstant && r->k == EConstant) {
-      llvm::Instruction::BinaryOps theOp;
-      switch (op) {
-        case Or: theOp = llvm::Instruction::Or;break;
-        case Xor: theOp = llvm::Instruction::Xor;break;
-        case And: theOp = llvm::Instruction::Xor;break;
-        default: llvm_unreachable("invalid call to make_bitop");
+    if (result->k == EConstant) {
+      if (auto CI = dyn_cast<ConstantInt>(result->C)) {
+        if (CI->isZero())
+          goto ZERO;
+        if (CI->getValue().isAllOnes() && op != Xor)
+          goto ONE;
+        if (r->k == EConstant) {
+          if (auto CI2 = dyn_cast<ConstantInt>(r->C)) {
+            APInt val(CI->getValue());
+            switch (op) {
+              case And: val &= CI2->getValue(); break;
+              case Or: val |= CI2->getValue(); break;
+              case Xor: val ^= CI2->getValue(); break;
+              default: llvm_unreachable("");
+            }
+            result = wrap(result->ty, ConstantInt::get(irgen.ctx, val), result->loc);
+            return;
+          }
+        }
       }
-      result = wrap(r->ty, llvm::ConstantExpr::get(theOp, result->C, r->C), r->loc);
-      return;
+    }
+    else if (r->k == EConstant) {
+      if (auto CI = dyn_cast<ConstantInt>(r->C)) {
+        if (CI->isZero())
+          goto ZERO;
+        if (CI->getValue().isAllOnes() && op != Xor)
+          goto ONE;
+      }
     }
     result = binop(result, op, r, result->ty);
+    return;
+    ZERO:
+    {
+      const char *msg;
+      if (op == Or)
+        msg = "'bitwise or' to zero is always itself";
+      else if (op == And)
+        msg = "'bitwise and' to to zero is always zero";
+      else
+        msg = "'bitwise xor' to zero is always itself";
+      warning(result->loc, msg);
+      result = wrap(result->ty, ConstantInt::get(irgen.ctx, APInt::getZero(result->ty->getBitWidth())), result->loc);
+      return;
+    }
+    ONE:
+    {
+      const StringRef allOnes = "all ones(all bits set, -1)";
+      if (op == Or) {
+        warning(result->loc, "'bitsize or' to %R is always all ones", allOnes);
+        result = result = wrap(result->ty, ConstantInt::get(irgen.ctx, APInt::getAllOnes(result->ty->getBitWidth())), result->loc);
+        return;
+      }
+      warning(result->loc, "'bitsize and' to %R is always itself", allOnes);
+    }
   }
   void make_mul(Expr &result, Expr &r) {
     checkArithmetic(result, r);

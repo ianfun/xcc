@@ -1,6 +1,6 @@
 #include "common.h"
 
-    unsigned num_typedefs, num_tags;
+    size_t num_typedefs, num_tags;
     auto ast = parser.run(num_typedefs, num_tags);
 
     if (ctx.printer->NumErrors)

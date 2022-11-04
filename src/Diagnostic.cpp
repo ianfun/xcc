@@ -187,6 +187,12 @@ struct Diagnostic {
                         }
                     } break;
 #endif
+                    case 'A':
+                        get<const APInt*>(idx++)->print(OS, false);
+                        break;
+                    case 'a':
+                        get<const APInt*>(idx++)->print(OS, true);
+                        break;
                     default: llvm_unreachable("invalid format specifier");
                 }
             } else if (i == 0) {
