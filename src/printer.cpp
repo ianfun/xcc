@@ -3,8 +3,13 @@ raw_ostream &operator<<(llvm::raw_ostream &, const CType);
 raw_ostream &operator<<(llvm::raw_ostream &OS, const Expr e) {
     switch (e->k) {
         case EConstant:
-            e->C->print(OS /* IsForDebug=false */);
-            return OS << '\n';
+            if (auto CI = dyn_cast<ConstantInt>(e->C))
+                CI->getValue().print(OS, e->ty->isSigned());
+            else if (auto CFP = dyn_cast<ConstantFP>(e->C))
+                CFP->getValue().print(OS);
+            else
+                e->C->print(OS);
+            return OS;
         case EBin:
             return OS << '(' << e->lhs  << ' ' << show(e->bop) << ' ' << e->rhs << ')';
         case EUnary:

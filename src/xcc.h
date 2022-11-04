@@ -104,6 +104,8 @@ static void logtime() {
 using llvm::APInt;
 using llvm::APFloat;
 using llvm::GlobalValue;
+using llvm::ConstantFP;
+using llvm::ConstantInt;
 using llvm::sys::ProcessInfo;
 using llvm::isa;
 using llvm::isa_and_nonnull;

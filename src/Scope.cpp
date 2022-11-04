@@ -70,8 +70,8 @@ struct BlockScope: public ScopeBase<T, InitialSize>
 {
     // https://stackoverflow.com/q/1120833
     // Derived template-class access to base-class member-data
-    SmallVector<unsigned, 8> blocks;
-    unsigned maxSyms;
+    SmallVector<size_t, 8> blocks;
+    size_t maxSyms;
     size_t numSymsThisBlock() const {
         return blocks.back();
     }
@@ -111,4 +111,19 @@ struct BlockScope: public ScopeBase<T, InitialSize>
                 return true;
         return false;
     }
+};
+template <typename T, unsigned InitialSize = 64>
+struct FunctionAndBlockScope: public BlockScope<T, InitialSize>
+{
+    size_t _current_function_offset;
+    auto current_function() {
+        return this->data.data() + _current_function_offset;
+    }
+    auto current_function() const {
+        return this->data.data() + _current_function_offset;
+    }
+    void push_function() {
+        _current_function_offset = this->data.size();
+    }
+    void pop_function() const { /* nothing */ }
 };

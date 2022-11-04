@@ -338,7 +338,7 @@ void finalsizeCodeGen() {
     if (dtags)
         delete [] dtags;
 }
-void run(Stmt s, unsigned num_typedefs, unsigned num_tags) {
+void run(Stmt s, size_t num_typedefs, size_t num_tags) {
     vars = new Value[num_typedefs](); // not initialized!
     tags = new Type[num_tags](); // not initialized!
     if (options.g)
