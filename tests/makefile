@@ -1,21 +1,22 @@
 CC=clang++
 
-FLAGS=`llvm-config --cxxflags --ldflags --libs` -g
+FLAGS=`llvm-config --cxxflags --ldflags --libs`
+MOREFLAGS='-g'
 
 testCodeGen:
-	$(CC) testCodeGen.cpp $(FLAGS) -o codegen
+	$(CC) testCodeGen.cpp $(FLAGS) -o codegen $(MOREFLAGS)
 
 testCpp:
-	$(CC) testCpp.cpp $(FLAGS) -o cpp
+	$(CC) testCpp.cpp $(FLAGS) -o cpp $(MOREFLAGS)
 
 testLexer:
-	$(CC) testLexer.cpp $(FLAGS) -o lexer
+	$(CC) testLexer.cpp $(FLAGS) -o lexer $(MOREFLAGS)
 
 testParser:
-	$(CC) testParser.cpp $(FLAGS) -o parser
+	$(CC) testParser.cpp $(FLAGS) -o parser $(MOREFLAGS)
 
 testJit:
-	$(CC) testJit.cpp $(FLAGS) -o jit
+	$(CC) testJit.cpp $(FLAGS) -o jit $(MOREFLAGS)
 
 all: testLexer testCpp testParser testCodeGen testJit
 

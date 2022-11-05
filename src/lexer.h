@@ -18,10 +18,9 @@ struct Lexer: public DiagnosticHelper
     xstring lexIdnetBuffer = xstring::get_with_capacity(20);
     uint32_t counter = 0;
     Location loc;
-    Evaluator evaluator;
-    
+
     Lexer(SourceMgr &SM, Parser &parser, xcc_context &context)
-    : DiagnosticHelper{context}, parser{parser}, SM{SM}, evaluator{context} {
+    : DiagnosticHelper{context}, parser{parser}, SM{SM} {
 
     }
     Location getLoc() { return loc; }
@@ -39,6 +38,19 @@ struct Lexer: public DiagnosticHelper
     }
     void eat() {
         c = SM.skip_read();
+    }
+    uint64_t force_eval(Expr e, Location cloc) {
+        if (e->k != EConstant) {
+            pp_error(cloc, "not a constant expression: %E", e);
+            return 0;
+        }
+        if (auto CI = dyn_cast<ConstantInt>(e->C)) {
+            if (CI->getValue().getActiveBits() > 64)
+                warning(cloc, "integer constant expression larger exceeds 64 bit, the result is truncated");
+            return CI->getValue().getLimitedValue();
+        }
+        pp_error("not a integer constant: %E", e);
+        return 0;
     }
 Codepoint lexHexChar(){
     Codepoint n = 0;

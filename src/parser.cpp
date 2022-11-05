@@ -48,14 +48,17 @@ struct Parser : public DiagnosticHelper {
   Stmt InsertPt = nullptr;
   bool sreachable;
   Stmt unreachable_reason = nullptr;
-  Expr intzero, ctrue, cfalse;
+  Expr intzero, intone, cfalse;
   Parser(SourceMgr &SM, xcc_context &context, IRGen &irgen)
       : DiagnosticHelper{context}, l(SM, *this, context), irgen{irgen},
       intzero {
         wrap(context.getInt(), 
-        ConstantInt::get(irgen.ctx, APInt::getZero(32)))
+        ConstantInt::get(irgen.ctx, APInt::getZero(context.getInt()->getBitWidth())))
       },
-      ctrue {wrap(context.typecache.b, ConstantInt::getTrue(irgen.ctx))},
+      intone {
+        wrap(context.getInt(), 
+        ConstantInt::get(irgen.ctx, APInt(context.getInt()->getBitWidth(), 1)))
+      },
       cfalse {wrap(context.typecache.b, ConstantInt::getFalse(irgen.ctx))}
       {}
   template <typename T> auto getsizeof(T a) { 
@@ -131,8 +134,8 @@ struct Parser : public DiagnosticHelper {
       Type_info info = Type_info {.ty = result, .loc = loc};
       insertStmt(SNEW(DeclStmt) {
         .loc = loc, 
-        .decl_ty = result, 
-        .decl_idx = sema.tags.putSym(Name, info)
+        .decl_idx = sema.tags.putSym(Name, info),
+        .decl_ty = result
       });
     }
     return result;
@@ -172,7 +175,7 @@ struct Parser : public DiagnosticHelper {
       type_error(getLoc(), "%I redeclared", Name);
     sema.typedefs.putSym(Name,
       Variable_Info {
-        .ty = context.getInt(),
+        .ty = context.getConstInt(),
         .loc = loc,
         .val = ConstantInt::get(cast<llvm::IntegerType>(irgen.types[x32]), val),
         .tags = ASSIGNED | USED, // enums are used by default ignore warnings
@@ -469,10 +472,6 @@ struct Parser : public DiagnosticHelper {
     if (!(checkInteger(a->ty) && checkInteger(b->ty)))
       type_error(getLoc(), "integer types expected");
   }
-  void checkScalar(Expr a, Expr b) {
-    if (!(a->ty->isScalar() && b->ty->isScalar()))
-      type_error(getLoc(), "scalar types expected");
-  }
   static int checkArithmetic(CType ty) { return ty->k == TYPRIM; }
   void checkArithmetic(Expr a, Expr b) {
     if (!(checkArithmetic(a->ty) && checkArithmetic(b->ty)))
@@ -480,10 +479,9 @@ struct Parser : public DiagnosticHelper {
   }
   void checkSpec(Expr &a, Expr &b) {
     if (a->ty->k != b->ty->k)
-      return type_error(
-          getLoc(),
-          "operands type mismatch: %E(has type %T) and %E(has type %T)", a, b);
-    checkScalar(a, b);
+      return type_error(getLoc(), "bad operands to binary expression:\n    operands type mismatch: %E(has type %T) and %E(has type %T)", a, b);
+    if (!(a->ty->isScalar() && b->ty->isScalar()))
+      return type_error(getLoc(), "scalar types expected");
     conv(a, b);
   }
   bool issimple(Expr e) {
@@ -567,6 +565,7 @@ struct Parser : public DiagnosticHelper {
         case EArrToAddress:
             return e;
     }
+    llvm_unreachable("bad expr kind");
   }
   void make_add(Expr &result, Expr &r) {
     if (isFloating(result->ty)) {
@@ -634,7 +633,7 @@ struct Parser : public DiagnosticHelper {
     integer_promotions(result);
     integer_promotions(r);
     if (r->k != EConstant) goto NOT_CONSTANT;
-    if (auto CI = dyn_cast<ConstantInt>(r->C)) {
+    if (const auto CI = dyn_cast<ConstantInt>(r->C)) {
       auto width = result->ty->getBitWidth();
       const APInt &shift = CI->getValue();
       if (r->ty->isSigned() && shift.isNegative()) {
@@ -671,7 +670,7 @@ struct Parser : public DiagnosticHelper {
     integer_promotions(result);
     integer_promotions(r);
     if (r->k != EConstant) goto NOT_CONSTANT;
-    if (auto CI = dyn_cast<ConstantInt>(r->C)) {
+    if (const auto CI = dyn_cast<ConstantInt>(r->C)) {
       auto width = result->ty->getBitWidth();
       const APInt &shift = CI->getValue();
       if (r->ty->isSigned() && shift.isNegative()) {
@@ -706,13 +705,13 @@ struct Parser : public DiagnosticHelper {
     checkInteger(result, r);
     conv(result, r);
     if (result->k == EConstant) {
-      if (auto CI = dyn_cast<ConstantInt>(result->C)) {
+      if (const auto CI = dyn_cast<ConstantInt>(result->C)) {
         if (CI->isZero())
           goto ZERO;
         if (CI->getValue().isAllOnes() && op != Xor)
           goto ONE;
         if (r->k == EConstant) {
-          if (auto CI2 = dyn_cast<ConstantInt>(r->C)) {
+          if (const auto CI2 = dyn_cast<ConstantInt>(r->C)) {
             APInt val(CI->getValue());
             switch (op) {
               case And: val &= CI2->getValue(); break;
@@ -727,7 +726,7 @@ struct Parser : public DiagnosticHelper {
       }
     }
     else if (r->k == EConstant) {
-      if (auto CI = dyn_cast<ConstantInt>(r->C)) {
+      if (const auto CI = dyn_cast<ConstantInt>(r->C)) {
         if (CI->isZero())
           goto ZERO;
         if (CI->getValue().isAllOnes() && op != Xor)
@@ -764,10 +763,10 @@ struct Parser : public DiagnosticHelper {
     checkArithmetic(result, r);
     conv(result, r);
     if (result->k != EConstant) goto NOT_CONSTANT;
-    if (auto lhs = dyn_cast<ConstantInt>(result->C)) {
+    if (const auto lhs = dyn_cast<ConstantInt>(result->C)) {
       if (lhs->isZero()) goto ZERO;
       if (r->k != EConstant) goto NOT_CONSTANT;
-      if (auto rhs = dyn_cast<ConstantInt>(r->C)) {
+      if (const auto rhs = dyn_cast<ConstantInt>(r->C)) {
         bool overflow = false;
         if (rhs->isZero()) goto ZERO;
         result = wrap(r->ty, ConstantInt::get(irgen.ctx, r->ty->isSigned() ? lhs->getValue().smul_ov(rhs->getValue(), overflow) : lhs->getValue().umul_ov(rhs->getValue(), overflow)), result->loc);
@@ -776,9 +775,9 @@ struct Parser : public DiagnosticHelper {
         return;
       }
     }
-    else if (auto lhs = dyn_cast<ConstantFP>(result->C)) {
+    else if (const auto lhs = dyn_cast<ConstantFP>(result->C)) {
       if (r->k != EConstant) goto NOT_CONSTANT;
-      if (auto rhs = dyn_cast<ConstantFP>(result->C)) {
+      if (const auto rhs = dyn_cast<ConstantFP>(result->C)) {
         APFloat F = lhs->getValue();
         handleOpStatus(F.multiply(rhs->getValue(), APFloat::rmNearestTiesToEven));
         result = wrap(r->ty, ConstantFP::get(irgen.ctx, F), result->loc);
@@ -797,7 +796,7 @@ struct Parser : public DiagnosticHelper {
     checkArithmetic(result, r);
     conv(result, r);
     if (r->k != EConstant) goto NOT_CONSTANT;
-    if (auto CI = dyn_cast<ConstantInt>(r->C)) {
+    if (const auto CI = dyn_cast<ConstantInt>(r->C)) {
       if (CI->getValue().isZero()) {
         warning(result->loc, "integer division by zero is undefined");
         result = wrap(r->ty, llvm::UndefValue::get(CI->getType()), result->loc);
@@ -807,7 +806,7 @@ struct Parser : public DiagnosticHelper {
       result = wrap(r->ty, llvm::ConstantExpr::get(r->ty->isSigned() ? llvm::Instruction::SDiv : llvm::Instruction::UDiv, result->C, r->C), result->loc);
       return;
     }
-    else if (auto CFP = dyn_cast<ConstantFP>(r->C)) {
+    else if (const auto CFP = dyn_cast<ConstantFP>(r->C)) {
       if (CFP->isZero()) {
         warning(result->loc, "floating division by zero is undefined");
         result = wrap(r->ty, llvm::UndefValue::get(CFP->getType()), result->loc);
@@ -827,7 +826,7 @@ struct Parser : public DiagnosticHelper {
     checkInteger(result, r);
     conv(result, r);
     if (result->k == EConstant && r->k == EConstant) {
-      if (auto CI = dyn_cast<ConstantInt>(r->C)) {
+      if (const auto CI = dyn_cast<ConstantInt>(r->C)) {
         if (CI->getValue().isZero()) {
           warning("integer remainder by zero is undefined");
           result = wrap(r->ty, llvm::UndefValue::get(CI->getType()), result->loc);
@@ -836,7 +835,7 @@ struct Parser : public DiagnosticHelper {
         result = wrap(r->ty, llvm::ConstantExpr::get(r->ty->isSigned() ? llvm::Instruction::SRem : llvm::Instruction::URem, result->C, r->C), result->loc);
         return;
       }
-      else if (auto CFP = dyn_cast<ConstantFP>(r->C)) {
+      else if (const auto CFP = dyn_cast<ConstantFP>(r->C)) {
         if (CFP->isZero()) {
           warning("integer remainder by zero is undefined");
           result = wrap(r->ty, llvm::UndefValue::get(CFP->getType()), result->loc);
@@ -847,6 +846,86 @@ struct Parser : public DiagnosticHelper {
       }
     }
     result = binop(result, isFloating(r->ty) ? FRem : (r->ty->isSigned() ? SRem : URem), r, r->ty);
+  }
+  static BinOp get_relational_expression_op(Token tok, bool isFloating, bool isSigned) {
+    switch (tok) {
+      case TLe: return isFloating ? FLE : (isSigned ? SLE : ULE);
+      case TLt: return isFloating ? FLT : (isSigned ? SLT : ULT);
+      case TGt: return isFloating ? FGT : (isSigned ? SGT : UGT);
+      case TGe: return isFloating ? FGE : (isSigned ? SGE : UGE);
+      case TNe: return isFloating ? FNE: NE;
+      case TEq: return isFloating ? FEQ: EQ;
+      default: llvm_unreachable("");
+    }
+  }
+  void make_cmp(Expr &result, Token tok, bool isEq = false) {
+    Expr r;
+    consume();
+    if (!(r = isEq ? relational_expression() : shift_expression()))
+      return;
+    checkSpec(result, r);
+    if (result->k == EConstant && r->k == EConstant) {
+      if (const auto CI = dyn_cast<ConstantInt>(result->C)) {
+        auto CI2 = dyn_cast<ConstantInt>(r->C);
+        const APInt &A1 = CI->getValue();
+        const APInt &A2 = CI2->getValue();
+        int status;
+        if (result->ty->isSigned()) {
+          if (A1.isSingleWord()) {
+            auto x = A1.getZExtValue();
+            auto y = A2.getZExtValue();
+            status = x < y ? -1 : (x == y) ? 0 : -1;
+          } else {
+            status = APInt::tcCompare(A1.getRawData(), A2.getRawData(), A1.getNumWords());
+          }
+        } else {
+          if (A1.isSingleWord()) {
+            int64_t x = llvm::SignExtend64(A1.getZExtValue(), A1.getBitWidth());
+            int64_t y = llvm::SignExtend64(A2.getZExtValue(), A2.getBitWidth());
+            status = x < y ? -1 : (x == y) ? 0 : -1;
+          } else {
+            bool lhsNeg = A1.isNegative();
+            bool rhsNeg = A2.isNegative();
+            status = lhsNeg != rhsNeg ?
+              lhsNeg ? -1 : 1 :
+              APInt::tcCompare(A1.getRawData(), A2.getRawData(), A1.getNumWords());
+          }
+        }
+        bool B;
+        switch (tok) {
+          case TGt: B = status > 0; break;
+          case TGe: B = status >= 0; break;
+          case TEq: B = status == 0; break;
+          case TNe: B = status != 0; break;
+          case TLt: B = status < 0; break;
+          case TLe: B = status <= 0; break;
+          default: llvm_unreachable("bad operator to make_cmp");
+        }
+        result = wrap(context.getInt(), ConstantInt::get(irgen.ctx, APInt(context.getInt()->getBitWidth(), (uint64_t)B)), result->loc);
+        return;
+      }
+      if (const auto CFP = dyn_cast<ConstantFP>(result->C)) {
+        const auto CFP2 = dyn_cast<ConstantFP>(r->C);
+        bool B;
+        APFloat::cmpResult status = CFP->getValue().compare(CFP2->getValue());
+        constexpr APFloat::cmpResult 
+          cmpGreaterThan = APFloat::cmpGreaterThan,
+          cmpEqual = APFloat::cmpEqual,
+          cmpLessThan = APFloat::cmpLessThan;
+        switch (tok) {
+          case TGt: B = status == cmpGreaterThan; break;
+          case TGe: B = status == cmpEqual || status == cmpGreaterThan; break;
+          case TEq: B = status == cmpEqual; break;
+          case TNe: B = status != cmpEqual; break;
+          case TLt: B = status == cmpLessThan || status == cmpEqual; break;
+          case TLe: B = status == cmpLessThan; break;
+          default: llvm_unreachable("bad operator to make_cmp");
+        }
+        result = wrap(context.getInt(), ConstantInt::get(irgen.ctx, APInt(context.getInt()->getBitWidth(), (uint64_t)B)), result->loc);
+        return;
+      }
+    }
+    result = boolToInt(binop(result, get_relational_expression_op(tok, isFloating(result->ty), result->ty->isSigned()), r, context.typecache.b));
   }
   Expr boolToInt(Expr e) {
     return ENEW(CastExpr) {.loc = e->loc, .ty = context.getInt(), .castop = ZExt, .castval = e};
@@ -1326,16 +1405,16 @@ struct Parser : public DiagnosticHelper {
       }
       if (l.tok.tok != TRSquareBrackets) {
         Expr e;
+        bool ok;
+        Location cloc = getLoc();
         if (!(e = assignment_expression()))
           return Declator();
         if (!checkInteger(e->ty))
           return type_error(getLoc(), "size of array has non-integer type %T",  e->ty), Declator();
         ty->hassize = true;
-        ty->arrsize = l.evaluator.withQuiet(e);
-        if (l.evaluator.error) {
-          l.evaluator.error = false;
+        ty->arrsize = try_eval(e, cloc, ok);
+        if (!ok) {
           ty->vla = e;
-          ty->arrsize = 0;
         }
         if (l.tok.tok != TRSquareBrackets)
           return expect(getLoc(), "]"), Declator();
@@ -1369,12 +1448,11 @@ struct Parser : public DiagnosticHelper {
       Expr e;
       unsigned bitsize;
       consume();
+      Location cloc = getLoc();
       if (!(e = constant_expression()))
         return Declator();
-      bitsize = l.evaluator.withLoc(e, getLoc());
-      l.evaluator.error = false;
-      return Declator(
-          nullptr, TNEW(BitfieldType){.bittype = base, .bitsize = bitsize});
+      bitsize = force_eval(e, cloc);
+      return Declator(nullptr, TNEW(BitfieldType) {.bittype = base, .bitsize = bitsize});
     }
     d = declarator(base, Direct);
     if (!d.ty)
@@ -1383,11 +1461,10 @@ struct Parser : public DiagnosticHelper {
       unsigned bitsize;
       Expr e;
       consume();
+      Location cloc = getLoc();
       if (!(e = constant_expression()))
         return Declator();
-      bitsize = l.evaluator.withQuiet(e);
-      if (l.evaluator.error)
-        return Declator();
+      bitsize = force_eval(e, cloc);
       return Declator(nullptr, TNEW(BitfieldType){.bittype = base, .bitsize = bitsize});
     }
     return Declator(d.name, d.ty);
@@ -1480,7 +1557,9 @@ struct Parser : public DiagnosticHelper {
         return gettagByName(Name, TYENUM, loc2);
     } else if (l.tok.tok != TLcurlyBracket)
       return parse_error(loc, "expect '{' for start anonymous enum"), nullptr;
-    CType result = TNEW(EnumType) {.ename = Name, .eelems = xvector<EnumPair>::get()};
+    CType result = TNEW(EnumType) {.ename = Name};
+    if (!irgen.options.g)
+      result->eelems = xvector<EnumPair>::get();
     consume();
     for (uint64_t c = 0;; c++) {
       if (l.tok.tok != TIdentifier)
@@ -1501,7 +1580,8 @@ struct Parser : public DiagnosticHelper {
         }
       }
       putenum(s, c, loc);
-      result->eelems.push_back(EnumPair {.name = s, .val = c});
+      if (irgen.options.g)
+        result->eelems.push_back(EnumPair {.name = s, .val = c});
       if (l.tok.tok == TComma)
         consume();
       else
@@ -1564,6 +1644,38 @@ struct Parser : public DiagnosticHelper {
     if (a & (a - 1))
       type_error(getLoc(), "requested alignment is not a power of 2");
   }
+  uint64_t force_eval(Expr e, Location cloc) {
+      if (e->k != EConstant) {
+          type_error(cloc, "not a constant expression: %E", e);
+          return 0;
+      }
+      if (auto CI = dyn_cast<ConstantInt>(e->C)) {
+          if (CI->getValue().getActiveBits() > 64)
+              warning(cloc, "integer constant expression larger exceeds 64 bit, the result is truncated");
+          return CI->getValue().getLimitedValue();
+      }
+      type_error("not a integer constant: %E", e);
+      return 0;
+  }
+  uint64_t try_eval(Expr e, Location cloc, bool &ok) {
+    if (e->k == EConstant) {
+      if (auto CI = dyn_cast<ConstantInt>(e->C)) {
+          if (CI->getValue().getActiveBits() > 64)
+              warning(cloc, "integer constant expression larger exceeds 64 bit, the result is truncated");
+          return CI->getValue().getLimitedValue();
+      }
+    }
+    return 0;
+  }
+  bool try_eval_as_bool(Expr e, bool &res) {
+    if (e->k == EConstant) {
+      if (auto CI = dyn_cast<ConstantInt>(e->C)) {
+          res = !CI->isZero();
+          return true;
+      }
+    }
+    return false;
+  }
   bool parse_alignas() {
     consume();
     if (l.tok.tok != TLbracket)
@@ -1583,14 +1695,12 @@ struct Parser : public DiagnosticHelper {
       }
     } else {
       uint32_t a;
+      Location cloc = getLoc();
       Expr e = expression();
       if (!e)
         return false;
-      a = l.evaluator.withLoc(e, getLoc());
-      if (l.evaluator.error) 
-        return (l.evaluator.error = false);
-
-      if (e->ty->isSigned() && a <= 0)
+      a = force_eval(e, cloc);
+      if (e->ty->isSigned() && (int64_t)a <= 0)
         type_error(getLoc(), "alignment %u too small", (unsigned)a);
       else {
         checkAlign(a);
@@ -1627,9 +1737,7 @@ struct Parser : public DiagnosticHelper {
     Expr e = constant_expression();
     if (!e)
       return false;
-    ok = l.evaluator.withLoc(e, loc);
-    if (l.evaluator.error)
-      return (l.evaluator.error = false);
+    ok = force_eval(e, loc);
     if (l.tok.tok == TRbracket) { // no message
       if (ok == 0)
         parse_error(loc, "%s", "static assert failed!");
@@ -1649,8 +1757,10 @@ struct Parser : public DiagnosticHelper {
     return checkSemicolon(), true;
   }
   void clearKnownConstantVariables() {
-    for (auto it = sema.typedefs.current_function();it != sema.typedefs.end();++it)
-      it->info.val = nullptr;
+    for (auto it = sema.typedefs.current_function();it != sema.typedefs.end();++it) {
+      if ((it->info.ty->tags & TYCONST) == 0)
+        it->info.val = nullptr;
+    }
   }
   bool assignable(Expr e, Variable_Info *&info) {
     if (e->k == EVar) {
@@ -1851,25 +1961,6 @@ struct Parser : public DiagnosticHelper {
       return base;
     return abstract_decorator(base, Abstract).ty;
   }
-  Expr getTrue() {
-    return ctrue;
-  }
-  Expr getFalse() {
-    return cfalse;
-  }
-  Expr getBool(bool b) {
-    return b ? getTrue() : getFalse();
-  }
-  Expr foldBool(Expr e, bool reverse = false) {
-    llvm::Constant *C = e->C;
-    if (const auto CI = dyn_cast<ConstantInt>(C))
-      return getBool(reverse ? CI->isZero() : !CI->isZero());
-    if (const auto CFP = dyn_cast<ConstantFP>(C))
-      return getBool(reverse ? CFP->isZero() :! CFP->isZero());
-    if (isa<llvm::ConstantPointerNull>(C))
-      return getBool(reverse);
-    return nullptr;
-  }
   Expr unary_expression() {
     Location loc = getLoc();
     Token tok = l.tok.tok;
@@ -1880,12 +1971,7 @@ struct Parser : public DiagnosticHelper {
         consume();
         if (!(e = cast_expression()))
           return nullptr;
-        if (!e->ty->isScalar())
-          return type_error(getLoc(), "scalar expected"), nullptr;
-        if (e->k == EConstant) {
-          if (Expr c = foldBool(e, true))
-            return c;
-        }
+        valid_condition(e, true);
         return boolToInt(unary(e, LogicalNot, context.getInt()));
       }
     case TMul: 
@@ -2283,6 +2369,9 @@ Expr parse_pp_number(const xstring str) {
   Expr getIntZero() {
     return intzero;
   }
+  Expr getIntOne() {
+    return intone;
+  }
   Expr primary_expression() {
     // primary expressions:
     //      constant
@@ -2469,14 +2558,14 @@ Expr parse_pp_number(const xstring str) {
         if (info)
           info->val = nullptr;
         if (result->k == EConstant) {
-          if (auto CI = dyn_cast<ConstantInt>(result->C)) {
+          if (const auto CI = dyn_cast<ConstantInt>(result->C)) {
             APInt I = CI->getValue();
             if (isadd == PostfixIncrement) 
               info->val = ConstantInt::get(irgen.ctx, ++I);
             else
               info->val = ConstantInt::get(irgen.ctx, --I);
           }
-          else if (auto CFP = dyn_cast<ConstantFP>(result->C)) {
+          else if (const auto CFP = dyn_cast<ConstantFP>(result->C)) {
             APFloat F = CFP->getValue();
             if (isadd == PostfixIncrement) 
               F.add(APFloat(F.getSemantics(), 1), APFloat::rmNearestTiesToEven);
@@ -2608,6 +2697,58 @@ Expr parse_pp_number(const xstring str) {
     if (jumper.topContinue == INVALID_LABEL)
       type_error(getLoc(), "%s", "connot continue: no outer for/while/do-while");
   }
+  Expr getBool(bool b) {
+    return b ? getIntOne() : getIntZero();
+  }
+  void foldBool(Expr &e, bool reverse = false) {
+    llvm::Constant *C = e->C;
+    switch (C->getValueID()) {
+      case llvm::Value::ConstantIntVal:
+      {
+        const auto CI = cast<ConstantInt>(C);
+        e = getBool(reverse ? CI->isZero() : !CI->isZero());
+      } break;
+      case llvm::Value::ConstantFPVal:
+      {
+        const auto CFP = cast<ConstantFP>(C);
+        e = getBool(reverse ? CFP->isZero() : CFP->getValue().isNonZero());
+      } break;
+      case llvm::Value::UndefValueVal:
+      case llvm::Value::PoisonValueVal:
+      {
+        /* TODO: undefined value is true/false ? */
+      } break;
+      case llvm::Value::ConstantPointerNullVal:
+      {
+        e = getBool(reverse);
+      } break;
+      default: break;
+    }
+  }
+  void valid_condition(Expr &e, bool reverse = false) {
+    if (!e->ty->isScalar()) {
+      type_error("conditions requires a scalar expression");
+    }
+    switch (e->k) {
+      case EUnary:
+        switch (e->uop) {
+          case AddressOf:
+          warning("the address of %E will always evaluate as 'true'", e->uoperand);
+          e = reverse ?  getIntZero() : getIntOne();
+          return;
+          case UNeg:
+          case SNeg:
+          case FNeg:
+          warning("unary operator %s in conditions can be removed", show(e->uop));
+          e = e->uoperand;
+          break;
+          default: break;
+        }
+      default: break;
+    }
+    if (e->k == EConstant)
+      foldBool(e, reverse);
+  }
   Expr Bexpression() {
     Expr e;
     consume();
@@ -2616,8 +2757,7 @@ Expr parse_pp_number(const xstring str) {
     consume();
     if (!(e = expression()))
       return nullptr;
-    if (!e->ty->isScalar())
-      type_error(getLoc(), "expect scalar types");
+    valid_condition(e);
     if (l.tok.tok != TRbracket)
       return expectRB(getLoc()), nullptr;
     consume();
@@ -2665,6 +2805,7 @@ Expr parse_pp_number(const xstring str) {
         }
       } else {
         if (unreachable_reason && s->loc.isValid()) {
+          printf("this = %u\n", s->k);
           warning(s->loc, "this statement is unreachable");
           note(unreachable_reason->loc, "after this *terminator* statement is unreachable");
           unreachable_reason = nullptr;
@@ -2780,6 +2921,16 @@ Expr parse_pp_number(const xstring str) {
         llvm_unreachable("");
         return;
       }
+      if (test->k == EConstant) {
+        if (auto CI = dyn_cast<ConstantInt>(test->C)) {
+          bool isFalse = CI->isZero();
+          auto II = getInsertPoint();
+          statement();
+          if (isFalse)
+            setInsertPoint(II);
+          return;
+        }
+      }
       label_t BODY = jumper.createLabel();
       label_t CMP = jumper.createLabel();
       label_t LEAVE = jumper.createLabel();
@@ -2808,26 +2959,33 @@ Expr parse_pp_number(const xstring str) {
           Expr ex = expression();
           if (!ex)
             return;
-          insertStmt(SNEW(ExprStmt) {.loc = ex->loc, .exprbody = ex});
+          ex = simplify(ex);
+          if (issimple(ex)) 
+            warning(loc, "expression in for-clause-1(for loop initialization) has no effect");
+          else 
+            insertStmt(SNEW(ExprStmt) {.loc = ex->loc, .exprbody = ex});
           if (l.tok.tok != TSemicolon)
-            expect(getLoc(), "';'");
+            warning(getLoc(), "missing ';' after for-clause-1 expression");
         }
         consume();
       }
       if (l.tok.tok != TSemicolon) {
         if (!(cond = expression()))
           return;
-        if (!cond->ty->isScalar())
-          type_error(loc, "expect scalar");
+        valid_condition(cond);
         if (l.tok.tok != TSemicolon)
           expect(loc, "';'");
       }
       consume();
       if (l.tok.tok != TRbracket) {
+        Location loc3 = getLoc();
         if (!(forincl = expression()))
           return;
-        if (l.tok.tok != TRbracket)
-          expectRB(loc);
+        forincl = simplify(forincl);
+        if (issimple(forincl)) {
+          warning(loc3, "expression in expression-3(for loop increment) has no effect");
+          forincl = nullptr;
+        }
       }
       consume();
       label_t CMP = jumper.createLabel();
@@ -2835,8 +2993,13 @@ Expr parse_pp_number(const xstring str) {
       llvm::SaveAndRestore<label_t> saved_b(jumper.topBreak, LEAVE);
       llvm::SaveAndRestore<label_t> saved_c(jumper.topContinue, CMP);
       insertLabel(CMP);
-      if (cond)
+      if (cond) {
+        if (cond->k == EConstant)
+          if (auto CI = dyn_cast<ConstantInt>(cond->C))
+            if (!CI->isZero()) goto FOR_NEXT; // if the condition is true, we don't have to jump!
         jumpIfFalse(cond, LEAVE);
+      }
+FOR_NEXT:
       if (forincl)
         insertStmt(SNEW(ExprStmt) {.loc = forincl->loc, .exprbody = forincl});
       statement();
@@ -2864,15 +3027,40 @@ Expr parse_pp_number(const xstring str) {
       if (!(test = Bexpression()))
         return;
       checkSemicolon();
+      if (test->k == EConstant) {
+        if (auto CI = dyn_cast<ConstantInt>(test->C)) {
+          bool isFalse = CI->isZero();
+          if (!isFalse)
+            insertBr(CMP); // jump to CMP if condition is true
+          return insertLabel(LEAVE);;
+        }
+      }
       jumpIfTrue(test, CMP);
       insertLabel(LEAVE);
     }
     case Kif: 
     {
-      label_t IF_END = jumper.createLabel();
       Expr test;
       if (!(test = Bexpression()))
         return;
+      if (test->k == EConstant) {
+        if (auto CI = dyn_cast<ConstantInt>(test->C)) {
+          bool isFalse = CI->isZero();
+          auto II = getInsertPoint();
+          statement();
+          if (isFalse)
+            setInsertPoint(II); // skip if body if condition is false
+          if (l.tok.tok == Kelse) {
+            consume();
+            II = getInsertPoint();
+            statement();
+            if (!isFalse)
+              setInsertPoint(II); // skip else body if condition if true
+          }
+          return;
+        }
+      }
+      label_t IF_END = jumper.createLabel();
       jumpIfFalse(test, IF_END);
       statement();
       if (l.tok.tok == Kelse) {
@@ -2978,25 +3166,6 @@ Expr parse_pp_number(const xstring str) {
       } else
         return result;
   }
-  static BinOp get_relational_expression_op(Token tok, bool isFloating, bool isSigned) {
-    switch (tok) {
-      case TLe: return isFloating ? FLE : (isSigned ? SLE : ULE);
-      case TLt: return isFloating ? FLT : (isSigned ? SLT : ULT);
-      case TGt: return isFloating ? FGT : (isSigned ? SGT : UGT);
-      case TGe: return isFloating ? FGE : (isSigned ? SGE : UGE);
-      case TNe: return isFloating ? FNE: NE;
-      case TEq: return isFloating ? FEQ: EQ;
-      default: llvm_unreachable("");
-    }
-  }
-  void make_cmp(Expr &result, Token tok, bool isEq = false) {
-    Expr r;
-    consume();
-    if (!(r = isEq ? relational_expression() : shift_expression()))
-      return;
-    checkSpec(result, r);
-    result = boolToInt(binop(result, get_relational_expression_op(tok, isFloating(result->ty), result->ty->isSigned()), r, context.typecache.b));
-  }
   Expr relational_expression() {
     Expr result = shift_expression();
     if (!result)
@@ -3077,7 +3246,8 @@ Expr parse_pp_number(const xstring str) {
         consume();
         if (!(r = inclusive_OR_expression()))
           return nullptr;
-        checkScalar(result, r);
+        valid_condition(result);
+        valid_condition(r);
         result = boolToInt(binop(result, LogicalAnd, r, context.getInt()));
       } else
         return result;
@@ -3093,7 +3263,8 @@ Expr parse_pp_number(const xstring str) {
         r = logical_AND_expression();
         if (!r)
           return nullptr;
-        checkScalar(result, r);
+        valid_condition(result);
+        valid_condition(r);
         result = boolToInt(binop(result, LogicalOr, r, context.getInt()));
       } else
         return result;
@@ -3124,14 +3295,18 @@ Expr parse_pp_number(const xstring str) {
     Expr rhs, lhs;
     if (!(lhs = logical_OR_expression()))
       return nullptr;
-    if (l.tok.tok != TColon)
+    if (l.tok.tok != TColon) {
+      if (start)
+        parse_error(getLoc(), "missing ':'");
       return lhs;
+    }
     consume();
     if (!(rhs = conditional_expression()))
       return nullptr;
     if (!compatible(lhs->ty, rhs->ty))
       return type_error(getLoc(), "incompatible type for conditional-expression: the left is %T, the right is %T", lhs->ty, rhs->ty), nullptr;
     conv(lhs, rhs);
+    valid_condition(start);
     return ENEW(ConditionExpr) {.loc = start->loc, .ty = lhs->ty, .cond = start, .cleft = lhs, .cright = rhs};
   }
   Expr conditional_expression() {

@@ -5,6 +5,7 @@
 struct xcc_context {
     xcc_context(xcc_context&) = delete;
     xcc_context(struct TextDiagnosticPrinter *printer = nullptr) : table{}, printer{printer},  
+    constint{reinterpret_cast<CType>((TNEW(PrimType) {.align = 0, .tags = TYINT | TYCONST}))},
     typecache {
       .b=make(TYBOOL),
       .v=make(TYVOID),
@@ -27,6 +28,7 @@ struct xcc_context {
     IdentifierTable table; // contains allocator!
     struct TextDiagnosticPrinter *printer;
     Expr intzero;
+    CType constint;
     void setPrinter(struct TextDiagnosticPrinter *thePrinter) {
         printer = thePrinter;
     }
@@ -37,10 +39,13 @@ struct xcc_context {
             strty;
     } typecache;
     CType make(uint32_t tag) {
-        return (CType)(TNEW(PrimType) {.align = 0, .tags = tag});
+        return reinterpret_cast<CType>((TNEW(PrimType) {.align = 0, .tags = tag}));
     }
     CType getPointerType(CType base) {
-        return (CType)(TNEW(PointerType) {.align = 0, .p = base});
+        return reinterpret_cast<CType>((TNEW(PointerType) {.align = 0, .p = base}));
+    }
+    CType getConstInt() {
+        return constint;
     }
     CType getInt() {
         return typecache.i32;

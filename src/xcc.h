@@ -391,6 +391,7 @@ static enum BinOp getAtomicrmwOp(Token tok) {
 #include "ctypes.inc"
 #include "statements.inc"
 #include "printer.cpp"
+
 static const char hexs[] = "0123456789ABCDEF";
 
 static char hexed(unsigned a) {
@@ -631,7 +632,6 @@ static unsigned intRank(uint32_t a){
 #include "TextDiagnosticPrinter.cpp"
 #include "codegen.cpp"
 #include "utf8.cpp"
-#include "evaluator.cpp"
 #include "lexer.h"
 #include "parser.cpp"
 #include "lexer.cpp"

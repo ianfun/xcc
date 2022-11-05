@@ -240,8 +240,7 @@ RUN:
                         if (!e)
                             pp_error(loc, "%s", "expect constant_expression");
                         else {
-                            ok = evaluator.withLoc(e, cloc);
-                            evaluator.error = false;
+                            ok = force_eval(e, cloc);
                             dbgprint("#if: %s\n", ok ? "true" : "false");
                         }
                     }
