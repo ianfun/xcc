@@ -3,9 +3,10 @@
 #define ENEW(TY) (Expr)new(getAllocator())TY
 
 struct xcc_context {
-    xcc_context(xcc_context&) = delete;
+    xcc_context(const xcc_context&) = delete;
     xcc_context(struct TextDiagnosticPrinter *printer = nullptr) : table{}, printer{printer},  
-    constint{reinterpret_cast<CType>((TNEW(PrimType) {.align = 0, .tags = TYINT | TYCONST}))},
+    constint {
+        reinterpret_cast<CType>((TNEW(PrimType) {.align = 0, .tags = TYINT | TYCONST}))},
     typecache {
       .b=make(TYBOOL),
       .v=make(TYVOID),

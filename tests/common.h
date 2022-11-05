@@ -1,6 +1,7 @@
 // build: clang++/g++ testXXX.cpp `llvm-config --cxxflags --ldflags --libs`
 
 #include "../src/xcc.h"
+#include "../src/xInitLLVM.cpp"
 #include <llvm/Support/CommandLine.h>
 #include <llvm/Support/TargetSelect.h>
 
@@ -10,12 +11,12 @@ static xcc::Options options;
 
 int main(int argc, const char **argv)
 {
-    llvm::InitLLVM crashReport(argc, argv);
+    xcc::xcc_context ctx;
+
+    XInitLLVM crashReport(ctx, argc, argv);
     
     if (!options.run(argc, argv))
         return 1;
-    
-    xcc::xcc_context ctx;
 
     xcc::SourceMgr SM(ctx);
 

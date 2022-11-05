@@ -43,8 +43,7 @@ IRGen(xcc_context &context, SourceMgr &SM, LLVMContext &ctx, const Options &opti
         return;
     }
     layout = new llvm::DataLayout(machine->createDataLayout());
-
-    types[xvoid] = llvm::Type::getVoidTy(ctx);
+    types[xvoid] = llvm::Type::getVoidTy(ctx);;
     types[xptr] = llvm::PointerType::get(ctx, 0);
     types[x1] = llvm::Type::getInt1Ty(ctx);
     types[x8] = llvm::Type::getInt8Ty(ctx);
@@ -55,6 +54,7 @@ IRGen(xcc_context &context, SourceMgr &SM, LLVMContext &ctx, const Options &opti
     types[x128] = llvm::Type::getInt128Ty(ctx);
     types[xfloat] = llvm::Type::getFloatTy(ctx);
     types[xdouble] = llvm::Type::getDoubleTy(ctx);
+    types[xfp128] = llvm::Type::getFP128Ty(ctx);
 
     i32_n1 = llvm::ConstantInt::get(i32, -1);
     i32_1 = llvm::ConstantInt::get(i32, 1);
@@ -223,29 +223,6 @@ void handle_asm(StringRef s) {
         auto f = llvm::InlineAsm::get(ty, s, StringRef(), true);
         B.CreateCall(ty, f);
     }
-}
-Value gen_condition(Expr test ,Expr lhs, Expr rhs) {
-    // build a `cond ? lhs : rhs` expression
-    Type ty = wrap(lhs->ty);
-    Label iftrue = llvm::BasicBlock::Create(ctx, "", currentfunction);
-    Label iffalse = llvm::BasicBlock::Create(ctx);
-    Label ifend = llvm::BasicBlock::Create(ctx);
-    B.CreateCondBr(gen_cond(test), iftrue, iffalse);
-
-    after(iftrue);
-    Value left = gen(lhs);
-    B.CreateBr(ifend);
-   
-    append(iffalse);
-    Value right = gen(rhs);
-    B.CreateBr(ifend);
-
-    append(ifend);
-    auto phi = B.CreatePHI(ty, 2);
-
-    phi->addIncoming(left, iftrue);
-    phi->addIncoming(right, iffalse);
-    return phi;
 }
 llvm::DISubroutineType *createDebugFuctionType(CType ty) {
     auto L = ty->params.size();
@@ -682,21 +659,23 @@ void gen(Stmt s) {
             }
         } break;
         case SGoto:
-        {
-            auto BB = labels[s->location];
             if (!getTerminator())
-                B.CreateBr(BB);
-            //after(BB);
-        } break;
+                B.CreateBr(labels[s->location]);
+            break;
         case SCondJump:
         {
             auto cond = gen_cond(s->test);
-            if (!getTerminator()) {
+            if (!getTerminator())
                 B.CreateCondBr(cond, labels[s->T], labels[s->F]);
-            }
         } break;
         case SAsm:
-            handle_asm(s->asms);
+            if (currentfunction)
+                module->appendModuleInlineAsm(s->asms);
+            else {
+                auto ty = llvm::FunctionType::get(types[xvoid], false);
+                auto f = llvm::InlineAsm::get(ty, s->asms, StringRef(), true);
+                B.CreateCall(ty, f);
+            }
             break;
         case SVarDecl:
         {
@@ -869,6 +848,8 @@ Value getAddress(Expr e) {
             return local;
         }
         default:
+            llvm::errs() << "expression =" << e << "\nkind = " << (unsigned)e->k << "\n\n";
+            getchar();
             llvm_unreachable("");
     }
 }
@@ -967,10 +948,7 @@ Value gen(Expr e) {
                     if (!e->rhs->ty->isSigned()) {
                         lhs = B.CreateZExt(lhs, getIntPtr());
                     }
-                    return B.CreateInBoundsGEP(
-                    (
-                        (e->lhs->ty->p->tags & TYVOID) || (e->lhs->k == EUnary && e->lhs->uop == AddressOf && e->lhs->ty->p->k == TYFUNCTION)
-                    ) ? types[x8] : wrap(e->ty->p), lhs, {rhs});
+                    return B.CreateInBoundsGEP(wrap(e->ty->p), lhs, {rhs});
                 case EQ:
                     pop = static_cast<unsigned>(llvm::CmpInst::ICMP_EQ); goto BINOP_ICMP;
                 case NE: 
@@ -1064,7 +1042,43 @@ Value gen(Expr e) {
             return r;
         }
         case ECondition:
-            return gen_condition(e->cond, e->cleft, e->cright);
+        {
+            if (e->ty->tags & TYVOID) {
+                Label iftrue = llvm::BasicBlock::Create(ctx, "", currentfunction);
+                Label iffalse = llvm::BasicBlock::Create(ctx);
+                Label ifend = llvm::BasicBlock::Create(ctx);
+                B.CreateCondBr(gen_cond(e->cond), iftrue, iffalse);
+                after(iftrue);
+                (void)gen(e->cleft);
+                B.CreateBr(ifend);
+                append(iffalse);
+                (void)gen(e->cright);
+                append(ifend);
+                return nullptr;
+            }
+            if (e->cleft->k == EConstant && e->cright->k == EConstant)
+                return B.CreateSelect(gen_cond(e->cond), gen(e->cleft), gen(e->cright));
+            Type ty = wrap(e->cleft->ty);
+            Label iftrue = llvm::BasicBlock::Create(ctx, "", currentfunction);
+            Label iffalse = llvm::BasicBlock::Create(ctx);
+            Label ifend = llvm::BasicBlock::Create(ctx);
+            B.CreateCondBr(gen_cond(e->cond), iftrue, iffalse);
+
+            after(iftrue);
+            Value left = gen(e->cleft);
+            B.CreateBr(ifend);
+        
+            append(iffalse);
+            Value right = gen(e->cright);
+            B.CreateBr(ifend);
+        
+            append(ifend);
+            auto phi = B.CreatePHI(ty, 2);
+        
+            phi->addIncoming(left, iftrue);
+            phi->addIncoming(right, iffalse);
+            return phi;
+        }
         case ECast:
             return B.CreateCast(getCastOp(e->castop), gen(e->castval), wrap(e->ty));
         case ECall:

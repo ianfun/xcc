@@ -31,6 +31,7 @@ struct Parser : public DiagnosticHelper {
     SmallVector<Token, 5> tokens_cache;
     uint32_t currentAlign = 0;          // current align(bytes)
     bool type_error = false; // type error
+    bool want_var = false;
   } sema;
   struct JumpBuilder {
     DenseMap<IdentRef, Label_Info> labels{}; // named labels
@@ -48,7 +49,7 @@ struct Parser : public DiagnosticHelper {
   Stmt InsertPt = nullptr;
   bool sreachable;
   Stmt unreachable_reason = nullptr;
-  Expr intzero, intone, cfalse;
+  Expr intzero, intone, size_t_one, cfalse;
   Parser(SourceMgr &SM, xcc_context &context, IRGen &irgen)
       : DiagnosticHelper{context}, l(SM, *this, context), irgen{irgen},
       intzero {
@@ -268,16 +269,32 @@ struct Parser : public DiagnosticHelper {
         .loc = from->loc, .ty = to, .castop = op, .castval = from};
   }
   Expr intcast(Expr e, CType to) {
-    if ((to->tags & (TYINT8 | TYINT16 | TYINT32 | TYINT64 | TYINT128 | TYUINT8 | TYUINT16 | TYUINT32 | TYUINT64 | TYUINT128)) && (e->ty->tags & (TYINT8 | TYINT16 | TYINT32 | TYINT64 | TYINT128 | TYUINT8 | TYUINT16 | TYUINT32 | TYUINT64 | TYUINT128 | TYBOOL))) {
-      if (to->tags == e->ty->tags) {
-        return ENEW(CastExpr){.loc = e->loc, .ty = to, .castop = CastOp::BitCast, .castval = e};
+    if ((to->tags & intergers_or_bool)) {
+      if (to->getBitWidth() == e->ty->getBitWidth()) {
+        /*
+        1. When a value with integer type is converted to another integer type other than bool, if the value can be represented by the new type, it is unchanged.
+        */
+        Expr c = context.clone(e);
+        c->ty = to;
+        return c;
       }
       if (intRank(to->tags) > intRank(e->ty->tags)) {
-        return make_cast(e, (to->isSigned() && !(e->ty->tags & TYBOOL)) ? SExt : ZExt, to);
+        if (e->k == EConstant) {
+          if (e->ty->tags & signed_integers)
+            return wrap(to, llvm::ConstantExpr::getSExt(e->C, irgen.wrap2(to)), e->loc);
+          return wrap(to, llvm::ConstantExpr::getZExt(e->C, irgen.wrap2(to)), e->loc);
+        }
+      /*
+      2. Otherwise, if the new type is unsigned, the value is converted by repeatedly adding or subtracting one more than the maximum value that can be represented in the new type until the value is in the range of the new type.)
+      3. Otherwise, the new type is signed and the value cannot be represented in it; either the result is implementation-defined or an implementation-defined signal is raised.
+      */
+        return make_cast(e, e->ty->tags & signed_integers ? SExt : ZExt, to);
       }
+      if (e->k == EConstant)
+        return wrap(to, llvm::ConstantExpr::getTrunc(e->C, irgen.wrap2(to)), e->loc);
       return make_cast(e, Trunc, to);
     }
-    return type_error(getLoc(), "cannot cast %E(has type %T) to %T", e, e->ty, to), nullptr;
+    return type_error(getLoc(), "cannot cast %E(has type %T) to %T", e, e->ty, to), e;
   }
   static bool type_equal(CType a, CType b) {
     if (a->k != b->k)
@@ -307,18 +324,31 @@ struct Parser : public DiagnosticHelper {
       return type_error(loc, "cannot cast 'void' expression to type %T", to), e;
     if (to->k == TYINCOMPLETE || e->ty->k == TYINCOMPLETE)
       return type_error(loc, "cannot cast to incomplete type: %T", to), e;
-    if (to->k == TYSTRUCT || e->ty->k == TYSTRUCT || to->k == TYUNION ||
-        e->ty->k == TYUNION)
+    if (to->k == TYSTRUCT || e->ty->k == TYSTRUCT || to->k == TYUNION || e->ty->k == TYUNION)
       return type_error(loc, "cannot cast between different struct/unions"), e;
-    if (e->ty->k == TYENUM)
-      return castto(make_cast(e, BitCast, context.getInt()), to);
+    if (e->ty->k == TYENUM) {
+      Expr c = context.clone(e);
+      c->ty = context.getInt(); // bit cast to int!
+      return castto(c, to);
+    }
     if (to->k == TYENUM)
       return castto(castto(e, context.getInt()), to);
     if (!(e->ty->isScalar() && to->isScalar()))
-      return type_error(loc, "cast uoperand shall have scalar type"), e;
+      return type_error(loc, "cast operand shall have scalar type"), e;
     if (to->tags & TYBOOL) {
       // simplify 'boolean(a) zext to int(b)' to 'a'
-      if (e->k == ECast && e->castop == ZExt && e->castval->ty->tags & TYBOOL) {
+      if (e->k == EConstant) {
+        if (auto CI = dyn_cast<ConstantInt>(e->C)) { // convert integers to zero
+          return getBool(!CI->isZero());
+        }
+        if (auto CFP = dyn_cast<ConstantFP>(e->C)) { // convert integers to zero
+          return getBool(!CFP->isZero());
+        }
+        if (isa<llvm::ConstantPointerNull>(e->C)) {
+          return cfalse;
+        }
+      }
+      else if (e->k == ECast && e->castop == ZExt && e->castval->ty->tags & TYBOOL) {
         return e->castval;
       }
       Expr zero = wrap(e->ty, ConstantInt::get(irgen.ctx, APInt::getZero(e->ty->getBitWidth())));
@@ -328,18 +358,28 @@ struct Parser : public DiagnosticHelper {
       return type_error(loc, "A floating type shall not be converted to any pointer type"), e;
     if ((e->ty->tags & (TYFLOAT | TYDOUBLE)) && to->k == TYPOINTER)
       return type_error(loc, "A floating type shall not be converted to any pointer type"), e;
-    if (e->ty->k == TYPOINTER && to->k == TYPOINTER)
-      return make_cast(e, BitCast, to);
-    if ((e->ty->tags & TYDOUBLE) && (to->tags & TYFLOAT))
-      return make_cast(e, FPTrunc, to);
-    if ((e->ty->tags & TYFLOAT) && (to->tags & TYDOUBLE))
+    if (e->ty->k == TYPOINTER && to->k == TYPOINTER) {
+      Expr bitcast = context.clone(e); // make a pointer bitcast!
+      bitcast->ty = to;
+      return bitcast;
+    }
+    if (
+      ((e->ty->tags & TYFLOAT) && (to->tags & TYDOUBLE)) ||  // float to double
+      ((e->ty->tags & (TYFLOAT | TYDOUBLE)) && (to->tags & TYF128)) // float/double to fp128
+    ) {
+      if (e->k == EConstant)
+        return wrap(to, llvm::ConstantExpr::getFPExtend(e->C, irgen.wrap2(to)), e->loc);
       return make_cast(e, FPExt, to);
-    if ((e->ty->tags & (TYFLOAT | TYDOUBLE)) && (to->tags & TYF128))
-      return make_cast(e, FPExt, to);
-    if ((e->ty->tags & TYF128) && (to->tags & (TYFLOAT | TYDOUBLE)))
+    }
+    if (
+       ((e->ty->tags & TYF128) && (to->tags & (TYFLOAT | TYDOUBLE))) || // fp128 to float/double
+      ((e->ty->tags & TYDOUBLE) && (to->tags & TYFLOAT)) // double to float
+      ) {
+      if (e->k == EConstant)
+        return wrap(to, llvm::ConstantExpr::getFPTrunc(e->C, irgen.wrap2(to)), e->loc);
       return make_cast(e, FPTrunc, to);
-    if (e->ty->tags & (TYINT8 | TYINT16 | TYINT32 | TYINT64 | TYINT128 | TYUINT8 |
-                       TYUINT16 | TYUINT32 | TYUINT64 | TYUINT128 | TYBOOL)) {
+    }
+    if (e->ty->tags & intergers_or_bool) {
       if (to->k == TYPOINTER) {
         if (e->k == EConstant) {
           auto CI = cast<ConstantInt>(e->C);
@@ -349,7 +389,7 @@ struct Parser : public DiagnosticHelper {
         }
         return make_cast(e, IntToPtr, to);
       }
-      if (isFloating(to)) {
+      if (to->isFloating()) {
         if (e->k == EConstant) {
           if (e->ty->isSigned()) {
             return wrap(to, llvm::ConstantExpr::getSIToFP(e->C, irgen.wrap2(to)), e->loc);
@@ -358,15 +398,14 @@ struct Parser : public DiagnosticHelper {
         }
         return make_cast(e, e->ty->isSigned() ? SIToFP : UIToFP, to);
       }
-    } else if (to->tags & (TYINT8 | TYINT16 | TYINT32 | TYINT64 | TYINT128 | TYUINT8 |
-                           TYUINT16 | TYUINT32 | TYUINT64 | TYUINT128)) {
+    } else if (to->tags & intergers) {
       if (e->ty->k == TYPOINTER) {
         if (e->k == EConstant) {
           return wrap(to, llvm::ConstantExpr::getPtrToInt(e->C, irgen.wrap2(to)), e->loc);
         }
         return make_cast(e, PtrToInt, to);
       }
-      if (isFloating(e->ty)) {
+      if (e->ty->isFloating()) {
         if (e->k == EConstant) {
           if (to->isSigned())
             return wrap(to, llvm::ConstantExpr::getFPToSI(e->C, irgen.wrap2(to)), e->loc);
@@ -441,8 +480,8 @@ struct Parser : public DiagnosticHelper {
       return;
     auto sizeofa = getsizeof(a->ty);
     auto sizeofb = getsizeof(b->ty);
-    bool isaunsigned = (at & ty_unsigned) != 0;
-    bool isbunsigned = (bt & ty_unsigned) != 0;
+    bool isaunsigned = (at & unigned_integers);
+    bool isbunsigned = (bt & unigned_integers);
     // if operand has the same sign
     if (isaunsigned == isbunsigned)
       return sizeofa > sizeofb ? to(b, at) : to(a, bt);
@@ -465,7 +504,7 @@ struct Parser : public DiagnosticHelper {
     integer_promotions(e);
   }
   bool checkInteger(CType ty) {
-    return ty->k == TYPRIM && !(ty->k & (TYVOID | TYDOUBLE | TYFLOAT));
+    return ty->tags & intergers_or_bool;
   }
   bool checkInteger(Expr e) { return checkInteger(e->ty); }
   void checkInteger(Expr a, Expr b) {
@@ -483,17 +522,6 @@ struct Parser : public DiagnosticHelper {
     if (!(a->ty->isScalar() && b->ty->isScalar()))
       return type_error(getLoc(), "scalar types expected");
     conv(a, b);
-  }
-  bool issimple(Expr e) {
-    switch (e->k) {
-      case EVar:
-      case EString:
-      case EStruct:
-      case EArray:
-        return true;
-      default: 
-        return false;
-    }
   }
   bool isAssignOp(enum BinOp op) {
     switch (op) {
@@ -516,12 +544,12 @@ struct Parser : public DiagnosticHelper {
         case EBin:
           if (isAssignOp(e->bop) || e->bop == LogicalAnd || e->bop == LogicalOr)
             return e;
-          if (issimple(e->rhs)) {
+          if (e->rhs->isSimple()) {
             warning(e->rhs->loc, "unused binary expression result in right-hand side (%E)", e->rhs);
             note("simplify %E to %E", e, e->lhs);
             return simplify(e->lhs);
           }
-          if (issimple(e->lhs)) {
+          if (e->lhs->isSimple()) {
             warning(e->rhs->loc, "unused binary expression result in left-hand side (%E)", e->rhs);
             note("simplify %E to %E", e, e->rhs);
             return simplify(e->rhs);
@@ -538,7 +566,7 @@ struct Parser : public DiagnosticHelper {
             return simplify(e->castval);
         case ECondition:
             // if the cond is simple, we should simplify it in constant folding
-            if (issimple(e->cleft) && issimple(e->cright)) {
+            if (e->cleft->isSimple() && e->cright->isSimple()) {
               warning("unused conditional-expression left-hand side and right-hand result");
               note("simplify %E to %E", e, e->cond);
               return simplify(e->cond);
@@ -549,7 +577,7 @@ struct Parser : public DiagnosticHelper {
         case ECall:
             return e;
         case ESubscript:
-            if (issimple(e->right)) {
+            if (e->right->isSimple()) {
               warning("unused array substract, replace 'a[b]' with a");
               return simplify(e->left);
             }
@@ -567,8 +595,34 @@ struct Parser : public DiagnosticHelper {
     }
     llvm_unreachable("bad expr kind");
   }
+  void make_ptr_arith(Expr &e) {
+    assert(e->ty->k == TYPOINTER && "expect a pointer");
+    if (
+        (e->ty->p->tags & TYVOID) || 
+        (e->k == EUnary && e->uop == AddressOf && e->ty->p->k == TYFUNCTION)
+        ) {
+      e = context.clone(e);
+      e->ty = context.typecache.u8;
+    }
+  }
+  Expr make_add_pointer(Expr rhs, Expr lhs) {
+    Expr ptrPart = lhs;
+    Expr intPart = rhs;
+    if (rhs->ty->k == TYPOINTER) {
+      ptrPart = rhs;
+      intPart = lhs;
+    }
+    if (!checkInteger(intPart->ty)) {
+      type_error(lhs->loc, "integer type expected");
+      return ptrPart;
+    }
+    make_ptr_arith(ptrPart);
+    if (ptrPart->k == EConstant && intPart->k == EConstant)
+      return wrap(ptrPart->ty, llvm::ConstantExpr::getInBoundsGetElementPtr(irgen.wrap2(ptrPart->ty->p), ptrPart->C, makeArrayRef(intPart->C)), lhs->loc);
+    return binop(ptrPart, SAddP, intPart, ptrPart->ty);
+  }
   void make_add(Expr &result, Expr &r) {
-    if (isFloating(result->ty)) {
+    if (result->ty->isFloating()) {
       conv(result, r);
       if (result->k == EConstant && r->k == EConstant) {
         result = wrap(r->ty, llvm::ConstantExpr::getAdd(result->C, r->C), r->loc);
@@ -577,11 +631,10 @@ struct Parser : public DiagnosticHelper {
       result = binop(result, FAdd, r, r->ty);
       return;
     }
-    if (result->ty->k == TYPOINTER) {
-      if (!checkInteger(r->ty))
-        type_error(getLoc(), "integer expected");
-
-      result = binop(result, SAddP, r, result->ty);
+    if (result->ty->k == TYPOINTER || r->ty->k == TYPOINTER) {
+      if (result->ty->k == r->ty->k) 
+        return type_error("adding two pointers are not allowed");
+      result = make_add_pointer(result, r);
       return;
     }
     checkSpec(result, r);
@@ -592,7 +645,7 @@ struct Parser : public DiagnosticHelper {
     result = binop(result, r->ty->isSigned() ? SAdd : UAdd, r, r->ty);
   }
   void make_sub(Expr &result, Expr &r) {
-    if (isFloating(result->ty)) {
+    if (result->ty->isFloating()) {
       if (result->k == EConstant && r->k == EConstant) {
         result = wrap(r->ty, llvm::ConstantExpr::getSub(result->C, r->C), r->loc);
         return;
@@ -601,24 +654,24 @@ struct Parser : public DiagnosticHelper {
       result = binop(result, FSub, r, r->ty);
       return;
     }
-    if (result->ty->k == TYPOINTER) {
-      if (r->ty->k == TYPOINTER) {
-        // two pointer substraction
-        // https://stackoverflow.com/questions/65748155/what-is-the-motivation-for-ptrdiff-t
-        //                if ((!(result->ty->p->tags & TYVOID)) ||
-        //                (r->ty->p->tags & TYVOID))
-        //                    return type_error(getLoc(), "cannot substract on a
-        //                    pointer to void");
-        if (!compatible(result->ty->p, r->ty->p))
-          warning(getLoc(), "incompatible type when substract two pointers");
-        CType ty = context.getIntPtr();
-        result = binop(make_cast(result, PtrToInt, ty), PtrDiff,
-                       make_cast(r, PtrToInt, ty), ty);
-        return;
+    bool p1 = result->ty->k == TYPOINTER;
+    bool p2 = r->ty->k == TYPOINTER;
+    if (p1 && p2) {
+      if (!compatible(result->ty->p, r->ty->p))
+        warning(getLoc(), "incompatible type when substract two pointers");
+      CType ty = context.getIntPtr();
+      result = binop(make_cast(result, PtrToInt, ty), PtrDiff, make_cast(r, PtrToInt, ty), ty);
+      return;
+    }
+    if (p1 || p2) {
+      Expr intPart = p1 ? r : result;
+      Expr ptrPart = p1 ? result : r;
+      if (intPart->k == EConstant) {
+        intPart = wrap(intPart->ty, llvm::ConstantExpr::getNeg(intPart->C), intPart->loc);
+      } else {
+        intPart = unary(intPart, UNeg, intPart->ty);
       }
-      if (!checkInteger(r->ty))
-        type_error(getLoc(), "integer expected");
-      result = binop(result, SAddP, unary(r, r->ty->isSigned() ? SNeg : UNeg, r->ty), result->ty);
+      result = make_add_pointer(ptrPart, intPart);
       return;
     }
     checkSpec(result, r);
@@ -787,7 +840,7 @@ struct Parser : public DiagnosticHelper {
       return;
     }
     NOT_CONSTANT:
-    result = binop(result, isFloating(r->ty) ? FMul : (r->ty->isSigned() ? SMul : UMul), r, r->ty);
+    result = binop(result, r->ty->isFloating() ? FMul : (r->ty->isSigned() ? SMul : UMul), r, r->ty);
     return;
     ZERO:
     warning(result->loc, "multiplying by zero is always zero (zero-product property)");
@@ -817,7 +870,7 @@ struct Parser : public DiagnosticHelper {
       return;
     }
     NOT_CONSTANT:
-    result = binop(result, isFloating(r->ty) ? FDiv : (r->ty->isSigned() ? SDiv : UDiv), r, r->ty);
+    result = binop(result, r->ty->isFloating() ? FDiv : (r->ty->isSigned() ? SDiv : UDiv), r, r->ty);
   }
   void handleOpStatus(APFloat::opStatus status) {
 
@@ -845,7 +898,7 @@ struct Parser : public DiagnosticHelper {
         return;
       }
     }
-    result = binop(result, isFloating(r->ty) ? FRem : (r->ty->isSigned() ? SRem : URem), r, r->ty);
+    result = binop(result, r->ty->isFloating() ? FRem : (r->ty->isSigned() ? SRem : URem), r, r->ty);
   }
   static BinOp get_relational_expression_op(Token tok, bool isFloating, bool isSigned) {
     switch (tok) {
@@ -925,7 +978,7 @@ struct Parser : public DiagnosticHelper {
         return;
       }
     }
-    result = boolToInt(binop(result, get_relational_expression_op(tok, isFloating(result->ty), result->ty->isSigned()), r, context.typecache.b));
+    result = boolToInt(binop(result, get_relational_expression_op(tok, result->ty->isFloating(), result->ty->isSigned()), r, context.typecache.b));
   }
   Expr boolToInt(Expr e) {
     return ENEW(CastExpr) {.loc = e->loc, .ty = context.getInt(), .castop = ZExt, .castval = e};
@@ -1756,17 +1809,10 @@ struct Parser : public DiagnosticHelper {
       return expect(getLoc(), "',' or ')'"), false;
     return checkSemicolon(), true;
   }
-  void clearKnownConstantVariables() {
-    for (auto it = sema.typedefs.current_function();it != sema.typedefs.end();++it) {
-      if ((it->info.ty->tags & TYCONST) == 0)
-        it->info.val = nullptr;
-    }
-  }
-  bool assignable(Expr e, Variable_Info *&info) {
+  bool assignable(Expr e) {
     if (e->k == EVar) {
       Variable_Info &var_info = sema.typedefs.getSym(e->sval);
       var_info.tags |= ASSIGNED;
-      info = &var_info;
       return true;
     }
     if (e->ty->k == TYPOINTER) {
@@ -1844,16 +1890,18 @@ struct Parser : public DiagnosticHelper {
           .functy = st.ty,
           .args = xvector<size_t>::get_with_length(st.ty->params.size())
         };
-        {
-          llvm::SaveAndRestore<CType> saved_ret(sema.currentfunctionRet, st.ty->ret);
-          res->funcbody = function_body(st.ty->params, res->args, loc);
-        }
+        sema.currentfunctionRet = st.ty->ret;
+        res->funcbody = function_body(st.ty->params, res->args, loc);
+        sema.currentfunctionRet = nullptr;
         res->numLabels = jumper.cur;
         jumper.cur = 0;
         sreachable = true;
+        for (auto it = sema.typedefs.begin();it != sema.typedefs.end();++it)
+          if (!(it->info.ty->tags & TYCONST))
+            it->info.val = nullptr;
         return insertStmt(res);
       }
-      noralizeType(st.ty);
+      st.ty->noralize();
 #if 0
       logtime();
       print_cdecl(st.name->getKey(), st.ty, llvm::errs(), true);
@@ -1880,6 +1928,7 @@ struct Parser : public DiagnosticHelper {
         if (st.ty->tags & TYTYPEDEF)
           return type_error(loc2, "'typedef' may not be initialized");
         consume();
+        sema.want_var = true;
         {
           CType old = sema.currentInitTy;
           sema.currentInitTy = st.ty;
@@ -1889,10 +1938,9 @@ struct Parser : public DiagnosticHelper {
         if (!init)
           return expect(loc2, "initializer-list");
         result->vars.back().init = init;
-        if (init->k == EConstant && (isTopLevel() ? bool(st.ty->tags & TYCONST) : true)) {
-            var_info.val = init->C;
-        }
-        if (isTopLevel() && !isConstant(init)) {
+        if (init->k == EConstant && st.ty->tags & TYCONST)
+            var_info.val = init->C; // for const and constexpr, their value can be fold to constant
+        if (isTopLevel() && init->k != EConstant) {
           type_error(loc2, "initializer element is not constant");
           note("global variable requires constant initializer");
         }
@@ -2002,6 +2050,7 @@ struct Parser : public DiagnosticHelper {
     }
     case TBitAnd: 
     {
+      sema.want_var = true;
       Expr e;
       consume();
       if (!(e = expression()))
@@ -2016,11 +2065,8 @@ struct Parser : public DiagnosticHelper {
         return type_error(getLoc(), "take address of register variable"), getIntZero();
       if (e->k == EUnary && e->uop == AddressOf && e->ty->p->k == TYFUNCTION)
         return e->ty->tags &= ~TYLVALUE, e;
-      Variable_Info *info = nullptr;
-      if (!assignable(e, info))
-        return getIntZero();
-      if (info)
-        info->val = nullptr;
+      if (!assignable(e))
+        return e;
       return unary(e, AddressOf, context.getPointerType(e->ty));
     }
     case TDash: 
@@ -2051,14 +2097,11 @@ struct Parser : public DiagnosticHelper {
     case TSubSub: 
     {
       Expr e;
-      Variable_Info *info = nullptr;
       consume();
+      sema.want_var = true;
       if (!(e = unary_expression()))
         return nullptr;
-      if (!assignable(e, info))
-        return nullptr;
-      if (info)
-        info->val = nullptr;
+      if (!assignable(e)) return e;
       CType ty = e->ty->k == TYPOINTER ? context.getSize_t() : e->ty;
       Expr obj = e;
       Expr one = wrap(ty, ConstantInt::get(irgen.ctx, APInt(ty->getBitWidth(), 1)), e->loc);
@@ -2443,7 +2486,7 @@ Expr parse_pp_number(const xstring str) {
       } else {
         IdentRef sym = l.tok.s;
         size_t idx;
-        Variable_Info *it = sema.typedefs.getSym(l.tok.s, idx);
+        Variable_Info *it = sema.typedefs.getSym(sym, idx);
         consume();
         if (!it)
           return type_error(loc, "use of undeclared identifier %I", sym), getIntZero();
@@ -2454,10 +2497,13 @@ Expr parse_pp_number(const xstring str) {
         // lvalue conversions
         ty->tags &= ~(TYCONST | TYRESTRICT | TYVOLATILE | TYATOMIC | TYREGISTER | TYTHREAD_LOCAL | TYEXTERN | TYSTATIC | TYNORETURN | TYINLINE | TYPARAM);
         ty->tags |= TYLVALUE;
-        if (it->val) 
-          return wrap(ty, it->val, loc);
-//        if (!(it->tags & ASSIGNED))
-//          warning("use of variable %I has garbage value now");
+        bool want_lvalue = sema.want_var || is_assigment_op(l.tok.tok) || l.tok.tok == TAddAdd || l.tok.tok == TSubSub;
+        if (it->val && !want_lvalue)
+           return wrap(ty, it->val, loc);
+        //if (want_lvalue && !(it->tags & ASSIGNED)) {
+        //  warning(loc, "variable %I is uninitialized when used here", sym);
+        //  return wrap(ty, llvm::UndefValue::get(irgen.wrap2(ty)), loc);
+        //}
         switch (ty->k) {
           case TYFUNCTION:
             result = unary(ENEW(VarExpr) {.loc = loc, .ty = ty, .sval = idx}, AddressOf, context.getPointerType(ty));
@@ -2539,6 +2585,7 @@ Expr parse_pp_number(const xstring str) {
     bool isarrow;
     PostFixOp isadd;
     Expr result = primary_expression();
+    sema.want_var = false;
     if (!result)
       return nullptr;
     for (;;) {
@@ -2550,32 +2597,10 @@ Expr parse_pp_number(const xstring str) {
       {
         isadd = PostfixIncrement;
       ADD:
-      {
-        Variable_Info *info = nullptr;
-        if (!assignable(result, info))
+        if (!assignable(result))
           return nullptr;
         consume();
-        if (info)
-          info->val = nullptr;
-        if (result->k == EConstant) {
-          if (const auto CI = dyn_cast<ConstantInt>(result->C)) {
-            APInt I = CI->getValue();
-            if (isadd == PostfixIncrement) 
-              info->val = ConstantInt::get(irgen.ctx, ++I);
-            else
-              info->val = ConstantInt::get(irgen.ctx, --I);
-          }
-          else if (const auto CFP = dyn_cast<ConstantFP>(result->C)) {
-            APFloat F = CFP->getValue();
-            if (isadd == PostfixIncrement) 
-              F.add(APFloat(F.getSemantics(), 1), APFloat::rmNearestTiesToEven);
-            else
-              F.subtract(APFloat(F.getSemantics(), 1), APFloat::rmNearestTiesToEven);
-            info->val = ConstantFP::get(irgen.ctx, F);
-          }
-        }
         result = ENEW(PostFixExpr) {.loc = result->loc, .ty = result->ty, .pop = isadd, .poperand = result};
-      }
       }
         continue;
       case TArrow:
@@ -2774,21 +2799,36 @@ Expr parse_pp_number(const xstring str) {
   }
   void jumpIfTrue(Expr test, label_t dst) {
     label_t thenBB = jumper.createLabel();
+    if (test->k == EConstant) {
+      if (auto CI = dyn_cast<ConstantInt>(test->C)) {
+        insertBr(CI->isZero() ? thenBB : dst);
+        goto NEXT;
+      }
+    }
     insertStmt(SNEW(CondJumpStmt) {.loc = Location::make_invalid(), .test = test, .T = dst, .F = thenBB});
+NEXT:
     return insertLabel(thenBB);
   }
   void jumpIfFalse(Expr test, label_t dst) {
     label_t thenBB = jumper.createLabel();
+    if (test->k == EConstant) {
+      if (auto CI = dyn_cast<ConstantInt>(test->C)) {
+        insertBr(CI->isZero() ? dst : thenBB);
+        goto NEXT;
+      }
+    }
     insertStmt(SNEW(CondJumpStmt) {.loc = Location::make_invalid(), .test = test, .T = thenBB, .F = dst});
+NEXT:
     return insertLabel(thenBB);
   }
+  void condJump(Expr test, label_t T, label_t F) {
+    return insertStmt(SNEW(CondJumpStmt) {.loc = Location::make_invalid(), .test = test, .T = T, .F = F});
+  }
   void insertBr(label_t L, Location loc = Location::make_invalid()) {
-    clearKnownConstantVariables();
     return insertStmt(SNEW(GotoStmt) {.loc = loc, .location = L});
   }
   void insertLabel(label_t L, IdentRef Name = nullptr) {
     sreachable = true;
-    clearKnownConstantVariables();
     return insertStmtInternal(SNEW(LabelStmt) {.loc = Location::make_invalid(), .label = L, .labelName = Name});
   }
   void insertStmtInternal(Stmt s) {
@@ -2799,13 +2839,12 @@ Expr parse_pp_number(const xstring str) {
     if (s) {
       if (sreachable) {
         insertStmtInternal(s);
-        if (isTerminator(s->k)) {
+        if (s->isTerminator()) {
             unreachable_reason = s;
             sreachable = false;
         }
       } else {
         if (unreachable_reason && s->loc.isValid()) {
-          printf("this = %u\n", s->k);
           warning(s->loc, "this statement is unreachable");
           note(unreachable_reason->loc, "after this *terminator* statement is unreachable");
           unreachable_reason = nullptr;
@@ -2921,16 +2960,6 @@ Expr parse_pp_number(const xstring str) {
         llvm_unreachable("");
         return;
       }
-      if (test->k == EConstant) {
-        if (auto CI = dyn_cast<ConstantInt>(test->C)) {
-          bool isFalse = CI->isZero();
-          auto II = getInsertPoint();
-          statement();
-          if (isFalse)
-            setInsertPoint(II);
-          return;
-        }
-      }
       label_t BODY = jumper.createLabel();
       label_t CMP = jumper.createLabel();
       label_t LEAVE = jumper.createLabel();
@@ -2940,9 +2969,9 @@ Expr parse_pp_number(const xstring str) {
       insertLabel(BODY);
       statement();
       insertLabel(CMP);
-      clearKnownConstantVariables();
       insertStmt(SNEW(CondJumpStmt) {.loc = Location::make_invalid(), .test = test, .T = BODY, .F = LEAVE});
-      return insertLabel(LEAVE);
+      insertLabel(LEAVE);
+      return;
     }
     case Kfor: 
     {
@@ -2960,7 +2989,7 @@ Expr parse_pp_number(const xstring str) {
           if (!ex)
             return;
           ex = simplify(ex);
-          if (issimple(ex)) 
+          if (ex->isSimple()) 
             warning(loc, "expression in for-clause-1(for loop initialization) has no effect");
           else 
             insertStmt(SNEW(ExprStmt) {.loc = ex->loc, .exprbody = ex});
@@ -2982,7 +3011,7 @@ Expr parse_pp_number(const xstring str) {
         if (!(forincl = expression()))
           return;
         forincl = simplify(forincl);
-        if (issimple(forincl)) {
+        if (forincl->isSimple()) {
           warning(loc3, "expression in expression-3(for loop increment) has no effect");
           forincl = nullptr;
         }
@@ -2992,14 +3021,10 @@ Expr parse_pp_number(const xstring str) {
       label_t LEAVE = jumper.createLabel();
       llvm::SaveAndRestore<label_t> saved_b(jumper.topBreak, LEAVE);
       llvm::SaveAndRestore<label_t> saved_c(jumper.topContinue, CMP);
-      insertLabel(CMP);
-      if (cond) {
-        if (cond->k == EConstant)
-          if (auto CI = dyn_cast<ConstantInt>(cond->C))
-            if (!CI->isZero()) goto FOR_NEXT; // if the condition is true, we don't have to jump!
-        jumpIfFalse(cond, LEAVE);
-      }
-FOR_NEXT:
+      if (cond)
+        condJump(cond, CMP, LEAVE);
+      else
+        insertLabel(CMP);
       if (forincl)
         insertStmt(SNEW(ExprStmt) {.loc = forincl->loc, .exprbody = forincl});
       statement();
@@ -3019,47 +3044,23 @@ FOR_NEXT:
       consume();
       statement();
       if (l.tok.tok != Kwhile)
-        return expect(loc, "'while'");
-      consume();
+        parse_error(loc, "missing 'while' in do-while statement");
+      else
+        consume();
       if (l.tok.tok != TLbracket)
         return expectLB(loc);
       consume();
       if (!(test = Bexpression()))
         return;
       checkSemicolon();
-      if (test->k == EConstant) {
-        if (auto CI = dyn_cast<ConstantInt>(test->C)) {
-          bool isFalse = CI->isZero();
-          if (!isFalse)
-            insertBr(CMP); // jump to CMP if condition is true
-          return insertLabel(LEAVE);;
-        }
-      }
       jumpIfTrue(test, CMP);
-      insertLabel(LEAVE);
+      condJump(test, CMP, LEAVE);
     }
     case Kif: 
     {
       Expr test;
       if (!(test = Bexpression()))
         return;
-      if (test->k == EConstant) {
-        if (auto CI = dyn_cast<ConstantInt>(test->C)) {
-          bool isFalse = CI->isZero();
-          auto II = getInsertPoint();
-          statement();
-          if (isFalse)
-            setInsertPoint(II); // skip if body if condition is false
-          if (l.tok.tok == Kelse) {
-            consume();
-            II = getInsertPoint();
-            statement();
-            if (!isFalse)
-              setInsertPoint(II); // skip else body if condition if true
-          }
-          return;
-        }
-      }
       label_t IF_END = jumper.createLabel();
       jumpIfFalse(test, IF_END);
       statement();
@@ -3096,9 +3097,8 @@ FOR_NEXT:
     if (!e)
       return;
     e = simplify(e);
-    if (issimple(e)) {
+    if (e->isSimple()) 
       warning(loc, "expression statement has no effect");
-    }
     checkSemicolon();
     return insertStmt(SNEW(ExprStmt){.loc = loc, .exprbody = e});
   }
@@ -3248,7 +3248,39 @@ FOR_NEXT:
           return nullptr;
         valid_condition(result);
         valid_condition(r);
-        result = boolToInt(binop(result, LogicalAnd, r, context.getInt()));
+        if (result->k == EConstant) {
+            if (auto CI = dyn_cast<ConstantInt>(result->C)) {
+              if (CI->isZero()) {
+                warning(result->loc, "logical AND first operand is zero always evaluates to zero");
+                result = getIntZero();
+                continue;
+              }
+              if (r->k == EConstant) {
+                if (auto CI2 = dyn_cast<ConstantInt>(r->C))
+                  result = CI2->isZero() ? getIntZero() : getIntOne();
+                else
+                  result = r;
+                continue;
+              }
+            }
+        } else if (r->k == EConstant) {
+          if (auto CI = dyn_cast<ConstantInt>(r->C)) {
+            if (CI->isZero()) {
+              warning(result->loc, "logical AND second operand is zero always evaluates to zero");
+              result = getIntZero();
+            }
+            /* else { result = result; }*/
+            continue;
+          }
+        }
+        if (result->k == EConstant && r->k == EConstant) {
+          result = wrap(context.getInt(), llvm::ConstantExpr::getAnd(result->C, r->C), result->loc);
+        } else if (result->k == ECast && result->castop == ZExt &&
+          r->k == ECast && r->castop == ZExt) {
+          result = boolToInt(binop(result->castval, LogicalAnd, r->castval, context.getInt()));
+        } else {
+          result = boolToInt(binop(result, LogicalAnd, r, context.getInt()));
+        }
       } else
         return result;
     }
@@ -3265,7 +3297,39 @@ FOR_NEXT:
           return nullptr;
         valid_condition(result);
         valid_condition(r);
-        result = boolToInt(binop(result, LogicalOr, r, context.getInt()));
+        if (result->k == EConstant) {
+            if (auto CI = dyn_cast<ConstantInt>(result->C)) {
+              if (!CI->isZero()) {
+                warning(result->loc, "logical OR first operand is non-zero always evaluates to non-zero");
+                result = getIntOne();
+                continue;
+              }
+              if (r->k == EConstant) {
+                if (auto CI2 = dyn_cast<ConstantInt>(r->C))
+                  result = CI2->isZero() ? getIntZero() : getIntOne();
+                else
+                  result = r;
+                continue;
+              }
+            }
+        } else if (r->k == EConstant) {
+          if (auto CI = dyn_cast<ConstantInt>(r->C)) {
+            if (!CI->isZero()) {
+              warning(result->loc, "logical OR second operand is non-zero always evaluates to non-zero");
+              result = getIntZero();
+            }
+            /* else { result = result; }*/
+            continue;
+          }
+        }
+        if (result->k == EConstant && r->k == EConstant) {
+          result = wrap(context.getInt(), llvm::ConstantExpr::getOr(result->C, r->C), result->loc);
+        } else if (result->k == ECast && result->castop == ZExt &&
+          r->k == ECast && r->castop == ZExt) {
+          result = boolToInt(binop(result->castval, LogicalOr, r->castval, context.getInt()));
+        } else {
+          result = boolToInt(binop(result, LogicalOr, r, context.getInt()));
+        }
       } else
         return result;
     }
@@ -3280,13 +3344,12 @@ FOR_NEXT:
         consume();
         if (!(r = assignment_expression()))
           return nullptr;
-        if (issimple(result)) {
-          warning("left-hand side of comma expression has no effect, replace with right-hand side");
+        if (result->isSimple()) {
+          warning(result->loc, "left-hand side of comma expression has no effect, replace with right-hand side");
           result = r;
         }
-        else {
+        else
           result = binop(result, Comma, r, result->ty);
-        }
       } else
         return result;
     }
@@ -3304,9 +3367,14 @@ FOR_NEXT:
     if (!(rhs = conditional_expression()))
       return nullptr;
     if (!compatible(lhs->ty, rhs->ty))
-      return type_error(getLoc(), "incompatible type for conditional-expression: the left is %T, the right is %T", lhs->ty, rhs->ty), nullptr;
+      warning(getLoc(), "incompatible type for conditional-expression: (%T and %T)", lhs->ty, rhs->ty);
     conv(lhs, rhs);
     valid_condition(start);
+    if (start->k == EConstant) {
+      if (auto CI = dyn_cast<ConstantInt>(start->C)) {
+        return CI->isZero() ? rhs : lhs;
+      }
+    }
     return ENEW(ConditionExpr) {.loc = start->loc, .ty = lhs->ty, .cond = start, .cleft = lhs, .cright = rhs};
   }
   Expr conditional_expression() {
@@ -3372,8 +3440,7 @@ FOR_NEXT:
       return consume(), conditional_expression(result);
     if (is_assigment_op(tok)) {
       Expr e, rhs;
-      Variable_Info *info = nullptr;
-      if (!assignable(result, info))
+      if (!assignable(result))
         return nullptr;
       consume();
       if (!(e = assignment_expression()))
@@ -3382,16 +3449,13 @@ FOR_NEXT:
         BinOp op = getAtomicrmwOp(tok);
         if (op) {
           if (!(rhs = castto(e, result->ty)))
-            return nullptr;
+            return rhs;
           return binop(result, op, rhs, result->ty);
         }
       }
       // make `a += b` to `a = a + b`
       make_assign(tok, result, e);
-      if (!(rhs = castto(e, result->ty)))
-        return nullptr;
-      if (rhs->k == EConstant) 
-        info->val = rhs->C;
+      rhs = castto(e, result->ty);
       return binop(result, Assign, rhs, result->ty);
     } else
       return result;
@@ -3450,13 +3514,12 @@ FOR_NEXT:
     sema.typedefs.push_function();
     enterBlock();
     assert(jumper.cur == 0 && "labels scope should be empty in start of function");
-    for (size_t i = 0;i < params.size();++i) {
+    for (size_t i = 0;i < params.size();++i) 
       args[i] = sema.typedefs.putSym(params[i].name, Variable_Info {.ty = params[i].ty, .loc = loc, .tags = ASSIGNED});
-    }
     {
       llvm::SaveAndRestore<Stmt> saved_ip(InsertPt, head);
       eat_compound_statement();
-      if (!isTerminator(getInsertPoint()->k)) {
+        if (!getInsertPoint()->isTerminator()) {
         Stmt s = getInsertPoint();
         Location loc2 = getLoc();
         if (sema.pfunc->second.getToken() == PP_main) {

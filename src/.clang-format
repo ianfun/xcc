@@ -1,0 +1,27 @@
+---
+# BasedOnStyle: LLVM
+IndentGotoLabels: false
+ColumnLimit: 120
+InsertBraces: false
+InsertTrailingCommas: None
+SpaceInEmptyBlock: true
+SpaceAfterCStyleCast: false
+SpaceAfterLogicalNot: false
+SortIncludes: CaseSensitive
+ReferenceAlignment: Right
+PointerAlignment: Right
+SpaceInEmptyParentheses: false
+IndentWidth: 4
+Language: Cpp
+UseTab: Never
+BraceWrapping:
+  AfterClass: true
+  AfterCaseLabel: true
+  AfterFunction: false
+  AfterNamespace: false
+  AfterEnum: true
+  AfterStruct: true
+  AfterUnion: true
+  BeforeWhile: false
+  BeforeElse: false
+---

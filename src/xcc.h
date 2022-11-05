@@ -312,7 +312,7 @@ enum TypeIndex {
     i32ty, u32ty,
     i64ty, u64ty,
     i128ty, u128ty,
-    floatty, doublety,
+    floatty, doublety, fp128ty,
     ptrty,
     TypeIndexHigh
 };
@@ -326,12 +326,15 @@ enum NoSignTypeIndex {
     x128,
     xfloat,
     xdouble,
+    xfp128,
     xptr,
     NoSignTypeIndexHigh
 };
 static TypeIndex getTypeIndex(uint32_t tags) {
     if (tags & TYVOID)
         return voidty;
+    if (tags & TYBOOL)
+        return i1ty;
     if (tags & TYINT8)
         return i8ty;
     if (tags & TYUINT8)
@@ -356,11 +359,15 @@ static TypeIndex getTypeIndex(uint32_t tags) {
         return doublety;
     if (tags & TYFLOAT)
         return floatty;
+    if (tags & TYF128)
+        return fp128ty;
     llvm_unreachable("bad type provided for getTypeIndex()");
 }
 static NoSignTypeIndex getNoSignTypeIndex(uint32_t tags) {
     if (tags & TYVOID)
         return xvoid;
+    if (tags & TYBOOL)
+        return x1;
     if (tags & (TYINT8 | TYUINT8))
         return x8;
     if (tags & (TYINT16 | TYUINT16))
@@ -375,6 +382,8 @@ static NoSignTypeIndex getNoSignTypeIndex(uint32_t tags) {
         return xfloat;
     if (tags & TYDOUBLE)
         return xdouble;
+    if (tags & TYF128)
+        return xfp128;
     llvm_unreachable("bad type provided for getNoSignTypeIndex()");
 }
 static enum BinOp getAtomicrmwOp(Token tok) {
@@ -411,69 +420,6 @@ static bool isCSkip(char c){
 static bool is_declaration_specifier(Token a) {
     return a >= Kextern && a <= Kvolatile;
 }
-static bool isTerminator(enum StmtKind k) {
-    switch (k) {
-        case SGoto:
-        case SReturn:
-        case SCondJump:
-            return true;
-        default:
-            return false;
-    }
-}
-static bool isConstant(const Expr e) {
-    // check whether a expression is a constant-expression
-    switch(e->k) {
-    case EConstant: return true;
-    case EVoid: case ECall:case ESubscript:
-        return false;
-    case EPostFix:
-        return isConstant(e->poperand);
-    case EBin:
-        return isConstant(e->lhs) && isConstant(e->rhs);
-    case EUnary:
-        return isConstant(e->uoperand);
-    case ECast:
-    case EString:
-    case EVar:
-    case EArray:
-    case EStruct:
-    case EArrToAddress:
-        return true;
-    case ECondition:
-        return isConstant(e->cond) && isConstant(e->cleft) && isConstant(e->cright);
-    case EMemberAccess:
-        return isConstant(e->obj);
-    }
-    return false;
-}
-void noralizeType(CType ty){
-    constexpr uint32_t mask = TYTYPEDEF | TYEXTERN | TYSTATIC | TYTHREAD_LOCAL | TYREGISTER;
-    switch (ty->k){
-    case TYFUNCTION:
-    {
-        uint32_t h = ty->ret->tags & mask;
-        ty->ret->tags &=  ~mask;
-        ty->tags |= h;
-        break;
-    }
-    case TYARRAY:
-    {
-        uint32_t h = ty->arrtype->tags & mask;
-        ty->arrtype->tags &= ~mask;
-        ty->tags |= h;
-        break;
-    }
-    case TYPOINTER:
-    {
-        uint32_t h = ty->p->tags & mask;
-        ty->p->tags &= ~mask;
-        ty->tags |= h;
-        break;
-    }
-    default: break;
-    }
-}
 static const char months[12][4] = {
     "Jan", // January
     "Feb", // February
@@ -488,9 +434,6 @@ static const char months[12][4] = {
     "Nov", // November
     "Dec"  // December
 };
-static bool isFloating(const CType ty) {
-    return ty->tags & (TYFLOAT | TYDOUBLE | TYF128);
-}
 static bool compatible(const CType p, const CType expected) {
     // https://en.cppreference.com/w/c/language/type
     if (p->k != expected->k)

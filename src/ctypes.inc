@@ -11,51 +11,81 @@ enum CTypeKind: uint8_t {
   TYINCOMPLETE
 };
 struct OpaqueCType {
-	auto isSigned(CType ty) {
-	    // `_Bool` is not signed
-	    return tags & (TYINT8 | TYINT16 | TYINT16 | TYINT32 | TYINT64 | TYINT128);
-	}
-	bool isSigned() const {
-	    return k == TYPRIM && (tags & (
-	            TYINT8 | TYINT16 | TYINT32 | TYINT64 | 
-	            TYUINT8 | TYUINT16 | TYUINT32 | TYUINT64 | 
-	            TYUINT128 | TYBOOL
-	        ));
-	}
-	bool isScalar() const {
-	    return k == TYPOINTER ||
-	    (k == TYPRIM && !(tags & TYVOID));
-	}
-unsigned getBitWidth() const {
-    if (tags & TYINT8)
-        return 8;
-    if (tags & TYUINT8)
-        return 8;
-    if (tags & TYINT16)
-        return 16;
-    if (tags & TYUINT16)
-        return 16;
-    if (tags & TYINT32)
-        return 32;
-    if (tags & TYUINT32)
-        return 32;
-    if (tags & TYINT64)
-        return 64;
-    if (tags & TYUINT64)
-        return 64;
-    if (tags & TYINT128)
-        return 128;
-    if (tags & TYUINT128)
-        return 128;
-    if (tags & TYDOUBLE)
-        return 64;
-    if (tags & TYFLOAT)
-        return 32;
-    llvm_unreachable("getting bitWidth in no floating type or integer type");
+auto isSigned(CType ty) {
+    // `_Bool` is not signed
+    return tags & (TYINT8 | TYINT16 | TYINT16 | TYINT32 | TYINT64 | TYINT128);
 }
-  CTypeKind k;
-  uint32_t align, tags;
-  union {
+bool isSigned() const {
+    return k == TYPRIM && (tags & (
+            TYINT8 | TYINT16 | TYINT32 | TYINT64 | 
+            TYUINT8 | TYUINT16 | TYUINT32 | TYUINT64 | 
+            TYUINT128 | TYBOOL
+        ));
+}
+bool isFloating() const {
+	return tags & floatings;
+}
+bool isScalar() const {
+    return k == TYPOINTER ||
+    (k == TYPRIM && !(tags & TYVOID));
+}
+void noralize() {
+    constexpr uint32_t mask = TYTYPEDEF | TYEXTERN | TYSTATIC | TYTHREAD_LOCAL | TYREGISTER;
+    switch (k){
+    case TYFUNCTION:
+    {
+        uint32_t h = ret->tags & mask;
+        ret->tags &=  ~mask;
+        tags |= h;
+        break;
+    }
+    case TYARRAY:
+    {
+        uint32_t h = arrtype->tags & mask;
+        arrtype->tags &= ~mask;
+        tags |= h;
+        break;
+    }
+    case TYPOINTER:
+    {
+        uint32_t h = p->tags & mask;
+        p->tags &= ~mask;
+        tags |= h;
+        break;
+    }
+    default: break;
+    }
+}
+unsigned getBitWidth() const {
+	if (tags & TYINT8)
+	    return 8;
+	if (tags & TYUINT8)
+	    return 8;
+	if (tags & TYINT16)
+	    return 16;
+	if (tags & TYUINT16)
+	    return 16;
+	if (tags & TYINT32)
+	    return 32;
+	if (tags & TYUINT32)
+	    return 32;
+	if (tags & TYINT64)
+	    return 64;
+	if (tags & TYUINT64)
+	    return 64;
+	if (tags & TYINT128)
+	    return 128;
+	if (tags & TYUINT128)
+	    return 128;
+	if (tags & TYDOUBLE)
+	    return 64;
+	if (tags & TYFLOAT)
+	    return 32;
+	llvm_unreachable("getting bitWidth in no floating type or integer type");
+}
+CTypeKind k;
+uint32_t align, tags;
+union {
     struct {
       CType p;
     };
@@ -100,84 +130,77 @@ struct PrimType {
   enum CTypeKind k=TYPRIM;
   uint32_t align, tags;
  /* empty! */ 
-};struct PointerType {
+};
+struct PointerType {
   enum CTypeKind k=TYPOINTER;
   uint32_t align, tags;
-struct {
-  
+  struct {
     CType p;
-
-  };};
+  };
+};
 struct StructType {
   enum CTypeKind k=TYSTRUCT;
   uint32_t align, tags;
-struct {
-  
+  struct {
     size_t sidx;
     IdentRef sname;
     xvector<Declator> selems;
-
-  };};
+  };
+};
 struct UnionType {
   enum CTypeKind k=TYUNION;
   uint32_t align, tags;
-struct {
-  
+  struct {
     size_t uidx;
     IdentRef uname;
     xvector<Declator> uelems;
-
-  };};
+  };
+};
 struct EnumType {
   enum CTypeKind k=TYENUM;
   uint32_t align, tags;
-struct {
-  
+  struct {
     size_t eidx;
     IdentRef ename;
     xvector<EnumPair> eelems;
-
-  };};
+  };
+};
 struct BitfieldType {
   enum CTypeKind k=TYBITFIELD;
   uint32_t align, tags;
-struct {
-  
+  struct {
     CType bittype;
     unsigned bitsize;
-
-  };};
+  };
+};
 struct ArrayType {
   enum CTypeKind k=TYARRAY;
   uint32_t align, tags;
-struct {
-  
+  struct {
     Expr vla;
     CType arrtype;
     bool hassize;
     unsigned arrsize;
-
-  };};
+  };
+};
 struct FunctionType {
   enum CTypeKind k=TYFUNCTION;
   uint32_t align, tags;
-struct {
-  
+  struct {
     CType ret;
     xvector<Param> params;
     bool isVarArg;
-
-  };};
+  };
+};
 struct IncompleteType {
   enum CTypeKind k=TYINCOMPLETE;
   uint32_t align, tags;
-struct {
-  
+  struct {
     enum CTypeKind tag;
     IdentRef name;
     size_t iidx;
-
-  };};
+  };
+};
 static size_t ctype_size_map[] = {
     sizeof(PrimType),
     sizeof(PointerType),

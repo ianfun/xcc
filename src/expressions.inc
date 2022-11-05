@@ -17,13 +17,24 @@ enum ExprKind: uint8_t {
   EPostFix
 };
 struct OpaqueExpr {
-  OpaqueExpr()=delete;
-  ~OpaqueExpr()=delete;
-  ExprKind k;
-  Location loc;
-  CType ty;
+OpaqueExpr()=delete;
+~OpaqueExpr()=delete;
+bool isSimple() const {
+  switch (k) {
+    case EVar:
+    case EString:
+    case EStruct:
+    case EArray:
+      return true;
+    default: 
+      return false;
+  }
+}
+ExprKind k;
+Location loc;
+CType ty;
 
-  union {
+union {
     struct {
       llvm::Constant* C;
     };
@@ -83,130 +94,130 @@ struct ConstantExpr {
   enum ExprKind k=EConstant;
   Location loc;
   CType ty;
-struct {
-      llvm::Constant* C;
-
-  };};
+  struct {
+    llvm::Constant* C;
+  };
+};
 struct BinExpr {
   enum ExprKind k=EBin;
   Location loc;
   CType ty;
-struct {
-      Expr lhs;
+  struct {
+    Expr lhs;
     enum BinOp bop;
     Expr rhs;
-
-  };};
+  };
+};
 struct UnaryExpr {
   enum ExprKind k=EUnary;
   Location loc;
   CType ty;
-struct {
-      Expr uoperand;
+  struct {
+    Expr uoperand;
     enum UnaryOp uop;
-
-  };};
+  };
+};
 struct VoidExpr {
   enum ExprKind k=EVoid;
   Location loc;
   CType ty;
-struct {
-      Expr voidexpr;
-
-  };};
+  struct {
+    Expr voidexpr;
+  };
+};
 struct VarExpr {
   enum ExprKind k=EVar;
   Location loc;
   CType ty;
-struct {
-      size_t sval;
-
-  };};
+  struct {
+    size_t sval;
+  };
+};
 struct ConditionExpr {
   enum ExprKind k=ECondition;
   Location loc;
   CType ty;
-struct {
-      Expr cond, cleft, cright;
-
-  };};
+  struct {
+    Expr cond, cleft, cright;
+  };
+};
 struct CastExpr {
   enum ExprKind k=ECast;
   Location loc;
   CType ty;
-struct {
-      enum CastOp castop;
+  struct {
+    enum CastOp castop;
     Expr castval;
-
-  };};
+  };
+};
 struct CallExpr {
   enum ExprKind k=ECall;
   Location loc;
   CType ty;
-struct {
-      Expr callfunc;
+  struct {
+    Expr callfunc;
     xvector<Expr> callargs;
-
-  };};
+  };
+};
 struct SubscriptExpr {
   enum ExprKind k=ESubscript;
   Location loc;
   CType ty;
-struct {
-      Expr left, right;
-
-  };};
+  struct {
+    Expr left, right;
+  };
+};
 struct ArrayExpr {
   enum ExprKind k=EArray;
   Location loc;
   CType ty;
-struct {
-      xvector<Expr> arr;
-
-  };};
+  struct {
+    xvector<Expr> arr;
+  };
+};
 struct StructExpr {
   enum ExprKind k=EStruct;
   Location loc;
   CType ty;
-struct {
-      xvector<Expr> arr2;
-
-  };};
+  struct {
+    xvector<Expr> arr2;
+  };
+};
 struct StringExpr {
   enum ExprKind k=EString;
   Location loc;
   CType ty;
-struct {
-      xstring str;
+  struct {
+    xstring str;
     bool is_constant;
-
-  };};
+  };
+};
 struct MemberAccessExpr {
   enum ExprKind k=EMemberAccess;
   Location loc;
   CType ty;
-struct {
-      Expr obj;
+  struct {
+    Expr obj;
     uint32_t idx;
-
-  };};
+  };
+};
 struct ArrToAddressExpr {
   enum ExprKind k=EArrToAddress;
   Location loc;
   CType ty;
-struct {
-      Expr arr3;
-
-  };};
+  struct {
+    Expr arr3;
+  };
+};
 struct PostFixExpr {
   enum ExprKind k=EPostFix;
   Location loc;
   CType ty;
-struct {
-      enum PostFixOp pop;
+  struct {
+    enum PostFixOp pop;
     Expr poperand;
-
-  };};
+  };
+};
 static uint8_t expr_size_map[] = {
     sizeof(ConstantExpr),
     sizeof(BinExpr),

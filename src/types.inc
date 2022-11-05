@@ -47,8 +47,9 @@ constexpr uint32_t
   TYUINT = TYUINT32,
   TYULONGLONG = TYUINT64,
   TYLONGDOUBLE = TYDOUBLE,
-  ty_prim = 
-    TYINT8 | TYINT16 | TYINT32 | TYINT64 | 
-    TYUINT8 | TYUINT16 | TYUINT32 | TYUINT64 |
-    TYFLOAT | TYDOUBLE | TYBOOL,
-  ty_unsigned = TYUINT8 | TYUINT16 | TYUINT32 | TYUINT64;
+  floatings = TYFLOAT | TYDOUBLE | TYF128,
+  signed_integers = TYINT8 | TYINT16 | TYINT32 | TYINT64 | TYINT128,
+  unigned_integers = TYUINT8 | TYUINT16 | TYUINT32 | TYUINT64 | TYUINT128,
+  intergers = signed_integers | unigned_integers,
+  intergers_or_bool = intergers | TYBOOL,
+  ty_prim = intergers_or_bool | floatings;

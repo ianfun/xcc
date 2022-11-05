@@ -142,6 +142,17 @@ def switchGen(d, f, de):
 		f.write(tab2 + "default: return " + de + ";\n" + tab + "}\n")
 	printer(root, 1)
 
+class Monad:
+	__slots__ = ()
+	_instance = None
+	@staticmethod
+	def get():
+		if Monad._instance is None:
+			Monad._instance = Monad()
+		return Monad._instance
+	def __rshift__(self, other):
+		return other
+
 def gen_keywords():
 	verbose("generating keywords...")
 	f = open("keywords.inc", "w")
@@ -153,22 +164,7 @@ def gen_keywords():
 	f.write('}\n')
 	f.close()
 	verbose("done.\n")
-
-def gen_PPDirective():
-	verbose("generating C proprocessor directives...")
-	f = open("directives.inc", "w")
-	f.write("enum PPDirective {\n  PPNotADirective,\n  ")
-	directives = ("if", "ifdef", "ifndef", "else", "elseif", "endif", "undef", "pragma", "line", "include", "warning", "error")
-	f.write(',\n  '.join(("PP" + a + " /*#%s*/" % a) for a in directives))
-	f.write("\n};\n")
-	f.write("enum PPDirective getDirective(const char *s){\n")
-	d = dict()
-	for i in directives:
-		d[i] = "PP" + i
-	switchGen(d, f, "PPNotADirective")
-	f.write('}\n')
-	f.close()
-	verbose("done.\n")
+	return Monad.get()
 
 def gen_tokens():
 	def cstr(s):
@@ -296,6 +292,7 @@ def gen_tokens():
 	f.write('\n')
 	f.close()
 	verbose("done.\n")
+	return Monad.get()
 
 def gen_type_tags():
 	verbose("generating type tags...")
@@ -356,13 +353,15 @@ def gen_type_tags():
   TYUINT = TYUINT32,
   TYULONGLONG = TYUINT64,
   TYLONGDOUBLE = TYDOUBLE,
-  ty_prim = 
-    TYINT8 | TYINT16 | TYINT32 | TYINT64 | 
-    TYUINT8 | TYUINT16 | TYUINT32 | TYUINT64 |
-    TYFLOAT | TYDOUBLE | TYBOOL,
-  ty_unsigned = TYUINT8 | TYUINT16 | TYUINT32 | TYUINT64;\n""")
+  floatings = TYFLOAT | TYDOUBLE | TYF128,
+  signed_integers = TYINT8 | TYINT16 | TYINT32 | TYINT64 | TYINT128,
+  unigned_integers = TYUINT8 | TYUINT16 | TYUINT32 | TYUINT64 | TYUINT128,
+  intergers = signed_integers | unigned_integers,
+  intergers_or_bool = intergers | TYBOOL,
+  ty_prim = intergers_or_bool | floatings;\n""")
 	f.close()
 	verbose("done.\n")
+	return Monad.get()
 
 def sizeof(l):
 	for i in l:
@@ -375,12 +374,23 @@ def gen_expr():
 	f.write("enum ExprKind: uint8_t {\n  " + ',\n  '.join(exprs.keys()) + '\n};\n')
 	f.write("""\
 struct OpaqueExpr {
-  OpaqueExpr()=delete;
-  ~OpaqueExpr()=delete;
-  ExprKind k;
-  Location loc;
-  CType ty;\n
-  union {
+OpaqueExpr()=delete;
+~OpaqueExpr()=delete;
+bool isSimple() const {
+  switch (k) {
+    case EVar:
+    case EString:
+    case EStruct:
+    case EArray:
+      return true;
+    default: 
+      return false;
+  }
+}
+ExprKind k;
+Location loc;
+CType ty;\n
+union {
 """)
 	for decls in exprs.values():
 		if decls:
@@ -391,17 +401,18 @@ struct OpaqueExpr {
 		realname = name[1::] + "Expr"
 		l.append(realname)
 		if decls:
-			f.write("struct " + realname + " {\n  enum ExprKind k=" + name + ";\n  Location loc;\n  CType ty;\nstruct {\n  ")
-			f.write('    ' + ';\n    '.join(decls) + ';\n')
-			f.write("\n  };};\n")
+			f.write("struct " + realname + " {\n  enum ExprKind k=" + name + ";\n  Location loc;\n  CType ty;\n  struct {\n  ")
+			f.write('  ' + ';\n    '.join(decls) + ';')
+			f.write("\n  };\n};\n")
 		else:
-			f.write("struct " + realname + " {\n  enum ExprKind k=" + name + ";\n  Location loc;\n  CType ty;\n /* empty! */ \n};")
+			f.write("  struct " + realname + " {\n  enum ExprKind k=" + name + ";\n  Location loc;\n  CType ty;\n /* empty! */ \n};\n")
 	f.write("static uint8_t expr_size_map[] = {\n    " + 
 		',\n    '.join(sizeof(l)) + 
 		"\n};\n")
 	f.write("static constexpr size_t expr_max_size = std::max({" + ', '.join(sizeof(l)) + "});\n")
 	f.close()
 	verbose("done.\n")
+	return Monad.get()
 
 def gen_stmt():
 	verbose("generating statements...")
@@ -415,10 +426,20 @@ struct NullStmt {
   Stmt next;
 };
 struct OpaqueStmt {
-  StmtKind k;
-  Location loc;
-  Stmt next;
-  union {
+StmtKind k;
+Location loc;
+Stmt next;
+bool isTerminator() const {
+    switch (k) {
+        case SGoto:
+        case SReturn:
+        case SCondJump:
+            return true;
+        default:
+            return false;
+    }
+}
+union {
 """)
 	for decls in stmts.values():
 		if decls:
@@ -429,11 +450,11 @@ struct OpaqueStmt {
 		realname = name[1::] + "Stmt"
 		l.append(realname)
 		if decls:
-			f.write("struct " + realname + " {\n  enum StmtKind k=" + name + ";\n  Location loc;\n  Stmt next;\nstruct {\n  \n")
-			f.write('    ' + ';\n    '.join(decls) + ';\n')
-			f.write("\n  };};\n")
+			f.write("struct " + realname + " {\n  enum StmtKind k=" + name + ";\n  Location loc;\n  Stmt next;\n  struct {\n  ")
+			f.write('  ' + ';\n    '.join(decls) + ';')
+			f.write("\n  };\n};\n")
 		else:
-			f.write("struct " + realname + " {\n  enum StmtKind k=" + name + ";\n  Location loc;\n  Stmt next;\n /* empty! */ \n};")
+			f.write("struct " + realname + " {\n  enum StmtKind k=" + name + ";\n  Location loc;\n  Stmt next;\n /* empty! */ \n};\n")
 
 	f.write("static uint8_t stmt_size_map[] = {\n    " + 
 		',\n    '.join(sizeof(l)) + 
@@ -442,6 +463,7 @@ struct OpaqueStmt {
 
 	f.close()
 	verbose("done.\n")
+	return Monad.get()
 
 def gen_ctypes():
 	verbose("generating C types...")
@@ -450,51 +472,81 @@ def gen_ctypes():
 	f.write("enum CTypeKind: uint8_t {\n  " + ',\n  '.join(ctypes.keys()) + '\n};\n')
 	f.write("""\
 struct OpaqueCType {
-	auto isSigned(CType ty) {
-	    // `_Bool` is not signed
-	    return tags & (TYINT8 | TYINT16 | TYINT16 | TYINT32 | TYINT64 | TYINT128);
-	}
-	bool isSigned() const {
-	    return k == TYPRIM && (tags & (
-	            TYINT8 | TYINT16 | TYINT32 | TYINT64 | 
-	            TYUINT8 | TYUINT16 | TYUINT32 | TYUINT64 | 
-	            TYUINT128 | TYBOOL
-	        ));
-	}
-	bool isScalar() const {
-	    return k == TYPOINTER ||
-	    (k == TYPRIM && !(tags & TYVOID));
-	}
-unsigned getBitWidth() const {
-    if (tags & TYINT8)
-        return 8;
-    if (tags & TYUINT8)
-        return 8;
-    if (tags & TYINT16)
-        return 16;
-    if (tags & TYUINT16)
-        return 16;
-    if (tags & TYINT32)
-        return 32;
-    if (tags & TYUINT32)
-        return 32;
-    if (tags & TYINT64)
-        return 64;
-    if (tags & TYUINT64)
-        return 64;
-    if (tags & TYINT128)
-        return 128;
-    if (tags & TYUINT128)
-        return 128;
-    if (tags & TYDOUBLE)
-        return 64;
-    if (tags & TYFLOAT)
-        return 32;
-    llvm_unreachable("getting bitWidth in no floating type or integer type");
+auto isSigned(CType ty) {
+    // `_Bool` is not signed
+    return tags & (TYINT8 | TYINT16 | TYINT16 | TYINT32 | TYINT64 | TYINT128);
 }
-  CTypeKind k;
-  uint32_t align, tags;
-  union {
+bool isSigned() const {
+    return k == TYPRIM && (tags & (
+            TYINT8 | TYINT16 | TYINT32 | TYINT64 | 
+            TYUINT8 | TYUINT16 | TYUINT32 | TYUINT64 | 
+            TYUINT128 | TYBOOL
+        ));
+}
+bool isFloating() const {
+	return tags & floatings;
+}
+bool isScalar() const {
+    return k == TYPOINTER ||
+    (k == TYPRIM && !(tags & TYVOID));
+}
+void noralize() {
+    constexpr uint32_t mask = TYTYPEDEF | TYEXTERN | TYSTATIC | TYTHREAD_LOCAL | TYREGISTER;
+    switch (k){
+    case TYFUNCTION:
+    {
+        uint32_t h = ret->tags & mask;
+        ret->tags &=  ~mask;
+        tags |= h;
+        break;
+    }
+    case TYARRAY:
+    {
+        uint32_t h = arrtype->tags & mask;
+        arrtype->tags &= ~mask;
+        tags |= h;
+        break;
+    }
+    case TYPOINTER:
+    {
+        uint32_t h = p->tags & mask;
+        p->tags &= ~mask;
+        tags |= h;
+        break;
+    }
+    default: break;
+    }
+}
+unsigned getBitWidth() const {
+	if (tags & TYINT8)
+	    return 8;
+	if (tags & TYUINT8)
+	    return 8;
+	if (tags & TYINT16)
+	    return 16;
+	if (tags & TYUINT16)
+	    return 16;
+	if (tags & TYINT32)
+	    return 32;
+	if (tags & TYUINT32)
+	    return 32;
+	if (tags & TYINT64)
+	    return 64;
+	if (tags & TYUINT64)
+	    return 64;
+	if (tags & TYINT128)
+	    return 128;
+	if (tags & TYUINT128)
+	    return 128;
+	if (tags & TYDOUBLE)
+	    return 64;
+	if (tags & TYFLOAT)
+	    return 32;
+	llvm_unreachable("getting bitWidth in no floating type or integer type");
+}
+CTypeKind k;
+uint32_t align, tags;
+union {
 """)
 	for decls in ctypes.values():
 		if decls:
@@ -505,11 +557,11 @@ unsigned getBitWidth() const {
 		realname = name[2:3] + name[3::].lower() + "Type"
 		l.append(realname)
 		if decls:
-			f.write("struct " + realname + " {\n  enum CTypeKind k=" + name + ";\n  uint32_t align, tags;\nstruct {\n  \n")
-			f.write('    ' + ';\n    '.join(decls) + ';\n')
-			f.write("\n  };};\n")
+			f.write("struct " + realname + " {\n  enum CTypeKind k=" + name + ";\n  uint32_t align, tags;\n  struct {\n  ")
+			f.write('  ' + ';\n    '.join(decls) + ';')
+			f.write("\n  };\n};\n")
 		else:
-			f.write("struct " + realname + " {\n  enum CTypeKind k=" + name + ";\n  uint32_t align, tags;\n /* empty! */ \n};")
+			f.write("struct " + realname + " {\n  enum CTypeKind k=" + name + ";\n  uint32_t align, tags;\n /* empty! */ \n};\n")
 	f.write("static size_t ctype_size_map[] = {\n    " + 
 		',\n    '.join(sizeof(l)) + 
 		"\n};\n")
@@ -517,6 +569,7 @@ unsigned getBitWidth() const {
 
 	f.close()
 	verbose("done.\n")
+	return Monad.get()
 
 def main():
 	import argparse, sys
@@ -532,9 +585,15 @@ def main():
 	if len(sys.argv) == 1:
 		parser.print_help()
 		parser.error("no targets to generate")
+		return Monad.get()
 	args = parser.parse_args()
 	if args.all:
-	  return gen_keywords() or gen_tokens() or gen_type_tags() or gen_expr() or gen_stmt() or gen_ctypes() or gen_PPDirective()
+		return (gen_keywords() >> 
+				gen_tokens() >> 
+				gen_type_tags() >> 
+				gen_expr() >> 
+				gen_stmt() >> 
+				gen_ctypes())
 	if args.keywords:
 		gen_keywords()
 	if args.expr:
@@ -547,8 +606,7 @@ def main():
 		gen_type_tags()
 	if args.tokens:
 		gen_tokens()
-	if args.directive:
-		gen_PPDirective()
+	return Monad.get()
 
 if __name__ == '__main__':
   main()

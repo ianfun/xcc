@@ -20,10 +20,20 @@ struct NullStmt {
   Stmt next;
 };
 struct OpaqueStmt {
-  StmtKind k;
-  Location loc;
-  Stmt next;
-  union {
+StmtKind k;
+Location loc;
+Stmt next;
+bool isTerminator() const {
+    switch (k) {
+        case SGoto:
+        case SReturn:
+        case SCondJump:
+            return true;
+        default:
+            return false;
+    }
+}
+union {
   struct {
       Stmt inner;
   };
@@ -77,125 +87,114 @@ struct HeadStmt {
   Location loc;
   Stmt next;
  /* empty! */ 
-};struct CompoundStmt {
+};
+struct CompoundStmt {
   enum StmtKind k=SCompound;
   Location loc;
   Stmt next;
-struct {
-  
+  struct {
     Stmt inner;
-
-  };};
+  };
+};
 struct LabelStmt {
   enum StmtKind k=SLabel;
   Location loc;
   Stmt next;
-struct {
-  
+  struct {
     label_t label;
     IdentRef labelName;
-
-  };};
+  };
+};
 struct GotoStmt {
   enum StmtKind k=SGoto;
   Location loc;
   Stmt next;
-struct {
-  
+  struct {
     label_t location;
-
-  };};
+  };
+};
 struct CondJumpStmt {
   enum StmtKind k=SCondJump;
   Location loc;
   Stmt next;
-struct {
-  
+  struct {
     Expr test;
     label_t T;
     label_t F;
-
-  };};
+  };
+};
 struct DeclOnlyStmt {
   enum StmtKind k=SDeclOnly;
   Location loc;
   Stmt next;
-struct {
-  
+  struct {
     CType decl;
-
-  };};
+  };
+};
 struct ReturnStmt {
   enum StmtKind k=SReturn;
   Location loc;
   Stmt next;
-struct {
-  
+  struct {
     Expr ret;
-
-  };};
+  };
+};
 struct ExprStmt {
   enum StmtKind k=SExpr;
   Location loc;
   Stmt next;
-struct {
-  
+  struct {
     Expr exprbody;
-
-  };};
+  };
+};
 struct AsmStmt {
   enum StmtKind k=SAsm;
   Location loc;
   Stmt next;
-struct {
-  
+  struct {
     xstring asms;
-
-  };};
+  };
+};
 struct VarDeclStmt {
   enum StmtKind k=SVarDecl;
   Location loc;
   Stmt next;
-struct {
-  
+  struct {
     xvector<VarDecl> vars;
-
-  };};
+  };
+};
 struct DeclStmt {
   enum StmtKind k=SDecl;
   Location loc;
   Stmt next;
-struct {
-  
+  struct {
     size_t decl_idx;
     CType decl_ty;
-
-  };};
+  };
+};
 struct UpdateForwardDeclStmt {
   enum StmtKind k=SUpdateForwardDecl;
   Location loc;
   Stmt next;
-struct {
-  
+  struct {
     size_t prev_idx;
     CType prev;
     CType now;
-
-  };};
+  };
+};
 struct FunctionStmt {
   enum StmtKind k=SFunction;
   Location loc;
   Stmt next;
-struct {
-  
+  struct {
     size_t func_idx;
     IdentRef funcname;
     CType functy;
     Stmt funcbody;
     unsigned numLabels;
     xvector<size_t> args;
-
-  };};
+  };
+};
 static uint8_t stmt_size_map[] = {
     sizeof(HeadStmt),
     sizeof(CompoundStmt),
