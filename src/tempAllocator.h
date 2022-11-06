@@ -8,25 +8,27 @@ struct OnceAllocator {
 
 #if WINDOWS
     HANDLE heap;
-    OnceAllocator(): buf_size {init_size}, heap{HeapCreate(HEAP_NO_SERIALIZE | HEAP_GROWABLE, 0, 0)} {
+    OnceAllocator() : buf_size{init_size}, heap{HeapCreate(HEAP_NO_SERIALIZE | HEAP_GROWABLE, 0, 0)} {
         buf = ::HeapAlloc(heap, 0, buf_size);
     };
-    ~OnceAllocator() { ::HeapFree(heap, 0, buf); ::HeapDestroy(heap); };
+    ~OnceAllocator() {
+        ::HeapFree(heap, 0, buf);
+        ::HeapDestroy(heap);
+    };
 #else
-    OnceAllocator(): buf_size {init_size} { buf = llvm::safe_malloc(buf_size); }
+    OnceAllocator() : buf_size{init_size} { buf = llvm::safe_malloc(buf_size); }
     ~OnceAllocator() { ::free(buf); };
 #endif
-    template <typename T>
-    inline T* Allocate(size_t Size) {
-        return reinterpret_cast<T*>(AllocateInternal(Size * sizeof(T)));
+    template <typename T> inline T *Allocate(size_t Size) {
+        return reinterpret_cast<T *>(AllocateInternal(Size * sizeof(T)));
     }
     LLVM_ATTRIBUTE_RETURNS_NONNULL void *AllocateInternal(size_t Size) {
-        if (buf_size < Size){
+        if (buf_size < Size) {
             buf_size = Size * 3 / 2;
 #if WINDOWS
-                buf = HeapReAlloc(heap, 0, buf, buf_size);
+            buf = HeapReAlloc(heap, 0, buf, buf_size);
 #else
-                buf = llvm::safe_realloc(buf, buf_size);
+            buf = llvm::safe_realloc(buf, buf_size);
 #endif
         }
         return buf;

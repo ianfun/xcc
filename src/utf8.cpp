@@ -1,6 +1,8 @@
 // Copyright (c) 2008-2009 Bjoern Hoehrmann <bjoern@hoehrmann.de>
 // See http://bjoern.hoehrmann.de/utf-8/decoder/dfa/ for details.
 
+// clang-format off
+
 #define UTF8_ACCEPT 0
 #define UTF8_REJECT 1
 
@@ -42,3 +44,5 @@ IsUTF8(StringRef str) {
 
   return state == UTF8_ACCEPT;
 }
+
+// clang-format on

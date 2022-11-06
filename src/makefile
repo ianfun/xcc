@@ -1,4 +1,3 @@
-clang-format:
-	clang-format -i parser.cpp codegen.cpp 
-
+format:
+	clang-format *.cpp *h -i
 

@@ -30,7 +30,8 @@ struct Parser : public DiagnosticHelper {
     };
     Lexer l;
     struct Sema { // Semantics processor
-        CType currentfunctionRet = nullptr, currentInitTy = nullptr, currentCase = nullptr;
+        CType currentfunctionRet = nullptr, currentInitTy = nullptr;
+        Stmt currentswitch = nullptr;
         IdentRef pfunc; // current function name: `__func__`
         FunctionAndBlockScope<Variable_Info, 50> typedefs;
         BlockScope<Type_info, 20> tags;
@@ -2815,6 +2816,19 @@ CONTINUE:;
         default: break;
         }
     }
+    const APInt *want_integer_constant() {
+        Location loc = getLoc();
+        Expr e = constant_expression();
+        if (!e)
+            return nullptr;
+        if (sema.currentswitch)
+            e = castto(e, sema.currentswitch->itest->ty);
+        if (e->k != EConstant)
+            return type_error(loc, "case value is not a integer constant expression"), nullptr;
+        if (auto CI = dyn_cast<ConstantInt>(e->C))
+            return &CI->getValue();
+        return type_error(loc, "statement requires expression of integer type (%T invalid)", e->ty), nullptr;
+    }
     void valid_condition(Expr &e, bool reverse = false) {
         if (!e->ty->isScalar()) {
             type_error("conditions requires a scalar expression");
@@ -2895,19 +2909,17 @@ NEXT:
         InsertPt = s;
     }
     void insertStmt(Stmt s) {
-        if (s) {
-            if (sreachable) {
-                insertStmtInternal(s);
-                if (s->isTerminator()) {
-                    unreachable_reason = s;
-                    sreachable = false;
-                }
-            } else {
-                if (unreachable_reason && s->loc.isValid()) {
-                    warning(s->loc, "this statement is unreachable");
-                    note(unreachable_reason->loc, "after this *terminator* statement is unreachable");
-                    unreachable_reason = nullptr;
-                }
+        if (sreachable || s->k == SCompound) {
+            insertStmtInternal(s);
+            if (s->isTerminator()) {
+                unreachable_reason = s;
+                sreachable = false;
+            }
+        } else {
+            if (unreachable_reason && s->loc.isValid()) {
+                warning(s->loc, "this statement is unreachable");
+                note(unreachable_reason->loc, "after this *terminator* statement is unreachable");
+                unreachable_reason = nullptr;
             }
         }
     }
@@ -2919,31 +2931,64 @@ NEXT:
         case TSemicolon: return consume();
         case K__asm__: return parse_asm(), checkSemicolon();
         case TLcurlyBracket: return compound_statement();
-        /*case Kcase: {
-          Expr e, c;
-          Stmt body;
-          consume();
-          if (!(e = constant_expression()))
-            return expect(loc, "constant-expression"), nullptr;
-          if (l.tok.tok != TColon)
-            return expect(loc, ":"), nullptr;
-          consume();
-          if (!(body = statement()))
-            return nullptr;
-          if (!(c = castto(e, sema.currentCase)))
-            return nullptr;
-          return SNEW(CaseStmt){.loc = loc, .case_stmt = body, .case_expr = c};
+        case Kcase: {
+            const APInt *CaseStart = nullptr, *CaseEnd = nullptr;
+            consume();
+            CaseStart = want_integer_constant();
+            if (l.tok.tok == TEllipsis)
+                consume(), CaseEnd = want_integer_constant();
+            if (l.tok.tok != TColon)
+                parse_error(getLoc(), "missing ':' after 'case'");
+            else
+                consume();
+            if (!sema.currentswitch)
+                parse_error(loc, "'default' statement not in switch statement");
+            else {
+                if (CaseStart) {
+                    label_t L = jumper.createLabel();
+                    insertLabel(L);
+                    if (!CaseEnd)
+                        sema.currentswitch->switchs.push_back(SwitchCase(loc, L, CaseStart));
+                    else {
+                        if (*CaseStart == *CaseEnd)
+                            sema.currentswitch->switchs.push_back(SwitchCase(loc, L, CaseStart));
+                        else {
+                            if (CaseStart->ugt(*CaseEnd))
+                                warning(loc, "empty case range specified");
+                            else {
+                                sema.currentswitch->gnu_switchs.push_back(GNUSwitchCase(loc, L, CaseStart, CaseEnd));
+                            }
+                        }
+                    }
+                }
+            }
+            if (l.tok.tok == TRcurlyBracket)
+                parse_error(getLoc(), "label at end of compound statement: expected statement");
+            else
+                statement();
         }
+            return;
         case Kdefault: {
-          Stmt s;
-          consume();
-          if (l.tok.tok != TColon)
-            return expect(loc, ":"), nullptr;
-          consume();
-          if (!(s = statement()))
-            return nullptr;
-          return SNEW(DefaultStmt){.loc = loc, .default_stmt = s};
-        }*/
+            consume();
+            if (l.tok.tok != TColon)
+                parse_error(loc, "missing ':' after 'default'");
+            else
+                consume();
+            if (!sema.currentswitch)
+                parse_error(loc, "'default' statement not in switch statement");
+            else if (sema.currentswitch->sw_default_loc.isValid()) {
+                parse_error(loc, "multiple default labels in one switch");
+                note(sema.currentswitch->sw_default_loc, "previous default defined here");
+            } else {
+                sema.currentswitch->sw_default_loc = loc;
+                insertLabel(sema.currentswitch->sw_default);
+            }
+            if (l.tok.tok == TRcurlyBracket)
+                parse_error(getLoc(), "label at end of compound statement: expected statement");
+            else
+                statement();
+        }
+            return;
         case Kgoto: {
             consume();
             if (l.tok.tok != TIdentifier)
@@ -3005,8 +3050,29 @@ NEXT:
                 return;
             if (tok == Kswitch) {
                 integer_promotions(test);
+                if (test->ty->k != TYPRIM && !(test->ty->tags & intergers_or_bool)) {
+                    type_error("switch requires expression of integer type (%T invalid)", test->ty);
+                    test->ty = context.getInt();
+                }
+                label_t LEAVE = jumper.createLabel();
+                Stmt sw = SNEW(SwitchStmt){.loc = loc,
+                                           .itest = test,
+                                           .switchs = xvector<SwitchCase>::get(),
+                                           .gnu_switchs = xvector<GNUSwitchCase>::get_with_capacity(0),
+                                           .sw_default = jumper.createLabel(),
+                                           .sw_default_loc = Location::make_invalid()};
+                llvm::SaveAndRestore<Stmt> saved_sw(sema.currentswitch, sw);
+                llvm::SaveAndRestore<label_t> saved_b(jumper.topBreak, LEAVE);
+                insertStmt(sw); // insert switch instruction
+                unreachable_reason = sw;
+                sreachable = false;
                 statement();
-                llvm_unreachable("");
+                if (!sema.currentswitch->sw_default_loc.isValid()) {
+                    // no default found: insert `default: break;`
+                    sema.currentswitch->sw_default_loc = getLoc();
+                    insertLabel(sema.currentswitch->sw_default);
+                }
+                insertLabel(LEAVE);
                 return;
             }
             label_t BODY = jumper.createLabel();

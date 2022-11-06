@@ -134,8 +134,6 @@ struct IRGen : public DiagnosticHelper {
     }
     void after(Label loc) { B.SetInsertPoint(loc); }
     void emitDebugLocation() { B.SetCurrentDebugLocation(llvm::DebugLoc()); }
-    inline void enterScope() { }
-    inline void leaveScope() { }
     Type wrap(CType ty) {
         // wrap a CType to LLVM Type
         switch (ty->k) {
@@ -278,10 +276,8 @@ struct IRGen : public DiagnosticHelper {
         tags = new Type[num_tags]();      // not initialized!
         if (options.g)
             dtags = new DIType[num_tags](); // not initialized!
-        enterScope();
         for (Stmt ptr = s->next; ptr; ptr = ptr->next)
             gen(ptr);
-        leaveScope();
         finalsizeCodeGen();
     }
     Value gen_cond(Expr e) {
@@ -457,14 +453,31 @@ struct IRGen : public DiagnosticHelper {
     void gen(Stmt s) {
         emitDebugLocation(s);
         switch (s->k) {
+        case SSwitch: {
+            auto cond = gen(s->itest);
+            if (s->gnu_switchs.size()) {
+                for (const auto &it : s->gnu_switchs) {
+                    auto diff = B.CreateSub(cond, ConstantInt::get(ctx, *it.CaseStart));
+                    auto c = B.CreateICmpULE(diff, ConstantInt::get(ctx, it.range));
+                    auto BB = llvm::BasicBlock::Create(ctx, "", currentfunction);
+                    B.CreateCondBr(c, labels[it.label], BB);
+                    after(BB);
+                }
+            }
+            if (s->switchs.empty()) {
+                B.CreateBr(labels[s->sw_default]);
+                return;
+            }
+            llvm::SwitchInst *sw = B.CreateSwitch(cond, labels[s->sw_default], s->switchs.size());
+            for (const auto &it : s->switchs)
+                sw->addCase(ConstantInt::get(ctx, *it.CaseStart), labels[it.label]);
+        } break;
         case SHead: llvm_unreachable("");
         case SCompound: {
             if (options.g)
                 lexBlocks.push_back(di->createLexicalBlock(getLexScope(), getFile(s->loc.id), s->loc.line, s->loc.col));
-            enterScope();
             for (Stmt ptr = s->inner; ptr; ptr = ptr->next)
                 gen(ptr);
-            leaveScope();
             if (options.g)
                 lexBlocks.pop_back();
         } break;
@@ -512,7 +525,6 @@ struct IRGen : public DiagnosticHelper {
         case SExpr: (void)gen(s->exprbody); break;
         case SFunction: {
             assert(this->labels.empty());
-            enterScope();
             auto ty = cast<llvm::FunctionType>(wrap(s->functy));
             currentfunction = newFunction(ty, s->funcname, s->functy->tags, s->func_idx);
             llvm::DISubprogram *sp = nullptr;
@@ -552,7 +564,6 @@ struct IRGen : public DiagnosticHelper {
                     B.CreateRet(llvm::UndefValue::get(retTy));
                 }
             }
-            leaveScope();
             if (options.g) {
                 lexBlocks.pop_back();
                 di->finalizeSubprogram(sp);

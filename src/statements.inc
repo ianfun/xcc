@@ -5,6 +5,7 @@ enum StmtKind: uint8_t {
   SLabel,
   SGoto,
   SCondJump,
+  SSwitch,
   SDeclOnly,
   SReturn,
   SExpr,
@@ -48,6 +49,13 @@ union {
       Expr test;
     label_t T;
     label_t F;
+  };
+  struct {
+      Expr itest;
+    xvector<SwitchCase> switchs;
+    xvector<GNUSwitchCase> gnu_switchs;
+    label_t sw_default;
+    Location sw_default_loc;
   };
   struct {
       CType decl;
@@ -121,6 +129,18 @@ struct CondJumpStmt {
     Expr test;
     label_t T;
     label_t F;
+  };
+};
+struct SwitchStmt {
+  enum StmtKind k=SSwitch;
+  Location loc;
+  Stmt next;
+  struct {
+    Expr itest;
+    xvector<SwitchCase> switchs;
+    xvector<GNUSwitchCase> gnu_switchs;
+    label_t sw_default;
+    Location sw_default_loc;
   };
 };
 struct DeclOnlyStmt {
@@ -201,6 +221,7 @@ static uint8_t stmt_size_map[] = {
     sizeof(LabelStmt),
     sizeof(GotoStmt),
     sizeof(CondJumpStmt),
+    sizeof(SwitchStmt),
     sizeof(DeclOnlyStmt),
     sizeof(ReturnStmt),
     sizeof(ExprStmt),
@@ -210,4 +231,4 @@ static uint8_t stmt_size_map[] = {
     sizeof(UpdateForwardDeclStmt),
     sizeof(FunctionStmt)
 };
-static constexpr size_t stmt_max_size = std::max({sizeof(HeadStmt), sizeof(CompoundStmt), sizeof(LabelStmt), sizeof(GotoStmt), sizeof(CondJumpStmt), sizeof(DeclOnlyStmt), sizeof(ReturnStmt), sizeof(ExprStmt), sizeof(AsmStmt), sizeof(VarDeclStmt), sizeof(DeclStmt), sizeof(UpdateForwardDeclStmt), sizeof(FunctionStmt)});
+static constexpr size_t stmt_max_size = std::max({sizeof(HeadStmt), sizeof(CompoundStmt), sizeof(LabelStmt), sizeof(GotoStmt), sizeof(CondJumpStmt), sizeof(SwitchStmt), sizeof(DeclOnlyStmt), sizeof(ReturnStmt), sizeof(ExprStmt), sizeof(AsmStmt), sizeof(VarDeclStmt), sizeof(DeclStmt), sizeof(UpdateForwardDeclStmt), sizeof(FunctionStmt)});

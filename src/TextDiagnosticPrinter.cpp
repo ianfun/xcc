@@ -46,7 +46,7 @@ void TextDiagnosticPrinter::printSource(Location loc) {
         }
         unsigned line_chars = 0, displayed_chars = 0, real = 0;
 
-        for(;;) {
+        for (;;) {
             unsigned char c = SM.raw_read_from_id(loc.id);
             if (c == '\0' || c == '\n' || c == '\r') {
                 if (real == 0)
@@ -60,14 +60,11 @@ void TextDiagnosticPrinter::printSource(Location loc) {
             }
             if (c == '\t') {
                 displayed_chars += CC_SHOW_TAB_SIZE;
-                for (unsigned i = 0;i < CC_SHOW_TAB_SIZE;++i)
+                for (unsigned i = 0; i < CC_SHOW_TAB_SIZE; ++i)
                     OS << ' ';
             } else if (/*std::iscntrl(c)*/ !llvm::isPrint(c)) {
-                OS << "<0x"
-                   << (hexed(c) >> 4)
-                   << hexed(c)
-                   << '>';
-                   displayed_chars += 6;
+                OS << "<0x" << (hexed(c) >> 4) << hexed(c) << '>';
+                displayed_chars += 6;
             } else {
                 displayed_chars++;
                 OS << c;
@@ -87,7 +84,7 @@ void TextDiagnosticPrinter::printSource(Location loc) {
         OS << '\n';
     }
 
-    EXIT:
+EXIT:
     stream_ref.pos = 0;
     stream_ref.line = old_line;
     stream_ref.column = old_col;
@@ -107,27 +104,27 @@ void TextDiagnosticPrinter::realHandleDiagnostic(enum DiagnosticLevel level, con
     if (ShowColors) {
         raw_ostream::Colors color;
         switch (level) {
-            case Note: color = noteColor; break;
-            case Remark: color = remarkColor; break;
-            case Warning: color = warningColor; break;
-            default: color = errorColor; break;
+        case Note: color = noteColor; break;
+        case Remark: color = remarkColor; break;
+        case Warning: color = warningColor; break;
+        default: color = errorColor; break;
         }
         OS.changeColor(color);
     }
     {
         StringRef msgtype;
         switch (level) {
-            case Ignored: llvm_unreachable("");
-            case Note: msgtype = "note: "; break;
-            case Remark: msgtype = "remark: "; break;
-            case Warning: msgtype = "warning: "; break;
-            case Error: msgtype = "error: "; break;
-            case PPError: msgtype = "preprocessor error: "; break;
-            case LexError: msgtype = "lex error: "; break;
-            case ParseError: msgtype = "parse error: "; break;
-            case EvalError: msgtype = "evaluation error: ";break;
-            case TypeError: msgtype = "type error: "; break;
-            case Fatal: msgtype = "fatal error: "; break;
+        case Ignored: llvm_unreachable("");
+        case Note: msgtype = "note: "; break;
+        case Remark: msgtype = "remark: "; break;
+        case Warning: msgtype = "warning: "; break;
+        case Error: msgtype = "error: "; break;
+        case PPError: msgtype = "preprocessor error: "; break;
+        case LexError: msgtype = "lex error: "; break;
+        case ParseError: msgtype = "parse error: "; break;
+        case EvalError: msgtype = "evaluation error: "; break;
+        case TypeError: msgtype = "type error: "; break;
+        case Fatal: msgtype = "fatal error: "; break;
         }
         OS << msgtype;
     }

@@ -1,27 +1,26 @@
-static_assert(!(CC_ARENA_BLOCK_SIZE % 4096), "CC_ARENA_BLOCK_SIZE should larger than page size, and larger than max size of Stmt, Expr, CType");
+static_assert(!(CC_ARENA_BLOCK_SIZE % 4096),
+              "CC_ARENA_BLOCK_SIZE should larger than page size, and larger than max size of Stmt, Expr, CType");
 
-struct arena_block
-{
+struct arena_block {
     size_t offset;
     struct arena_block *next;
     char heap[CC_ARENA_BLOCK_SIZE];
 };
-static 
-struct arena_block *new_arena_block() {
-    auto it = reinterpret_cast<struct arena_block*>(llvm::safe_malloc(sizeof(struct arena_block)));
+static struct arena_block *new_arena_block() {
+    auto it = reinterpret_cast<struct arena_block *>(llvm::safe_malloc(sizeof(struct arena_block)));
     it->next = nullptr;
     it->offset = 0;
     return it;
 }
-struct ArenaAllocator: public llvm::AllocatorBase<ArenaAllocator> {
-    void Reset() const {}
-    void PrintStats() const {}
+struct ArenaAllocator : public llvm::AllocatorBase<ArenaAllocator> {
+    void Reset() const { }
+    void PrintStats() const { }
     struct arena_block *head, *cur;
 #if CC_DEBUG
     size_t allocated_bytes = 0, num_blocks = 1;
 #endif
 
-    LLVM_ATTRIBUTE_RETURNS_NONNULL void *Allocate(size_t Size, size_t ) {
+    LLVM_ATTRIBUTE_RETURNS_NONNULL void *Allocate(size_t Size, size_t) {
 
 #if CC_DEBUG
         allocated_bytes += Size;
@@ -42,39 +41,37 @@ struct ArenaAllocator: public llvm::AllocatorBase<ArenaAllocator> {
 
     using AllocatorBase<ArenaAllocator>::Allocate;
 
-    void Deallocate(const void *, size_t , size_t ) {
-
-    }
+    void Deallocate(const void *, size_t, size_t) { }
 
     using AllocatorBase<ArenaAllocator>::Deallocate;
 
     ~ArenaAllocator() {
 #if CC_DEBUG
-        //dbgprint("Release ArenaAllocator\n");
-        //dbgprint("* number of blocks: %zu\n", num_blocks);
-        //dbgprint("* bytes allocated: %zu\n", allocated_bytes);
-#endif        
+        // dbgprint("Release ArenaAllocator\n");
+        // dbgprint("* number of blocks: %zu\n", num_blocks);
+        // dbgprint("* bytes allocated: %zu\n", allocated_bytes);
+#endif
         struct arena_block *p = head;
         do {
             struct arena_block *tmp = p;
             p = p->next;
-            //dbgprint("  block %p(size = %zu)\n", tmp, tmp->offset);
+            // dbgprint("  block %p(size = %zu)\n", tmp, tmp->offset);
             free(tmp);
         } while (p);
     }
     ArenaAllocator() {
         head = cur = new_arena_block();
-        //dbgprint("Start ArenaAllocator\n");
+        // dbgprint("Start ArenaAllocator\n");
     }
 };
 
 } // end namespace xcc
 
 void *operator new(size_t Size, xcc::ArenaAllocator &Allocator) {
-  return Allocator.Allocate(Size, alignof(std::max_align_t));
+    return Allocator.Allocate(Size, alignof(std::max_align_t));
 }
 void *operator new[](size_t Size, xcc::ArenaAllocator &Allocator) {
-  return Allocator.Allocate(Size, alignof(std::max_align_t));
+    return Allocator.Allocate(Size, alignof(std::max_align_t));
 }
 
 namespace xcc {

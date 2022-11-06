@@ -66,6 +66,7 @@ stmts = {
 	"SLabel": ["label_t label", "IdentRef labelName"],
 	"SGoto": ["label_t location"],
 	"SCondJump": ["Expr test", "label_t T", "label_t F"],
+	"SSwitch": ["Expr itest", "xvector<SwitchCase> switchs", "xvector<GNUSwitchCase> gnu_switchs", "label_t sw_default", "Location sw_default_loc"],
 	"SDeclOnly": ["CType decl"],
 	"SReturn": ["Expr ret"],
 	"SExpr": ["Expr exprbody"],
