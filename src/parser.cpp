@@ -24,7 +24,7 @@ struct Parser : public DiagnosticHelper {
     Lexer l;
     struct Sema { // Semantics processor
         CType currentfunctionRet = nullptr, currentInitTy = nullptr, currentCase = nullptr;
-        IdentRef pfunc = nullptr; // current function name: `__func__`
+        IdentRef pfunc; // current function name: `__func__`
         FunctionAndBlockScope<Variable_Info, 50> typedefs;
         BlockScope<Type_info, 20> tags;
         SmallVector<Token, 5> tokens_cache;
@@ -47,11 +47,12 @@ struct Parser : public DiagnosticHelper {
     bool sreachable;
     Stmt unreachable_reason = nullptr;
     Expr intzero, intone, size_t_one, cfalse;
+    StringPool string_pool;
     Parser(SourceMgr &SM, xcc_context &context, IRGen &irgen)
         : DiagnosticHelper{context}, l(SM, *this, context), irgen{irgen},
           intzero{wrap(context.getInt(), ConstantInt::get(irgen.ctx, APInt::getZero(context.getInt()->getBitWidth())))},
           intone{wrap(context.getInt(), ConstantInt::get(irgen.ctx, APInt(context.getInt()->getBitWidth(), 1)))},
-          cfalse{wrap(context.typecache.b, ConstantInt::getFalse(irgen.ctx))} { }
+          cfalse{wrap(context.typecache.b, ConstantInt::getFalse(irgen.ctx))}, string_pool{irgen} { }
     template <typename T> auto getsizeof(T a) { return irgen.getsizeof(a); }
     template <typename T> auto getAlignof(T a) { return irgen.getAlignof(a); }
     Expr binop(Expr a, BinOp op, Expr b, CType ty) {
@@ -558,7 +559,7 @@ struct Parser : public DiagnosticHelper {
         case EPostFix:
         case EArray:
         case EStruct:
-        case EString:
+        case EConstantArray:
         case EMemberAccess:
         case EVar:
         case EConstant:
@@ -586,11 +587,18 @@ struct Parser : public DiagnosticHelper {
             return ptrPart;
         }
         make_ptr_arith(ptrPart);
-        if (ptrPart->k == EConstant && intPart->k == EConstant)
-            return wrap(ptrPart->ty,
+        if (ptrPart->k == EConstant) {
+            if (ptrPart->k == EConstant) 
+                return wrap(ptrPart->ty,
                         llvm::ConstantExpr::getInBoundsGetElementPtr(irgen.wrap2(ptrPart->ty->p), ptrPart->C,
                                                                      makeArrayRef(intPart->C)),
                         lhs->loc);
+            else if (ptrPart->k == EConstantArray)
+                return wrap(ptrPart->ty,
+                        llvm::ConstantExpr::getInBoundsGetElementPtr(irgen.wrap2(ptrPart->ty->p), ptrPart->array,
+                                                                     makeArrayRef(intPart->C)),
+                        lhs->loc);
+        }
         return binop(ptrPart, SAddP, intPart, ptrPart->ty);
     }
     void make_add(Expr &result, Expr &r) {
@@ -2074,14 +2082,19 @@ NOT_CONSTANT:
             consume();
             if (!(e = expression()))
                 return nullptr;
-            if (e->k == EString)
-                return e->ty->tags &= ~TYLVALUE, e;
+            if (e->k == EConstantArray) {
+                assert(e->ty->k == TYPOINTER);
+                e->ty = context.getPointerType(
+                    context.getFixArrayType(e->ty->p, cast<llvm::ArrayType>(e->array->getValueType())->getNumElements())
+                );
+                return e;
+            }
             if (e->k == EArrToAddress)
-                return e->ty = context.getPointerType(e->voidexpr->ty), e;
+                return e->ty = context.getPointerType(e->arr3->ty), e;
             if (e->ty->k == TYBITFIELD)
-                return type_error(getLoc(), "cannot take address of bit-field"), getIntZero();
+                return type_error(getLoc(), "cannot take address of bit-field"), e;
             if (e->ty->tags & TYREGISTER)
-                return type_error(getLoc(), "take address of register variable"), getIntZero();
+                return type_error(getLoc(), "take address of register variable"), e;
             if (e->k == EUnary && e->uop == AddressOf && e->ty->p->k == TYFUNCTION)
                 return e->ty->tags &= ~TYLVALUE, e;
             if (!assignable(e))
@@ -2477,14 +2490,13 @@ NEXT:
             }
             switch (enc) {
             case 8:
-                result = ENEW(ArrToAddressExpr){
-                    .loc = loc,
-                    .ty = context.typecache.strty,
-                    .arr3 = ENEW(StringExpr){.ty = TNEW(ArrayType){.arrtype = context.typecache.i8,
-                                                                   .hassize = true,
-                                                                   .arrsize = (unsigned)s.size()},
-                                             .str = s,
-                                             .is_constant = true}};
+                result = ENEW(ConstantArrayExpr) { .loc = loc, .ty = context.typecache.str8ty, .array = string_pool.getAsUTF8(s)};
+                break;
+            case 16:
+                result = ENEW(ConstantArrayExpr) { .loc = loc, .ty = context.typecache.str16ty, .array = string_pool.getAsUTF16(s)};
+                break;
+            case 32:
+                result = ENEW(ConstantArrayExpr) { .loc = loc, .ty = context.typecache.str32ty, .array = string_pool.getAsUTF32(s)};
                 break;
             default:
                 llvm_unreachable("bad encoding");
@@ -2502,12 +2514,8 @@ NEXT:
             if (l.want_expr)
                 result = getIntZero();
             else if (l.tok.s->second.getToken() == PP__func__) {
-                CType ty = TNEW(ArrayType){
-                    .arrtype = context.typecache.i8, .hassize = true, .arrsize = (unsigned)sema.pfunc->getKeyLength()};
-                result = ENEW(ArrToAddressExpr){
-                    .loc = loc,
-                    .ty = context.typecache.strty,
-                    .arr3 = ENEW(StringExpr){.ty = ty, .str = xstring::get(sema.pfunc->getKey()), .is_constant = true}};
+                xstring s = xstring::get(sema.pfunc->getKey());
+                result = ENEW(ConstantArrayExpr) {.loc = loc, .ty = context.typecache.str8ty, .array = string_pool.getAsUTF8(s)};
             } else {
                 IdentRef sym = l.tok.s;
                 size_t idx;
@@ -2731,18 +2739,22 @@ CONTINUE:;
             case TLSquareBrackets: // array subscript
             {
                 Expr rhs;
-                if (result->ty->k != TYPOINTER)
-                    return type_error(getLoc(), "array subscript is not a pointer"), nullptr;
                 consume();
                 if (!(rhs = expression()))
-                    return nullptr;
+                    return result;
                 if (l.tok.tok != TRSquareBrackets)
-                    warning(getLoc(), "missing ']'");
+                    warning(getLoc(), "missing ']' after array subscript");
                 else
                     consume();
-                CType ty = result->ty->p;
-                ty->tags |= TYLVALUE;
-                result = ENEW(SubscriptExpr){.loc = result->loc, .ty = ty, .left = result, .right = rhs};
+                if (result->ty->k != TYPOINTER && rhs->ty->k != TYPOINTER) {
+                    type_error("subscripted value is not an array, pointer, or vector");
+                } else {
+                    Expr ptr = make_add_pointer(result, rhs);
+                    assert(ptr->ty->k == TYPOINTER);
+                    CType ty = context.clone(ptr->ty->p);
+                    ty->tags |= TYLVALUE;
+                    result = unary(ptr, Dereference, ty);
+                }
             } break;
             default:
                 return result;

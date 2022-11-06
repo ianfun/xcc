@@ -177,7 +177,7 @@ TokenV lexIdent() {
     TokenV theTok = TokenV(ATokenIdent, PPIdent);
     for(;;) {
         unsigned n = 8;
-        if (c == '\\'){
+        if (c == '\\') {
             eat();
             if (c == 'U'){
                 R:
@@ -194,16 +194,15 @@ TokenV lexIdent() {
             }
         }
         else {
-            if (!(isalnum(c) ||  c == '_' || (unsigned char)c & 128 || c == '$')){
-                // if (validate_utf8((const unsigned char*)t.l.tok->s.data(),  t.l.tok->s.size()) != UTF8_ACCEPT){
-                //     lex_error("invalid utf-8 identifier literal");
-                // }
+            if (!(isalnum(c) ||  c == '_' || (unsigned char)c & 128 || c == '$'))
                 break;
-            }
+            
             lexIdnetBuffer.push_back(c);
             eat();
         }
     }
+    if (!IsUTF8(lexIdnetBuffer.str()))
+        warning(loc, "identfier is not UTF-8 encoded");
     theTok.s = context.table.get(lexIdnetBuffer.str(), PPIdent);
     theTok.tok = std::min(theTok.tok, theTok.s->second.getToken());
     lexIdnetBuffer.clear();

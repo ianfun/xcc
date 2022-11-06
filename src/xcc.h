@@ -575,6 +575,7 @@ static unsigned intRank(uint32_t a){
 #include "TextDiagnosticPrinter.cpp"
 #include "codegen.cpp"
 #include "utf8.cpp"
+#include "StringPool.cpp"
 #include "lexer.h"
 #include "parser.cpp"
 #include "lexer.cpp"

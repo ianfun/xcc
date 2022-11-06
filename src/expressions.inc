@@ -3,6 +3,7 @@ enum ExprKind: uint8_t {
   EConstant,
   EBin,
   EUnary,
+  EConstantArray,
   EVoid,
   EVar,
   ECondition,
@@ -11,7 +12,6 @@ enum ExprKind: uint8_t {
   ESubscript,
   EArray,
   EStruct,
-  EString,
   EMemberAccess,
   EArrToAddress,
   EPostFix
@@ -22,7 +22,8 @@ OpaqueExpr()=delete;
 bool isSimple() const {
   switch (k) {
     case EVar:
-    case EString:
+    case EConstantArray:
+    case EConstant:
     case EStruct:
     case EArray:
       return true;
@@ -46,6 +47,9 @@ union {
     struct {
       Expr uoperand;
       enum UnaryOp uop;
+    };
+    struct {
+      llvm::GlobalVariable *array;
     };
     struct {
       Expr voidexpr;
@@ -72,10 +76,6 @@ union {
     };
     struct {
       xvector<Expr> arr2;
-    };
-    struct {
-      xstring str;
-      bool is_constant;
     };
     struct {
       Expr obj;
@@ -115,6 +115,14 @@ struct UnaryExpr {
   struct {
     Expr uoperand;
     enum UnaryOp uop;
+  };
+};
+struct ConstantArrayExpr {
+  enum ExprKind k=EConstantArray;
+  Location loc;
+  CType ty;
+  struct {
+    llvm::GlobalVariable *array;
   };
 };
 struct VoidExpr {
@@ -183,15 +191,6 @@ struct StructExpr {
     xvector<Expr> arr2;
   };
 };
-struct StringExpr {
-  enum ExprKind k=EString;
-  Location loc;
-  CType ty;
-  struct {
-    xstring str;
-    bool is_constant;
-  };
-};
 struct MemberAccessExpr {
   enum ExprKind k=EMemberAccess;
   Location loc;
@@ -222,6 +221,7 @@ static uint8_t expr_size_map[] = {
     sizeof(ConstantExpr),
     sizeof(BinExpr),
     sizeof(UnaryExpr),
+    sizeof(ConstantArrayExpr),
     sizeof(VoidExpr),
     sizeof(VarExpr),
     sizeof(ConditionExpr),
@@ -230,9 +230,8 @@ static uint8_t expr_size_map[] = {
     sizeof(SubscriptExpr),
     sizeof(ArrayExpr),
     sizeof(StructExpr),
-    sizeof(StringExpr),
     sizeof(MemberAccessExpr),
     sizeof(ArrToAddressExpr),
     sizeof(PostFixExpr)
 };
-static constexpr size_t expr_max_size = std::max({sizeof(ConstantExpr), sizeof(BinExpr), sizeof(UnaryExpr), sizeof(VoidExpr), sizeof(VarExpr), sizeof(ConditionExpr), sizeof(CastExpr), sizeof(CallExpr), sizeof(SubscriptExpr), sizeof(ArrayExpr), sizeof(StructExpr), sizeof(StringExpr), sizeof(MemberAccessExpr), sizeof(ArrToAddressExpr), sizeof(PostFixExpr)});
+static constexpr size_t expr_max_size = std::max({sizeof(ConstantExpr), sizeof(BinExpr), sizeof(UnaryExpr), sizeof(ConstantArrayExpr), sizeof(VoidExpr), sizeof(VarExpr), sizeof(ConditionExpr), sizeof(CastExpr), sizeof(CallExpr), sizeof(SubscriptExpr), sizeof(ArrayExpr), sizeof(StructExpr), sizeof(MemberAccessExpr), sizeof(ArrToAddressExpr), sizeof(PostFixExpr)});

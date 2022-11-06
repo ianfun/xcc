@@ -61,6 +61,7 @@ struct IRGen : public DiagnosticHelper {
         i32_0 = llvm::ConstantInt::get(i32, 0);
         i1_0 = llvm::ConstantInt::getFalse(ctx);
         i1_1 = llvm::ConstantInt::getTrue(ctx);
+        addModule("main");
     }
 
     llvm::Module *module = nullptr;
@@ -283,7 +284,6 @@ struct IRGen : public DiagnosticHelper {
         tags = new Type[num_tags]();      // not initialized!
         if (options.g)
             dtags = new DIType[num_tags](); // not initialized!
-        addModule("main");
         enterScope();
         for (Stmt ptr = s->next; ptr; ptr = ptr->next)
             gen(ptr);
@@ -732,23 +732,9 @@ struct IRGen : public DiagnosticHelper {
         return GV;
     }
     Value subscript(Expr e, Type &ty) {
-        Value v;
         ty = wrap(e->left->ty->p);
-        if (e->left->k == EArrToAddress) {
-            if (e->left->voidexpr->ty->k == TYARRAY) {
-                v = getAddress(e->left->voidexpr);
-            } else {
-                Type ty;
-                auto str = CreateGlobalString(e->left->str.str(), ty);
-                ArrayRef<Value> indices = {i32_0, gen(e->right)};
-                return B.CreateInBoundsGEP(ty, str, indices);
-            }
-        } else {
-            v = gen(e->left);
-        }
+        Value v = gen(e->left);
         Value r = gen(e->right);
-        if (e->left->k == EArrToAddress && e->left->voidexpr->ty->k == TYARRAY)
-            return B.CreateInBoundsGEP(wrap(e->left->voidexpr->ty), v, {i32_0, r});
         return B.CreateInBoundsGEP(ty, v, {r});
     }
     Value getAddress(Expr e) {
@@ -776,8 +762,8 @@ struct IRGen : public DiagnosticHelper {
         }
         case EArrToAddress:
             return getAddress(e->voidexpr);
-        case EString:
-            return B.CreateGlobalStringPtr(e->str.str(), "", 0, module);
+        case EConstantArray:
+            return e->array;
         case EArray:
         case EStruct: {
             auto v = e->k == EArray ? getArray(e) : getStruct(e);
@@ -829,8 +815,8 @@ struct IRGen : public DiagnosticHelper {
             //   base = load(base, wrap(e->obj->ty), e->obj->ty->align);
             return B.CreateExtractValue(base, e->idx);
         }
-        case EString:
-            return B.CreateGlobalStringPtr(e->str.str(), "", 0, module);
+        case EConstantArray:
+            return e->array;
         case EBin: {
             if (e->bop == LogicalAnd)
                 return gen_logical(e->lhs, e->rhs, true);

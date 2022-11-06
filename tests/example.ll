@@ -3,29 +3,6 @@ source_filename = "main"
 target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128"
 target triple = "x86_64-pc-linux-gnu"
 
-@debug = common dso_local global i64 0
-@assembly = common dso_local global i64 0
-@token = common dso_local global i64 0
-@text = common dso_local global ptr null
-@stack = common dso_local global ptr null
-@old_text = common dso_local global ptr null
-@data = common dso_local global ptr null
-@idmain = common dso_local global ptr null
-@src = common dso_local global ptr null
-@old_src = common dso_local global ptr null
-@poolsize = common dso_local global i64 0
-@pc = common dso_local global ptr null
-@bp = common dso_local global ptr null
-@sp = common dso_local global ptr null
-@ax = common dso_local global i64 0
-@cycle = common dso_local global i64 0
-@current_id = common dso_local global ptr null
-@symbols = common dso_local global ptr null
-@line = common dso_local global i64 0
-@token_val = common dso_local global i64 0
-@basetype = common dso_local global i64 0
-@expr_type = common dso_local global i64 0
-@index_of_bp = common dso_local global i64 0
 @0 = private unnamed_addr constant [9 x i8] c"%d: %.*s\00", align 1
 @1 = private unnamed_addr constant [6 x i8] c"%8.4s\00", align 1
 @2 = private unnamed_addr constant [190 x i8] c"LEA ,IMM ,JMP ,CALL,JZ  ,JNZ ,ENT ,ADJ ,LEV ,LI  ,LC  ,SI  ,SC  ,PUSH,OR  ,XOR ,AND ,EQ  ,NE  ,LT  ,GT  ,LE  ,GE  ,SHL ,SHR ,ADD ,SUB ,MUL ,DIV ,MOD ,OPEN,READ,CLOS,PRTF,MALC,MSET,MCMP,EXIT\00", align 1
@@ -53,21 +30,41 @@ target triple = "x86_64-pc-linux-gnu"
 @24 = private unnamed_addr constant [28 x i8] c"%d: bad global declaration\0A\00", align 1
 @25 = private unnamed_addr constant [34 x i8] c"%d: duplicate global declaration\0A\00", align 1
 @26 = private unnamed_addr constant [9 x i8] c"%d> %.4s\00", align 1
-@27 = private unnamed_addr constant [190 x i8] c"LEA ,IMM ,JMP ,CALL,JZ  ,JNZ ,ENT ,ADJ ,LEV ,LI  ,LC  ,SI  ,SC  ,PUSH,OR  ,XOR ,AND ,EQ  ,NE  ,LT  ,GT  ,LE  ,GE  ,SHL ,SHR ,ADD ,SUB ,MUL ,DIV ,MOD ,OPEN,READ,CLOS,PRTF,MALC,MSET,MCMP,EXIT\00", align 1
-@28 = private unnamed_addr constant [5 x i8] c" %d\0A\00", align 1
-@29 = private unnamed_addr constant [2 x i8] c"\0A\00", align 1
-@30 = private unnamed_addr constant [9 x i8] c"exit(%d)\00", align 1
-@31 = private unnamed_addr constant [24 x i8] c"unknown instruction:%d\0A\00", align 1
-@32 = private unnamed_addr constant [30 x i8] c"usage: xc [-s] [-d] file ...\0A\00", align 1
-@33 = private unnamed_addr constant [20 x i8] c"could not open(%s)\0A\00", align 1
-@34 = private unnamed_addr constant [36 x i8] c"could not malloc(%d) for text area\0A\00", align 1
-@35 = private unnamed_addr constant [36 x i8] c"could not malloc(%d) for data area\0A\00", align 1
-@36 = private unnamed_addr constant [37 x i8] c"could not malloc(%d) for stack area\0A\00", align 1
-@37 = private unnamed_addr constant [39 x i8] c"could not malloc(%d) for symbol table\0A\00", align 1
-@38 = private unnamed_addr constant [101 x i8] c"char else enum if int return sizeof while open read close printf malloc memset memcmp exit void main\00", align 1
-@39 = private unnamed_addr constant [38 x i8] c"could not malloc(%d) for source area\0A\00", align 1
-@40 = private unnamed_addr constant [20 x i8] c"read() returned %d\0A\00", align 1
-@41 = private unnamed_addr constant [20 x i8] c"main() not defined\0A\00", align 1
+@27 = private unnamed_addr constant [9 x i8] c"exit(%d)\00", align 1
+@28 = private unnamed_addr constant [24 x i8] c"unknown instruction:%d\0A\00", align 1
+@29 = private unnamed_addr constant [30 x i8] c"usage: xc [-s] [-d] file ...\0A\00", align 1
+@30 = private unnamed_addr constant [20 x i8] c"could not open(%s)\0A\00", align 1
+@31 = private unnamed_addr constant [36 x i8] c"could not malloc(%d) for text area\0A\00", align 1
+@32 = private unnamed_addr constant [36 x i8] c"could not malloc(%d) for data area\0A\00", align 1
+@33 = private unnamed_addr constant [37 x i8] c"could not malloc(%d) for stack area\0A\00", align 1
+@34 = private unnamed_addr constant [39 x i8] c"could not malloc(%d) for symbol table\0A\00", align 1
+@35 = private unnamed_addr constant [101 x i8] c"char else enum if int return sizeof while open read close printf malloc memset memcmp exit void main\00", align 1
+@36 = private unnamed_addr constant [38 x i8] c"could not malloc(%d) for source area\0A\00", align 1
+@37 = private unnamed_addr constant [20 x i8] c"read() returned %d\0A\00", align 1
+@38 = private unnamed_addr constant [20 x i8] c"main() not defined\0A\00", align 1
+@debug = common dso_local global i64 0
+@assembly = common dso_local global i64 0
+@token = common dso_local global i64 0
+@text = common dso_local global ptr null
+@stack = common dso_local global ptr null
+@old_text = common dso_local global ptr null
+@data = common dso_local global ptr null
+@idmain = common dso_local global ptr null
+@src = common dso_local global ptr null
+@old_src = common dso_local global ptr null
+@poolsize = common dso_local global i64 0
+@pc = common dso_local global ptr null
+@bp = common dso_local global ptr null
+@sp = common dso_local global ptr null
+@ax = common dso_local global i64 0
+@cycle = common dso_local global i64 0
+@current_id = common dso_local global ptr null
+@symbols = common dso_local global ptr null
+@line = common dso_local global i64 0
+@token_val = common dso_local global i64 0
+@basetype = common dso_local global i64 0
+@expr_type = common dso_local global i64 0
+@index_of_bp = common dso_local global i64 0
 
 ; Function Attrs: nounwind optsize
 declare dso_local i32 @open(ptr, i32, ...) #0
@@ -139,7 +136,7 @@ define dso_local void @next(...) #0 {
   store ptr %25, ptr @old_text, align 8
   %26 = load i64, ptr %25, align 8
   %27 = mul nsw i64 %26, 5
-  %28 = getelementptr inbounds [189 x i8], ptr @2, i32 0, i64 %27
+  %28 = getelementptr inbounds i8, ptr @2, i64 %27
   %29 = call i32 (ptr, ...) @printf(ptr @1, ptr %28)
   %30 = load ptr, ptr @old_text, align 8
   %31 = load i64, ptr %30, align 8
@@ -3923,7 +3920,7 @@ define dso_local i64 @eval(...) #0 {
   %12 = load i64, ptr @cycle, align 8
   %13 = load i64, ptr %1, align 8
   %14 = mul nsw i64 %13, 5
-  %15 = getelementptr inbounds [189 x i8], ptr @27, i32 0, i64 %14
+  %15 = getelementptr inbounds i8, ptr @2, i64 %14
   %16 = call i32 (ptr, ...) @printf(ptr @26, i64 %12, ptr %15)
   %17 = load i64, ptr %1, align 8
   %18 = icmp sle i64 %17, 7
@@ -3934,11 +3931,11 @@ define dso_local i64 @eval(...) #0 {
 21:                                               ; preds = %11
   %22 = load ptr, ptr @pc, align 8
   %23 = load i64, ptr %22, align 8
-  %24 = call i32 (ptr, ...) @printf(ptr @28, i64 %23)
+  %24 = call i32 (ptr, ...) @printf(ptr @3, i64 %23)
   br label %27
 
 25:                                               ; preds = %11
-  %26 = call i32 (ptr, ...) @printf(ptr @29)
+  %26 = call i32 (ptr, ...) @printf(ptr @4)
   br label %27
 
 27:                                               ; preds = %25, %21
@@ -4510,7 +4507,7 @@ define dso_local i64 @eval(...) #0 {
 394:                                              ; preds = %389
   %395 = load ptr, ptr @sp, align 8
   %396 = load i64, ptr %395, align 8
-  %397 = call i32 (ptr, ...) @printf(ptr @30, i64 %396)
+  %397 = call i32 (ptr, ...) @printf(ptr @27, i64 %396)
   %398 = load ptr, ptr @sp, align 8
   %399 = load i64, ptr %398, align 8
   ret i64 %399
@@ -4675,7 +4672,7 @@ define dso_local i64 @eval(...) #0 {
 
 522:                                              ; preds = %504
   %523 = load i64, ptr %1, align 8
-  %524 = call i32 (ptr, ...) @printf(ptr @31, i64 %523)
+  %524 = call i32 (ptr, ...) @printf(ptr @28, i64 %523)
   ret i64 -1
 
 525:                                              ; preds = %509
@@ -4907,7 +4904,7 @@ define dso_local i32 @main(i32 %0, ptr %1) #0 {
   br i1 %71, label %72, label %74
 
 72:                                               ; preds = %67
-  %73 = call i32 (ptr, ...) @printf(ptr @32)
+  %73 = call i32 (ptr, ...) @printf(ptr @29)
   ret i32 -1
 
 74:                                               ; preds = %67
@@ -4924,7 +4921,7 @@ define dso_local i32 @main(i32 %0, ptr %1) #0 {
 82:                                               ; preds = %74
   %83 = load ptr, ptr %4, align 8
   %84 = load ptr, ptr %83, align 8
-  %85 = call i32 (ptr, ...) @printf(ptr @33, ptr %84)
+  %85 = call i32 (ptr, ...) @printf(ptr @30, ptr %84)
   ret i32 -1
 
 86:                                               ; preds = %74
@@ -4940,7 +4937,7 @@ define dso_local i32 @main(i32 %0, ptr %1) #0 {
 
 92:                                               ; preds = %86
   %93 = load i64, ptr @poolsize, align 8
-  %94 = call i32 (ptr, ...) @printf(ptr @34, i64 %93)
+  %94 = call i32 (ptr, ...) @printf(ptr @31, i64 %93)
   ret i32 -1
 
 95:                                               ; preds = %86
@@ -4954,7 +4951,7 @@ define dso_local i32 @main(i32 %0, ptr %1) #0 {
 
 101:                                              ; preds = %95
   %102 = load i64, ptr @poolsize, align 8
-  %103 = call i32 (ptr, ...) @printf(ptr @35, i64 %102)
+  %103 = call i32 (ptr, ...) @printf(ptr @32, i64 %102)
   ret i32 -1
 
 104:                                              ; preds = %95
@@ -4968,7 +4965,7 @@ define dso_local i32 @main(i32 %0, ptr %1) #0 {
 
 110:                                              ; preds = %104
   %111 = load i64, ptr @poolsize, align 8
-  %112 = call i32 (ptr, ...) @printf(ptr @36, i64 %111)
+  %112 = call i32 (ptr, ...) @printf(ptr @33, i64 %111)
   ret i32 -1
 
 113:                                              ; preds = %104
@@ -4982,7 +4979,7 @@ define dso_local i32 @main(i32 %0, ptr %1) #0 {
 
 119:                                              ; preds = %113
   %120 = load i64, ptr @poolsize, align 8
-  %121 = call i32 (ptr, ...) @printf(ptr @37, i64 %120)
+  %121 = call i32 (ptr, ...) @printf(ptr @34, i64 %120)
   ret i32 -1
 
 122:                                              ; preds = %113
@@ -5000,7 +4997,7 @@ define dso_local i32 @main(i32 %0, ptr %1) #0 {
   %134 = call ptr @memset(ptr %132, i32 0, i64 %133)
   %135 = load ptr, ptr @text, align 8
   store ptr %135, ptr @old_text, align 8
-  store ptr @38, ptr @src, align 8
+  store ptr @35, ptr @src, align 8
   store i64 134, ptr %5, align 8
   br label %141
 
@@ -5067,7 +5064,7 @@ define dso_local i32 @main(i32 %0, ptr %1) #0 {
 
 170:                                              ; preds = %161
   %171 = load i64, ptr @poolsize, align 8
-  %172 = call i32 (ptr, ...) @printf(ptr @39, i64 %171)
+  %172 = call i32 (ptr, ...) @printf(ptr @36, i64 %171)
   ret i32 -1
 
 173:                                              ; preds = %161
@@ -5085,7 +5082,7 @@ define dso_local i32 @main(i32 %0, ptr %1) #0 {
 
 183:                                              ; preds = %173
   %184 = load i64, ptr %5, align 8
-  %185 = call i32 (ptr, ...) @printf(ptr @40, i64 %184)
+  %185 = call i32 (ptr, ...) @printf(ptr @37, i64 %184)
   ret i32 -1
 
 186:                                              ; preds = %173
@@ -5108,7 +5105,7 @@ define dso_local i32 @main(i32 %0, ptr %1) #0 {
   br i1 %199, label %200, label %202
 
 200:                                              ; preds = %186
-  %201 = call i32 (ptr, ...) @printf(ptr @41)
+  %201 = call i32 (ptr, ...) @printf(ptr @38)
   ret i32 -1
 
 202:                                              ; preds = %186

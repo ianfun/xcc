@@ -86,8 +86,7 @@ exprs = {
 	"EConstant": ["llvm::Constant* C"],
 	"EBin": ["Expr lhs", "enum BinOp bop", "Expr rhs"],
 	"EUnary": ["Expr uoperand", "enum UnaryOp uop"],
-#	"EIntLit": ["APInt ival"],
-#	"EFloatLit": ["APFloat fval"],
+	"EConstantArray": ["llvm::GlobalVariable *array"],
 	"EVoid": ["Expr voidexpr"],
 	"EVar": ["size_t sval"],
 	"ECondition": ["Expr cond, cleft, cright"],
@@ -96,7 +95,6 @@ exprs = {
 	"ESubscript": ["Expr left, right"],
 	"EArray": ["xvector<Expr> arr"],
 	"EStruct": ["xvector<Expr> arr2"],
-	"EString": ["xstring str", "bool is_constant"],
 	"EMemberAccess": ["Expr obj", "uint32_t idx"],
 	"EArrToAddress": ["Expr arr3"],
 	"EPostFix": ["enum PostFixOp pop", "Expr poperand"]
@@ -379,7 +377,8 @@ OpaqueExpr()=delete;
 bool isSimple() const {
   switch (k) {
     case EVar:
-    case EString:
+    case EConstantArray:
+    case EConstant:
     case EStruct:
     case EArray:
       return true;

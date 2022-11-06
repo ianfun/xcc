@@ -2,6 +2,9 @@ raw_ostream &operator<<(llvm::raw_ostream &, const CType);
 
 raw_ostream &operator<<(llvm::raw_ostream &OS, const Expr e) {
     switch (e->k) {
+        case EConstantArray:
+            e->array->print(OS);
+            return OS;
         case EConstant:
             if (auto CI = dyn_cast<ConstantInt>(e->C))
                 CI->getValue().print(OS, e->ty->isSigned());
@@ -41,8 +44,6 @@ raw_ostream &operator<<(llvm::raw_ostream &OS, const Expr e) {
             for (const auto e: e->arr2)
                 OS << e << ',';
             return OS << '}';
-        case EString:
-            return OS.write_escaped(e->str.str());
         case EMemberAccess:
             return OS << e->obj << '.' << e->ty->selems[e->idx].name;
         case EArrToAddress:

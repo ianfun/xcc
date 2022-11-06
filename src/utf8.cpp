@@ -32,57 +32,13 @@ decode(uint32_t* state, uint32_t* codep, uint32_t byte) {
   *state = utf8d[256 + *state*16 + type];
   return *state;
 }
-/*
-static bool
-IsUTF8(const unsigned char *s) {
-  uint32_t codepoint, state = 0;
 
-  while (*s)
-    decode(&state, &codepoint, *s++);
-
-  return state == UTF8_ACCEPT;
-}
 static bool 
-IsUTF8(const unsigned char *s, size_t len) {
+IsUTF8(StringRef str) {
   uint32_t codepoint, state = 0;
 
-  for (size_t i = 0;i < len;i++)
-    decode(&state, &codepoint, s[i]);
+  for (size_t i = 0;i < str.size();i++)
+    decode(&state, &codepoint, (uint64_t)(unsigned char)str[i]);
 
   return state == UTF8_ACCEPT;
 }
-static Expr writeUTF8toUTF32(const unsigned char *utf8, size_t len){
-    uint32_t codepoint, state;
-    Location loc = getLoc();
-    Expr res = ENEW(ArrayExpr) {.ty=getSizedArrayType(tycache.u32), .loc=loc};
-
-    for (state = 0;*utf8;utf8++)
-        if (!decode(&state, &codepoint, *s));
-            res.add(ENEW(IntLitExpr) {.ival=codepoint, .ty=tycache.u32});
-
-    return res;
-}
-static Expr writeUTF8toUTF32(string &s){
-    return ArrToAddressExpr {.ty = tycache.utf32ty, .arr3 = writeUTF8toUTF32((const unsigned char*)s.data(), s.size()) , .loc = loc};
-}
-static Expr writeUTF8toUTF16(const unsigned char* restrict utf8, size_t len){
-    uint32_t codepoint, state;
-    Expr res = ENEW(ArrayExpr) {.ty=getSizedArrayType(tycache.u16), .loc=getLoc()};
-
-    // Assume that the input utf-8 is well encoded
-    for(state = 0;*utf8;++utf8){
-        if (decode(&state, &codepoint, *s))
-            continue;
-        if (codepoint <= 0xFFFF){
-            res->arr.add(ENEW(IntLitExpr) {.ival=codepoint, .ty=tycache.u16});
-            continue;
-        }
-        res->arr.add(ENEW(IntLitExpr) {.ival=0xD7C0 + (codepoint >> 10), .ty=tycache.u16});
-        res->arr.add(ENEW(IntLitExpr) {.ival=0xDC00 + (codepoint & 0x3FF), .ty=tycache.u16});
-    }
-    return res;
-}
-static Expr writeUTF8toUTF16(string &s){
-    return ArrToAddressExpr {.ty = tycache.utf16ty, .arr3 = writeUTF8toUTF16((const unsigned char*)s.data(), s.size()) , .loc = loc};
-}
-*/

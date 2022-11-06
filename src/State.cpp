@@ -23,7 +23,13 @@ struct xcc_context {
       .ffloatty=make(TYFLOAT),
       .fdoublety=make(TYDOUBLE),
       .f128ty=make(TYF128),
-      .strty=getPointerType(make(TYINT8)) 
+      .str8ty=getPointerType(make(TYINT8)),
+#if CC_WCHAR32
+      .str16ty=getPointerType(make(TYINT32)),
+#else
+      .str16ty=getPointerType(make(TYINT16)),
+#endif
+      .str32ty=getPointerType(make(TYINT32))
     }
     {}
     IdentifierTable table; // contains allocator!
@@ -37,13 +43,16 @@ struct xcc_context {
         CType 
             b, v, i8, u8, i16, u16, i32, u32, i64, u64, i128, u128,
             ffloatty, fdoublety, f128ty,
-            strty;
+            str8ty, str16ty, str32ty;
     } typecache;
     CType make(uint32_t tag) {
-        return reinterpret_cast<CType>((TNEW(PrimType) {.align = 0, .tags = tag}));
+        return TNEW(PrimType) { .align = 0, .tags = tag};
     }
     CType getPointerType(CType base) {
-        return reinterpret_cast<CType>((TNEW(PointerType) {.align = 0, .p = base}));
+        return TNEW(PointerType) {.align = 0, .tags = 0, .p = base};
+    }
+    CType getFixArrayType(CType elementType, unsigned size) {
+        return TNEW(ArrayType) {.align = 0, .tags = 0, .arrtype = elementType, .hassize = true, .arrsize = size};
     }
     CType getConstInt() {
         return constint;
