@@ -1,5 +1,5 @@
 int main() {
-    printf("Hello xcc Compiler!\n");
+    printf("Hello XCC Compiler!\n");
     return 0;
 }
 
