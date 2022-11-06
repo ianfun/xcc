@@ -210,7 +210,13 @@ struct DiagnosticConsumer  {
     unsigned getNumWarnings() const { return NumWarnings; }
     void clear() { NumWarnings = NumErrors = 0; }
     typedef void (*PHandleDiagnosticTy)(void *self, enum DiagnosticLevel level, const Diagnostic &Info);
+    typedef void (*PFinalizeTy)(void *self);
     PHandleDiagnosticTy PHandleDiagnostic;
+    PFinalizeTy PFinalize;
+    void finalize() {
+        if (PFinalize)
+            PFinalize(this);
+    }
     void HandleDiagnostic(enum DiagnosticLevel level, const Diagnostic &Info) {
         if (level == Warning)
             ++NumWarnings;
@@ -218,7 +224,7 @@ struct DiagnosticConsumer  {
             ++NumErrors;
         PHandleDiagnostic(this, level, Info);
     }
-    DiagnosticConsumer(PHandleDiagnosticTy impl): PHandleDiagnostic{impl} {};
+    DiagnosticConsumer(PHandleDiagnosticTy impl, PFinalizeTy f = nullptr): PHandleDiagnostic{impl}, PFinalize{f} {};
     void emitDiagnostic(const char *msg, enum DiagnosticLevel level) {
         Diagnostic Diag(msg);
         HandleDiagnostic(level, Diag);
@@ -254,10 +260,24 @@ struct TextDiagnosticPrinter: public DiagnosticConsumer {
     llvm::raw_ostream &OS = llvm::errs();
     bool ShowColors;
     struct SourceMgr &SM;
-    TextDiagnosticPrinter(SourceMgr &SM): DiagnosticConsumer{&HandleDiagnosticImpl}, ShowColors{OS.has_colors()}, SM{SM} {}
+    TextDiagnosticPrinter(SourceMgr &SM): DiagnosticConsumer{&HandleDiagnosticImpl, &finalizeImpl}, ShowColors{OS.has_colors()}, SM{SM} {}
     void realHandleDiagnostic(enum DiagnosticLevel level, const Diagnostic &Info);
     static void HandleDiagnosticImpl(void *self, enum DiagnosticLevel level, const Diagnostic &Info) {
-        reinterpret_cast<TextDiagnosticPrinter*>(self)->realHandleDiagnostic(level, Info);
+        return reinterpret_cast<TextDiagnosticPrinter*>(self)->realHandleDiagnostic(level, Info);
+    }
+    static void finalizeImpl(void *self) {
+        return reinterpret_cast<TextDiagnosticPrinter*>(self)->realfinalize();
+    }
+    void realfinalize() {
+        if (NumWarnings)
+          OS << NumWarnings << (NumWarnings == 1 ? " warning" : " warnings");
+        if (NumWarnings && NumErrors)
+          OS << " and ";
+        if (NumErrors)
+          OS << NumErrors << (NumErrors == 1 ? " error" : " errors");
+        if (NumWarnings || NumErrors) {
+          OS << " generated.\n";
+        }
     }
     void printSource(Location loc);
 };

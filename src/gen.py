@@ -87,6 +87,7 @@ exprs = {
 	"EBin": ["Expr lhs", "enum BinOp bop", "Expr rhs"],
 	"EUnary": ["Expr uoperand", "enum UnaryOp uop"],
 	"EConstantArray": ["llvm::GlobalVariable *array"],
+	"EConstantArraySubstript": ["llvm::GlobalVariable *carray", "APInt cidx"],
 	"EVoid": ["Expr voidexpr"],
 	"EVar": ["size_t sval"],
 	"ECondition": ["Expr cond, cleft, cright"],

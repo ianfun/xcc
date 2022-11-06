@@ -2,6 +2,7 @@
 
     size_t num_typedefs, num_tags;
     auto ast = parser.run(num_typedefs, num_tags);
+    thePrinter->finalize();
 
     if (ctx.printer->NumErrors)
         return 1;

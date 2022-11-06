@@ -43,7 +43,7 @@ struct IRGen : public DiagnosticHelper {
         }
         layout = new llvm::DataLayout(machine->createDataLayout());
         types[xvoid] = llvm::Type::getVoidTy(ctx);
-        ;
+
         types[xptr] = llvm::PointerType::get(ctx, 0);
         types[x1] = llvm::Type::getInt1Ty(ctx);
         types[x8] = llvm::Type::getInt8Ty(ctx);
@@ -55,6 +55,8 @@ struct IRGen : public DiagnosticHelper {
         types[xfloat] = llvm::Type::getFloatTy(ctx);
         types[xdouble] = llvm::Type::getDoubleTy(ctx);
         types[xfp128] = llvm::Type::getFP128Ty(ctx);
+        intptrTy = layout->getIntPtrType(ctx);
+        pointerSizeInBits = intptrTy->getBitWidth();
 
         i32_n1 = llvm::ConstantInt::get(i32, -1);
         i32_1 = llvm::ConstantInt::get(i32, 1);
@@ -79,6 +81,8 @@ struct IRGen : public DiagnosticHelper {
     llvm::Function *currentfunction = nullptr;
     // `i32 1/0/-1` constant
     llvm::ConstantInt *i32_1, *i32_0, *i32_n1;
+    llvm::IntegerType *intptrTy;
+    unsigned pointerSizeInBits;
     // LLVM false/true constant
     llvm::ConstantInt *i1_0, *i1_1;
     unsigned lastFileID = -1;
@@ -195,7 +199,6 @@ struct IRGen : public DiagnosticHelper {
         if (options.g)
             B.SetCurrentDebugLocation(wrap(e->loc));
     }
-    llvm::IntegerType *getIntPtr() { return layout->getIntPtrType(ctx); }
     llvm::Function *addFunction(llvm::FunctionType *ty, const Twine &N) {
         return llvm::Function::Create(ty, ExternalLinkage, N, module);
     }
@@ -264,7 +267,7 @@ struct IRGen : public DiagnosticHelper {
             ditypes[doublety] =
                 di->createBasicType("double", getSizeInBits(types[xdouble]), llvm::dwarf::DW_ATE_decimal_float);
             ditypes[ptrty] =
-                di->createPointerType(nullptr, layout->getPointerTypeSizeInBits(types[xptr]), 0, llvm::None, "void*");
+                di->createPointerType(nullptr, pointerSizeInBits, 0, llvm::None, "void*");
             module->addModuleFlag(llvm::Module::Warning, "Debug Info Version", llvm::DEBUG_METADATA_VERSION);
             module->addModuleFlag(llvm::Module::Warning, "Dwarf Version", llvm::dwarf::DWARF_VERSION);
         }
@@ -787,6 +790,8 @@ struct IRGen : public DiagnosticHelper {
         switch (e->k) {
         case EConstant:
             return e->C;
+        case EConstantArraySubstript:
+            return llvm::ConstantExpr::getInBoundsGetElementPtr(wrap(e->ty->p), e->carray, ConstantInt::get(ctx, e->cidx));
         case EPostFix: {
             auto p = getAddress(e->poperand);
             auto ty = wrap(e->ty);
@@ -871,7 +876,7 @@ BINOP_ATOMIC_RMW:
                 auto sub = B.CreateSub(lhs, rhs);
                 auto s = getsizeof(e->lhs->castval->ty->p);
                 if (s != 1) {
-                    auto c = llvm::ConstantInt::get(getIntPtr(), s);
+                    auto c = llvm::ConstantInt::get(intptrTy, s);
                     return B.CreateExactSDiv(sub, c);
                 }
                 return sub;
@@ -879,7 +884,7 @@ BINOP_ATOMIC_RMW:
             case SAddP:
                 // getelementptr treat operand as signed, so we need to prmote to intptr type
                 if (!e->rhs->ty->isSigned()) {
-                    lhs = B.CreateZExt(lhs, getIntPtr());
+                    lhs = B.CreateZExt(lhs, intptrTy);
                 }
                 return B.CreateInBoundsGEP(wrap(e->ty->p), lhs, {rhs});
             case EQ:

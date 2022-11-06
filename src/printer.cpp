@@ -2,6 +2,9 @@ raw_ostream &operator<<(llvm::raw_ostream &, const CType);
 
 raw_ostream &operator<<(llvm::raw_ostream &OS, const Expr e) {
     switch (e->k) {
+        case EConstantArraySubstript:
+            e->carray->getInitializer()->print(OS);
+            return OS;
         case EConstantArray:
             e->array->print(OS);
             return OS;
@@ -113,7 +116,7 @@ raw_ostream &operator<<(llvm::raw_ostream &OS, const CType ty) {
             auto str = get_storage_str(tags);
             if (str.size())
                 OS << str << ' ';
-            return OS << get_prim_str(ty->tags);
+            return OS << get_prim_str(tags);
         }
         case TYPOINTER:
         {
@@ -121,7 +124,7 @@ raw_ostream &operator<<(llvm::raw_ostream &OS, const CType ty) {
             bool isArrType = ty->p->k == TYARRAY;
             if (isArrType)
                 OS << '(';
-            OS << '*' << ty->p << ' ';
+            OS << ty->p << " *";
             if (!str.empty())
                 OS << str << ' ';
             if (isArrType)

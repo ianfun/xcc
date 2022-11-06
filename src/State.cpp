@@ -29,7 +29,7 @@ struct xcc_context {
 #else
       .str16ty=getPointerType(make(TYINT16)),
 #endif
-      .str32ty=getPointerType(make(TYINT32))
+      .str32ty=getPointerType(make(TYUINT32))
     }
     {}
     IdentifierTable table; // contains allocator!

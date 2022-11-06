@@ -21,6 +21,13 @@ struct Variable_Info {
     unsigned tags : 2;
 };
 struct Parser : public DiagnosticHelper {
+    enum Implict_Conversion_Kind {
+        Implict_Cast,
+        Implict_Assign, 
+        Implict_Init,
+        Implict_Return,
+        Implict_Call
+    };
     Lexer l;
     struct Sema { // Semantics processor
         CType currentfunctionRet = nullptr, currentInitTy = nullptr, currentCase = nullptr;
@@ -198,7 +205,6 @@ struct Parser : public DiagnosticHelper {
             if (isTopLevel() || (yt->tags & (TYEXTERN | TYSTATIC))) {
                 CType old = it->ty;
                 bool err = true;
-                constexpr auto q = TYATOMIC | TYCONST | TYRESTRICT | TYVOLATILE;
                 if ((yt->tags & TYSTATIC) && !(old->tags & TYSTATIC))
                     type_error(loc, "static declaration case %I follows non-static declaration", Name);
                 else if ((old->tags & TYSTATIC) && !(yt->tags & TYSTATIC))
@@ -207,7 +213,7 @@ struct Parser : public DiagnosticHelper {
                     type_error(loc, "thread-local declaration case %I follows non-thread-local declaration", Name);
                 else if ((old->tags & TYTHREAD_LOCAL) && !(yt->tags & TYTHREAD_LOCAL))
                     type_error(loc, "non-thread-local declaration case %I follows thread-local declaration", Name);
-                else if ((yt->tags & q) != (old->tags & q))
+                else if ((yt->tags & type_qualifiers) != (old->tags & type_qualifiers))
                     type_error(loc, "conflicting type qualifiers for %I", Name);
                 else if (!compatible(old, yt))
                     type_error(loc, "conflicting types for %I", Name);
@@ -295,7 +301,53 @@ struct Parser : public DiagnosticHelper {
             }
         }
     }
-    Expr castto(Expr e, CType to) {
+    enum Cast_Status {
+        Cast_Ok,
+        Cast_Imcompatible,
+        Cast_DiscardsQualifiers,
+        Cast_Sign
+    };
+    static enum Cast_Status 
+    canBeSavelyCastTo(CType p, CType expected) {
+        assert (p->k == expected->k);
+        switch(p->k) {
+            case TYPRIM:
+                if ((p->tags & ty_prim) == (expected->tags & ty_prim))
+                    return Cast_Ok;
+                if (getNoSignTypeIndex(p->tags) == getNoSignTypeIndex(expected->tags))
+                    return Cast_Sign;
+                return Cast_Imcompatible;
+            case TYFUNCTION:
+                if (canBeSavelyCastTo(p->ret, expected->ret) != Cast_Ok || p->params.size() != expected->params.size())
+                    return Cast_Imcompatible;
+                for (unsigned i=0;i < expected->params.size();++i)
+                    if (canBeSavelyCastTo(p->params[i].ty, expected->params[i].ty) != Cast_Ok)
+                        return Cast_Imcompatible;
+                return Cast_Ok;
+            case TYSTRUCT:
+            case TYENUM: 
+            case TYUNION:
+                return p == expected ? Cast_Ok : Cast_Imcompatible;
+            case TYPOINTER:
+                if ((p->p->tags & TYCONST) > (expected->p->tags & TYCONST))
+                    return Cast_DiscardsQualifiers;
+                if (p->p->tags & TYVOID || expected->p->tags & TYVOID)
+                    return Cast_Ok;
+                return canBeSavelyCastTo(p->p, expected->p);
+            case TYINCOMPLETE:
+                return (p->tag == expected->tag && p->name == expected->name) ? Cast_Ok : Cast_Imcompatible;
+            case TYBITFIELD:
+                llvm_unreachable("");
+            case TYARRAY:
+                if (p->hassize != expected->hassize)
+                    return Cast_Imcompatible;
+                if (p->hassize && (p->arrsize != expected->arrsize))
+                    return Cast_Imcompatible;
+                return canBeSavelyCastTo(p->arrtype, expected->arrtype);
+            }
+        llvm_unreachable("");
+    }
+    Expr castto(Expr e, CType to, enum Implict_Conversion_Kind implict = Implict_Cast) {
         Location loc = getLoc();
         if (type_equal(e->ty, to))
             return e;
@@ -337,6 +389,56 @@ struct Parser : public DiagnosticHelper {
         if ((e->ty->tags & (TYFLOAT | TYDOUBLE)) && to->k == TYPOINTER)
             return type_error(loc, "A floating type shall not be converted to any pointer type"), e;
         if (e->ty->k == TYPOINTER && to->k == TYPOINTER) {
+            if (implict != Implict_Cast) {
+                auto status = canBeSavelyCastTo(e->ty, to);
+                if (status == Cast_Ok)
+                    goto PTR_CAST;
+                {
+                    CType arg1 = e->ty;
+                    CType arg2 = to;
+                    const char *msg;
+                switch (implict) {
+                    case Implict_Cast:
+                        llvm_unreachable("");
+                    case Implict_Assign:
+                        std::swap(arg1, arg2);
+                        if (status == Cast_DiscardsQualifiers)
+                            msg = "assigning to %T from %T discards qualifiers";
+                        else if (status == Cast_Sign)
+                            msg = "assigning to %T from %T converts between pointers to integer types with different sign";
+                        else
+                            msg = "incompatible pointer types assigning to %T from %T";
+                        break;
+                    case Implict_Init:
+                        std::swap(arg1, arg2);
+                        if (status == Cast_DiscardsQualifiers)
+                            msg = "initializing %T with an expression of type %T' discards qualifiers";
+                        else if (status == Cast_Sign)
+                            msg = "initializing %T with an expression of type %T converts between pointers to integer types with different sign";
+                        else
+                            msg = "incompatible pointer types initializing %T with an expression of type '%T'";
+                        break;
+                    case Implict_Return:
+                        if (status == Cast_DiscardsQualifiers)
+                            msg = "returning %T from a function with result type %T discards qualifiers";
+                        else if (status == Cast_Sign)
+                            msg = "returning %T from a function with result type %T converts between pointers to integer types with different sign";
+                        else
+                            msg = "incompatible pointer types returning %T from a function with result type %T";
+                        break;
+                    case Implict_Call:
+                        if (status == Cast_DiscardsQualifiers)
+                            msg = "passing %T to parameter of type %T discards qualifiers";
+                        else if (status == Cast_Sign)
+                            msg = "passing %T to parameter of type %T converts between pointers to integer types with different sign";
+                        else
+                            msg = "incompatible pointer types passing %T to parameter of type %T";
+                        break;
+                }
+                    warning(e->loc, msg, arg1, arg2);
+                }
+            }
+PTR_CAST:
             Expr bitcast = context.clone(e); // make a pointer bitcast!
             bitcast->ty = to;
             return bitcast;
@@ -564,6 +666,7 @@ struct Parser : public DiagnosticHelper {
         case EVar:
         case EConstant:
         case EArrToAddress:
+        case EConstantArraySubstript:
             return e;
         }
         llvm_unreachable("bad expr kind");
@@ -587,17 +690,27 @@ struct Parser : public DiagnosticHelper {
             return ptrPart;
         }
         make_ptr_arith(ptrPart);
-        if (ptrPart->k == EConstant) {
-            if (ptrPart->k == EConstant) 
-                return wrap(ptrPart->ty,
-                        llvm::ConstantExpr::getInBoundsGetElementPtr(irgen.wrap2(ptrPart->ty->p), ptrPart->C,
-                                                                     makeArrayRef(intPart->C)),
-                        lhs->loc);
-            else if (ptrPart->k == EConstantArray)
-                return wrap(ptrPart->ty,
-                        llvm::ConstantExpr::getInBoundsGetElementPtr(irgen.wrap2(ptrPart->ty->p), ptrPart->array,
-                                                                     makeArrayRef(intPart->C)),
-                        lhs->loc);
+        if (intPart->k == EConstant) {
+            if (auto CI = dyn_cast<ConstantInt>(intPart->C)) {
+                APInt offset = intPart->ty->isSigned() ? 
+                    CI->getValue().sextOrTrunc(irgen.pointerSizeInBits) : 
+                    CI->getValue().zextOrTrunc(irgen.pointerSizeInBits);
+                if (ptrPart->k == EConstantArray)
+                    return ENEW(ConstantArraySubstriptExpr) 
+                    {
+                        .loc = ptrPart->loc, 
+                        .ty = ptrPart->ty, 
+                        .carray = ptrPart->array, 
+                        .cidx = offset
+                    };
+                if (ptrPart->k == EConstantArraySubstript) {
+                    bool overflow = false;
+                    auto result = ENEW(ConstantArraySubstriptExpr) {.loc = ptrPart->loc, .ty = ptrPart->ty, .carray = ptrPart->array, .cidx = offset.uadd_ov(ptrPart->cidx, overflow)};
+                    if (overflow)
+                        warning("overflow when doing addition on pointers, the result is %A", &result->cidx);
+                    return result;
+                }
+            }
         }
         return binop(ptrPart, SAddP, intPart, ptrPart->ty);
     }
@@ -619,6 +732,24 @@ struct Parser : public DiagnosticHelper {
         }
         checkSpec(result, r);
         if (result->k == EConstant && r->k == EConstant) {
+            if (auto CI = dyn_cast<ConstantInt>(result->C)) {
+                if (CI->isZero())
+                    return (void)(result = r);
+                if (auto CI2 = dyn_cast<ConstantInt>(r->C)) {
+                    if (CI2->isZero())
+                        return;
+                    bool overflow = false;
+                    result = wrap(result->ty, 
+                        ConstantInt::get(irgen.ctx, result->ty->isSigned() ?
+                         CI->getValue().sadd_ov(CI2->getValue(), overflow) :
+                         CI->getValue().uadd_ov(CI2->getValue(), overflow)
+                        )
+                    );
+                    if (overflow)
+                        warning("%s addition overflow, the result is %A", result->ty->isSigned() ? "signed" : "unsigned", &cast<ConstantInt>(result->C)->getValue());
+                    return;
+                }
+            }
             result = wrap(r->ty, llvm::ConstantExpr::getAdd(result->C, r->C, false, r->ty->isSigned()), r->loc);
             return;
         }
@@ -656,6 +787,24 @@ struct Parser : public DiagnosticHelper {
         }
         checkSpec(result, r);
         if (result->k == EConstant && r->k == EConstant) {
+            if (auto CI = dyn_cast<ConstantInt>(result->C)) {
+                if (CI->isZero())
+                    return (void)(result = r);
+                if (auto CI2 = dyn_cast<ConstantInt>(r->C)) {
+                    if (CI2->isZero())
+                        return;
+                    bool overflow = false;
+                    result = wrap(result->ty, 
+                        ConstantInt::get(irgen.ctx, result->ty->isSigned() ?
+                         CI->getValue().sadd_ov(CI2->getValue(), overflow) :
+                         CI->getValue().uadd_ov(CI2->getValue(), overflow)
+                        )
+                    );
+                    if (overflow)
+                        warning("%s addition overflow, the result is %A", result->ty->isSigned() ? "signed" : "unsigned", &cast<ConstantInt>(result->C)->getValue());
+                    return;
+                }
+            }
             result = wrap(r->ty, llvm::ConstantExpr::getSub(result->C, r->C, false, r->ty->isSigned()), r->loc);
             return;
         }
@@ -1376,7 +1525,7 @@ NOT_CONSTANT:
                 return type_error(getLoc(), "expect bracket initializer"), nullptr;
             if (!(e = assignment_expression()))
                 return nullptr;
-            return castto(e, sema.currentInitTy);
+            return castto(e, sema.currentInitTy, Implict_Init);
         }
         result = sema.currentInitTy->k == TYSTRUCT
                      ? ENEW(StructExpr){.ty = sema.currentInitTy, .arr2 = xvector<Expr>::get()}
@@ -1848,6 +1997,10 @@ NOT_CONSTANT:
         if (e->k == EVar) {
             Variable_Info &var_info = sema.typedefs.getSym(e->sval);
             var_info.tags |= ASSIGNED;
+            if (var_info.ty->tags & TYCONST) {
+                type_error(getLoc(), "cannot modify const-qualified variable %R: %T", sema.typedefs.getSymName(e->sval), var_info.ty);
+                return false;
+            }
             return true;
         }
         if (e->ty->k == TYPOINTER) {
@@ -1971,10 +2124,8 @@ NOT_CONSTANT:
                 result->vars.back().init = init;
                 if (init->k == EConstant && st.ty->tags & TYCONST)
                     var_info.val = init->C; // for const and constexpr, their value can be fold to constant
-                if (isTopLevel() && init->k != EConstant) {
-                    type_error(loc2, "initializer element is not constant");
-                    note("global variable requires constant initializer");
-                }
+                if (isTopLevel() && init->k != EConstant && init->k != EConstantArray && init->k != EConstantArraySubstript)
+                    type_error(loc2, "global initializer is not constant");
             } else {
                 if (st.ty->k == TYARRAY) {
                     if (st.ty->vla && isTopLevel())
@@ -2528,7 +2679,7 @@ NEXT:
                 it->tags |= USED;
                 CType ty = context.clone(it->ty);
                 // lvalue conversions
-                ty->tags &= ~(TYCONST | TYRESTRICT | TYVOLATILE | TYATOMIC | TYREGISTER | TYTHREAD_LOCAL | TYEXTERN |
+                ty->tags &= ~(type_qualifiers | TYREGISTER | TYTHREAD_LOCAL | TYEXTERN |
                               TYSTATIC | TYNORETURN | TYINLINE | TYPARAM);
                 ty->tags |= TYLVALUE;
                 bool want_lvalue =
@@ -2711,7 +2862,7 @@ CONTINUE:;
                         return type_error(getLoc(), "too few arguments to variable argument function"),
                                note("at lease %z arguments needed", (size_t)(params.size() + 1)), nullptr;
                     for (size_t j = 0; j < params.size(); ++j) {
-                        Expr e = castto(result->callargs[j], params[j].ty);
+                        Expr e = castto(result->callargs[j], params[j].ty, Implict_Call);
                         if (!e)
                             break;
                         result->callargs[j] = e;
@@ -2729,7 +2880,7 @@ CONTINUE:;
                                           (size_t)params.size(), (size_t)result->callargs.size()),
                                nullptr;
                     for (size_t j = 0; j < result->callargs.size(); ++j) {
-                        Expr e = castto(result->callargs[j], params[j].ty);
+                        Expr e = castto(result->callargs[j], params[j].ty, Implict_Call);
                         if (!e)
                             break;
                         result->callargs[j] = e;
@@ -2747,19 +2898,41 @@ CONTINUE:;
                 else
                     consume();
                 if (result->ty->k != TYPOINTER && rhs->ty->k != TYPOINTER) {
-                    type_error("subscripted value is not an array, pointer, or vector");
+                    type_error(getLoc(), "subscripted value is not an array, pointer, or vector");
                 } else {
-                    Expr ptr = make_add_pointer(result, rhs);
-                    assert(ptr->ty->k == TYPOINTER);
-                    CType ty = context.clone(ptr->ty->p);
-                    ty->tags |= TYLVALUE;
-                    result = unary(ptr, Dereference, ty);
+                    result = make_add_pointer(result, rhs);
+                    make_deref(result);
                 }
             } break;
             default:
                 return result;
             }
         }
+    }
+    void make_deref(Expr &e) {
+        assert(e->ty->k == TYPOINTER && "bad call to make_deref: expect a pointer");
+        if (e->k == EConstantArraySubstript) {
+            uint64_t i = e->cidx.getLimitedValue();
+            llvm::Constant *C = e->carray->getInitializer();
+            if (auto CS = dyn_cast<llvm::ConstantDataSequential>(C)) {
+                const unsigned numops = CS->getNumElements();
+                if (e->cidx.uge(numops)) 
+                    warning(getLoc(), "array index %A is past the end of the array (which contains %u elements)", &e->cidx, numops);
+                else
+                    return (void)(e = wrap(e->ty->p, CS->getElementAsConstant(e->cidx.getZExtValue()), e->loc));
+                
+            } else {
+                auto CA = cast<llvm::ConstantAggregate>(C);
+                const unsigned numops = CA->getNumOperands();
+                if (e->cidx.uge(numops)) 
+                    warning(getLoc(), "array index %A is past the end of the array (which contains %u elements)", &e->cidx, numops);
+                 else
+                    return (void)(e = wrap(e->ty->p, CA->getOperand(i), e->loc));
+            }
+        }
+        CType ty = context.clone(e->ty->p);
+        ty->tags |= TYLVALUE;
+        e = unary(e, Dereference, ty);
     }
     void tryContinue() {
         if (jumper.topContinue == INVALID_LABEL)
@@ -2950,7 +3123,6 @@ NEXT:
             return;
         }
         case Kreturn: {
-            Expr e, r;
             consume();
             if (l.tok.tok == TSemicolon) {
                 consume();
@@ -2965,6 +3137,7 @@ NEXT:
                            .ret = wrap(sema.currentfunctionRet,
                                        llvm::UndefValue::get(irgen.wrap2(sema.currentfunctionRet)), loc)});
             }
+            Expr e;
             if (!(e = expression()))
                 return;
             checkSemicolon();
@@ -2972,13 +3145,8 @@ NEXT:
                 return warning(loc, "function should return a value in a function return void"),
                        note("A return statement with an expression shall not appear in a function whose return type is "
                             "void"),
-                       insertStmt(SNEW(ReturnStmt){.loc = loc, .ret = nullptr});
-            // warn_if_bad_cast(e, sema.currentfunctionRet, " returning '" & $e->ty &
-            // "' from a function with return type '" & $sema.currentfunctionRet &
-            // "'")
-            if (!(r = castto(e, sema.currentfunctionRet)))
-                return;
-            return insertStmt(SNEW(ReturnStmt){.loc = loc, .ret = r});
+                       insertStmt(SNEW(ReturnStmt) {.loc = loc, .ret = nullptr});
+            return insertStmt(SNEW(ReturnStmt){.loc = loc, .ret = castto(e, sema.currentfunctionRet, Implict_Return)});
         }
         case Kwhile:
         case Kswitch: {
@@ -3466,9 +3634,11 @@ NEXT:
             return consume(), conditional_expression(result);
         if (is_assigment_op(tok)) {
             Expr e, rhs;
-            if (!assignable(result))
-                return nullptr;
             consume();
+            if (!assignable(result)) {
+                (void)assignment_expression();
+                return result;
+            }
             if (!(e = assignment_expression()))
                 return nullptr;
             if (result->ty->tags & TYATOMIC) {
@@ -3481,7 +3651,7 @@ NEXT:
             }
             // make `a += b` to `a = a + b`
             make_assign(tok, result, e);
-            rhs = castto(e, result->ty);
+            rhs = castto(e, result->ty, Implict_Assign);
             return binop(result, Assign, rhs, result->ty);
         } else
             return result;

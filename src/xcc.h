@@ -246,6 +246,9 @@ static const char* show(enum PostFixOp o){
 #include "xstring.h"
 #include "xvector.h"
 
+constexpr auto 
+  type_qualifiers = TYCONST | TYRESTRICT | TYVOLATILE | TYATOMIC;
+
 #define kw_start Kextern
 #define kw_end K_Generic
 typedef unsigned label_t;
@@ -438,33 +441,37 @@ static bool compatible(const CType p, const CType expected) {
     // https://en.cppreference.com/w/c/language/type
     if (p->k != expected->k)
         return false;
-    else{
+    else {
         switch(p->k){
         case TYPRIM:
             return (p->tags & ty_prim) == (expected->tags & ty_prim);
         case TYFUNCTION:
-            if (!compatible(p->ret, expected->ret))
+            if (!compatible(p->ret, expected->ret) || p->params.size() != expected->params.size())
                 return false;
-            for (unsigned i=0;i<std::min(p->params.size(), expected->params.size());++i){
-                if (p->params[i].ty == nullptr)
-                    break;
-                if (expected->params[i].ty == nullptr)
-                    break;
+            for (unsigned i=0;i < expected->params.size();++i)
                 if (!compatible(p->params[i].ty, expected->params[i].ty))
                     return false;
-            }
             return true;
-        case TYSTRUCT:case TYENUM:case TYUNION:
-            return (uintptr_t)p == (uintptr_t)expected;
-        case TYPOINTER:{
-            constexpr auto mask = TYRESTRICT | TYCONST | TYVOLATILE;
-            return (p->p->tags & TYVOID) || (expected->p->tags & TYVOID) || (((p->tags & mask) == (expected->tags & mask)) && compatible(p->p, expected->p));
+        case TYSTRUCT:
+        case TYENUM: 
+        case TYUNION:
+            return p == expected;
+        case TYPOINTER:
+        {
+            // ignore TYLVALUE attribute
+            return  (p->p->tags & TYVOID) || 
+                    (expected->p->tags & TYVOID) || 
+                    (((p->tags & type_qualifiers) == (expected->tags & type_qualifiers)) && compatible(p->p, expected->p));
         }
         case TYINCOMPLETE:
             return p->tag == expected->tag && p->name == expected->name;
         case TYBITFIELD:
             llvm_unreachable("");
         case TYARRAY:
+            if (p->hassize != expected->hassize)
+                return false;
+            if (p->hassize && (p->arrsize != expected->arrsize))
+                return false;
             return compatible(p->arrtype, expected->arrtype);
         }
     }

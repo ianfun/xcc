@@ -4,6 +4,7 @@ enum ExprKind: uint8_t {
   EBin,
   EUnary,
   EConstantArray,
+  EConstantArraySubstript,
   EVoid,
   EVar,
   ECondition,
@@ -50,6 +51,10 @@ union {
     };
     struct {
       llvm::GlobalVariable *array;
+    };
+    struct {
+      llvm::GlobalVariable *carray;
+      APInt cidx;
     };
     struct {
       Expr voidexpr;
@@ -123,6 +128,15 @@ struct ConstantArrayExpr {
   CType ty;
   struct {
     llvm::GlobalVariable *array;
+  };
+};
+struct ConstantArraySubstriptExpr {
+  enum ExprKind k=EConstantArraySubstript;
+  Location loc;
+  CType ty;
+  struct {
+    llvm::GlobalVariable *carray;
+    APInt cidx;
   };
 };
 struct VoidExpr {
@@ -222,6 +236,7 @@ static uint8_t expr_size_map[] = {
     sizeof(BinExpr),
     sizeof(UnaryExpr),
     sizeof(ConstantArrayExpr),
+    sizeof(ConstantArraySubstriptExpr),
     sizeof(VoidExpr),
     sizeof(VarExpr),
     sizeof(ConditionExpr),
@@ -234,4 +249,4 @@ static uint8_t expr_size_map[] = {
     sizeof(ArrToAddressExpr),
     sizeof(PostFixExpr)
 };
-static constexpr size_t expr_max_size = std::max({sizeof(ConstantExpr), sizeof(BinExpr), sizeof(UnaryExpr), sizeof(ConstantArrayExpr), sizeof(VoidExpr), sizeof(VarExpr), sizeof(ConditionExpr), sizeof(CastExpr), sizeof(CallExpr), sizeof(SubscriptExpr), sizeof(ArrayExpr), sizeof(StructExpr), sizeof(MemberAccessExpr), sizeof(ArrToAddressExpr), sizeof(PostFixExpr)});
+static constexpr size_t expr_max_size = std::max({sizeof(ConstantExpr), sizeof(BinExpr), sizeof(UnaryExpr), sizeof(ConstantArrayExpr), sizeof(ConstantArraySubstriptExpr), sizeof(VoidExpr), sizeof(VarExpr), sizeof(ConditionExpr), sizeof(CastExpr), sizeof(CallExpr), sizeof(SubscriptExpr), sizeof(ArrayExpr), sizeof(StructExpr), sizeof(MemberAccessExpr), sizeof(ArrToAddressExpr), sizeof(PostFixExpr)});

@@ -41,8 +41,8 @@ struct ScopeBase {
     Storage &getSymFull(size_t index) {
         return data[index];
     }
-    StringRef &getSymName(size_t index) {
-        return data[index];
+    StringRef getSymName(size_t index) {
+        return data[index].sym->getKey();
     }
     size_t putSym(IdentRef sym, const T &Elt) {
         size_t size = data.size();

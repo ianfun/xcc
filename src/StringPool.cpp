@@ -1,3 +1,7 @@
+// StringPool - this file implements a Java'JVM like string pool.
+//
+// C's strings are always constant, and to get the address to the string, we offen use a global private object to store the string data instead of stack allocated.
+
 struct StringPool
 {
     using GV = llvm::GlobalVariable*;
@@ -15,9 +19,10 @@ struct StringPool
         auto it = interns.insert(std::make_pair(s.str(), nullptr));
         if (it.second) {
             auto str = llvm::ConstantDataArray::getString(irgen.ctx, s.str(), false);
-            auto GV = new llvm::GlobalVariable(*irgen.module, str->getType(), true, IRGen::PrivateLinkage, str);
+            auto GV = new llvm::GlobalVariable(*irgen.module, str->getType(), true, IRGen::PrivateLinkage, str, ".cstr");
             GV->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
             GV->setAlignment(irgen.layout->getPrefTypeAlign(irgen.types[x8]));
+            GV->setConstant(true);
             it.first->second = GV;
         }
         return it.first->second;
@@ -44,9 +49,10 @@ struct StringPool
         auto it = interns16.insert(std::make_pair(array, nullptr));
         if (it.second) {
             auto str = llvm::ConstantDataArray::get(irgen.ctx, array);
-            auto GV = new llvm::GlobalVariable(*irgen.module, str->getType(), true, IRGen::PrivateLinkage, str);
+            auto GV = new llvm::GlobalVariable(*irgen.module, str->getType(), true, IRGen::PrivateLinkage, str, ".cstr");
             GV->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
             GV->setAlignment(irgen.layout->getPrefTypeAlign(irgen.types[x16]));
+            GV->setConstant(true);
             it.first->second = GV;
         }
         return it.first->second;
@@ -62,9 +68,10 @@ struct StringPool
         auto it = interns32.insert(std::make_pair(array, nullptr));
         if (it.second) {
             auto str = llvm::ConstantDataArray::get(irgen.ctx, array);
-            auto GV = new llvm::GlobalVariable(*irgen.module, str->getType(), true, IRGen::PrivateLinkage, str);
+            auto GV = new llvm::GlobalVariable(*irgen.module, str->getType(), true, IRGen::PrivateLinkage, str, ".cstr");
             GV->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
             GV->setAlignment(irgen.layout->getPrefTypeAlign(irgen.types[x32]));
+            GV->setConstant(true);
             it.first->second = GV;
         }
         return it.first->second;

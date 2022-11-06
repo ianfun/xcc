@@ -13,7 +13,7 @@ int main(int argc, const char **argv)
 {
     xcc::xcc_context ctx;
 
-    xXInitLLVM crashReport(ctx, argc, argv);
+    XInitLLVM crashReport(ctx, argc, argv);
 
     if (!options.run(argc, argv))
         return 1;    
@@ -47,6 +47,7 @@ int main(int argc, const char **argv)
 
     size_t num_typedefs, num_tags;
     auto ast = parser.run(num_typedefs, num_tags);
+    thePrinter->finalize();
     if (ctx.printer->NumErrors)
         return 1;
 
