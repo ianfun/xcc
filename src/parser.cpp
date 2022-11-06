@@ -23,7 +23,7 @@ struct Variable_Info {
 struct Parser : public DiagnosticHelper {
     enum Implict_Conversion_Kind {
         Implict_Cast,
-        Implict_Assign, 
+        Implict_Assign,
         Implict_Init,
         Implict_Return,
         Implict_Call
@@ -90,8 +90,7 @@ struct Parser : public DiagnosticHelper {
         case LBL_DECLARED: // defined, and used => ok!
             ref.flags = LBL_OK;
             break;
-        default:
-            llvm_unreachable("");
+        default: llvm_unreachable("");
         }
         return ref.idx;
     }
@@ -108,8 +107,7 @@ struct Parser : public DiagnosticHelper {
         case LBL_DECLARED: // declared => declared twice!
             type_error(getLoc(), "duplicate label: %I", Name);
             break;
-        default:
-            llvm_unreachable("");
+        default: llvm_unreachable("");
         }
         return ref.idx;
     }
@@ -237,10 +235,8 @@ struct Parser : public DiagnosticHelper {
         case Kstruct:
         case Kenum:
         case Kunion:
-        case K_Alignas:
-            return true;
-        default:
-            break;
+        case K_Alignas: return true;
+        default: break;
         }
         if (a.tok == TIdentifier)
             return gettypedef(a.s) != nullptr;
@@ -286,18 +282,13 @@ struct Parser : public DiagnosticHelper {
             return false;
         else {
             switch (a->k) {
-            case TYPRIM:
-                return a->tags == b->tags;
-            case TYPOINTER:
-                return type_equal(a->p, b->p);
+            case TYPRIM: return a->tags == b->tags;
+            case TYPOINTER: return type_equal(a->p, b->p);
             case TYENUM:
             case TYSTRUCT:
-            case TYUNION:
-                return a == b;
-            case TYINCOMPLETE:
-                return a->name == b->name;
-            default:
-                return false;
+            case TYUNION: return a == b;
+            case TYINCOMPLETE: return a->name == b->name;
+            default: return false;
             }
         }
     }
@@ -307,44 +298,40 @@ struct Parser : public DiagnosticHelper {
         Cast_DiscardsQualifiers,
         Cast_Sign
     };
-    static enum Cast_Status 
-    canBeSavelyCastTo(CType p, CType expected) {
-        assert (p->k == expected->k);
-        switch(p->k) {
-            case TYPRIM:
-                if ((p->tags & ty_prim) == (expected->tags & ty_prim))
-                    return Cast_Ok;
-                if (getNoSignTypeIndex(p->tags) == getNoSignTypeIndex(expected->tags))
-                    return Cast_Sign;
-                return Cast_Imcompatible;
-            case TYFUNCTION:
-                if (canBeSavelyCastTo(p->ret, expected->ret) != Cast_Ok || p->params.size() != expected->params.size())
-                    return Cast_Imcompatible;
-                for (unsigned i=0;i < expected->params.size();++i)
-                    if (canBeSavelyCastTo(p->params[i].ty, expected->params[i].ty) != Cast_Ok)
-                        return Cast_Imcompatible;
+    static enum Cast_Status canBeSavelyCastTo(CType p, CType expected) {
+        assert(p->k == expected->k);
+        switch (p->k) {
+        case TYPRIM:
+            if ((p->tags & ty_prim) == (expected->tags & ty_prim))
                 return Cast_Ok;
-            case TYSTRUCT:
-            case TYENUM: 
-            case TYUNION:
-                return p == expected ? Cast_Ok : Cast_Imcompatible;
-            case TYPOINTER:
-                if ((p->p->tags & TYCONST) > (expected->p->tags & TYCONST))
-                    return Cast_DiscardsQualifiers;
-                if (p->p->tags & TYVOID || expected->p->tags & TYVOID)
-                    return Cast_Ok;
-                return canBeSavelyCastTo(p->p, expected->p);
-            case TYINCOMPLETE:
-                return (p->tag == expected->tag && p->name == expected->name) ? Cast_Ok : Cast_Imcompatible;
-            case TYBITFIELD:
-                llvm_unreachable("");
-            case TYARRAY:
-                if (p->hassize != expected->hassize)
+            if (getNoSignTypeIndex(p->tags) == getNoSignTypeIndex(expected->tags))
+                return Cast_Sign;
+            return Cast_Imcompatible;
+        case TYFUNCTION:
+            if (canBeSavelyCastTo(p->ret, expected->ret) != Cast_Ok || p->params.size() != expected->params.size())
+                return Cast_Imcompatible;
+            for (unsigned i = 0; i < expected->params.size(); ++i)
+                if (canBeSavelyCastTo(p->params[i].ty, expected->params[i].ty) != Cast_Ok)
                     return Cast_Imcompatible;
-                if (p->hassize && (p->arrsize != expected->arrsize))
-                    return Cast_Imcompatible;
-                return canBeSavelyCastTo(p->arrtype, expected->arrtype);
-            }
+            return Cast_Ok;
+        case TYSTRUCT:
+        case TYENUM:
+        case TYUNION: return p == expected ? Cast_Ok : Cast_Imcompatible;
+        case TYPOINTER:
+            if ((p->p->tags & TYCONST) > (expected->p->tags & TYCONST))
+                return Cast_DiscardsQualifiers;
+            if (p->p->tags & TYVOID || expected->p->tags & TYVOID)
+                return Cast_Ok;
+            return canBeSavelyCastTo(p->p, expected->p);
+        case TYINCOMPLETE: return (p->tag == expected->tag && p->name == expected->name) ? Cast_Ok : Cast_Imcompatible;
+        case TYBITFIELD: llvm_unreachable("");
+        case TYARRAY:
+            if (p->hassize != expected->hassize)
+                return Cast_Imcompatible;
+            if (p->hassize && (p->arrsize != expected->arrsize))
+                return Cast_Imcompatible;
+            return canBeSavelyCastTo(p->arrtype, expected->arrtype);
+        }
         llvm_unreachable("");
     }
     Expr castto(Expr e, CType to, enum Implict_Conversion_Kind implict = Implict_Cast) {
@@ -397,15 +384,15 @@ struct Parser : public DiagnosticHelper {
                     CType arg1 = e->ty;
                     CType arg2 = to;
                     const char *msg;
-                switch (implict) {
-                    case Implict_Cast:
-                        llvm_unreachable("");
+                    switch (implict) {
+                    case Implict_Cast: llvm_unreachable("");
                     case Implict_Assign:
                         std::swap(arg1, arg2);
                         if (status == Cast_DiscardsQualifiers)
                             msg = "assigning to %T from %T discards qualifiers";
                         else if (status == Cast_Sign)
-                            msg = "assigning to %T from %T converts between pointers to integer types with different sign";
+                            msg = "assigning to %T from %T converts between pointers to integer types with different "
+                                  "sign";
                         else
                             msg = "incompatible pointer types assigning to %T from %T";
                         break;
@@ -414,7 +401,8 @@ struct Parser : public DiagnosticHelper {
                         if (status == Cast_DiscardsQualifiers)
                             msg = "initializing %T with an expression of type %T' discards qualifiers";
                         else if (status == Cast_Sign)
-                            msg = "initializing %T with an expression of type %T converts between pointers to integer types with different sign";
+                            msg = "initializing %T with an expression of type %T converts between pointers to integer "
+                                  "types with different sign";
                         else
                             msg = "incompatible pointer types initializing %T with an expression of type '%T'";
                         break;
@@ -422,7 +410,8 @@ struct Parser : public DiagnosticHelper {
                         if (status == Cast_DiscardsQualifiers)
                             msg = "returning %T from a function with result type %T discards qualifiers";
                         else if (status == Cast_Sign)
-                            msg = "returning %T from a function with result type %T converts between pointers to integer types with different sign";
+                            msg = "returning %T from a function with result type %T converts between pointers to "
+                                  "integer types with different sign";
                         else
                             msg = "incompatible pointer types returning %T from a function with result type %T";
                         break;
@@ -430,11 +419,12 @@ struct Parser : public DiagnosticHelper {
                         if (status == Cast_DiscardsQualifiers)
                             msg = "passing %T to parameter of type %T discards qualifiers";
                         else if (status == Cast_Sign)
-                            msg = "passing %T to parameter of type %T converts between pointers to integer types with different sign";
+                            msg = "passing %T to parameter of type %T converts between pointers to integer types with "
+                                  "different sign";
                         else
                             msg = "incompatible pointer types passing %T to parameter of type %T";
                         break;
-                }
+                    }
                     warning(e->loc, msg, arg1, arg2);
                 }
             }
@@ -607,10 +597,8 @@ PTR_CAST:
         case AtomicrmwSub:
         case AtomicrmwAnd:
         case AtomicrmwOr:
-        case AtomicrmwXor:
-            return true;
-        default:
-            return false;
+        case AtomicrmwXor: return true;
+        default: return false;
         }
     }
     Expr comma(Expr a, Expr b) { return binop(simplify(a), Comma, simplify(b), b->ty); }
@@ -637,8 +625,7 @@ PTR_CAST:
                 return simplify(e->uoperand);
             }
             return e;
-        case EVoid:
-            return simplify(e->castval);
+        case EVoid: return simplify(e->castval);
         case ECondition:
             // if the cond is simple, we should simplify it in constant folding
             if (e->cleft->isSimple() && e->cright->isSimple()) {
@@ -646,11 +633,8 @@ PTR_CAST:
                 note("simplify %E to %E", e, e->cond);
                 return simplify(e->cond);
             }
-        case ECast:
-            warning(e->loc, "unused cast expression, replace '(type)x' with 'x'");
-            return simplify(e->castval);
-        case ECall:
-            return e;
+        case ECast: warning(e->loc, "unused cast expression, replace '(type)x' with 'x'"); return simplify(e->castval);
+        case ECall: return e;
         case ESubscript:
             if (e->right->isSimple()) {
                 warning("unused array substract, replace 'a[b]' with a");
@@ -666,8 +650,7 @@ PTR_CAST:
         case EVar:
         case EConstant:
         case EArrToAddress:
-        case EConstantArraySubstript:
-            return e;
+        case EConstantArraySubstript: return e;
         }
         llvm_unreachable("bad expr kind");
     }
@@ -692,20 +675,17 @@ PTR_CAST:
         make_ptr_arith(ptrPart);
         if (intPart->k == EConstant) {
             if (auto CI = dyn_cast<ConstantInt>(intPart->C)) {
-                APInt offset = intPart->ty->isSigned() ? 
-                    CI->getValue().sextOrTrunc(irgen.pointerSizeInBits) : 
-                    CI->getValue().zextOrTrunc(irgen.pointerSizeInBits);
+                APInt offset = intPart->ty->isSigned() ? CI->getValue().sextOrTrunc(irgen.pointerSizeInBits)
+                                                       : CI->getValue().zextOrTrunc(irgen.pointerSizeInBits);
                 if (ptrPart->k == EConstantArray)
-                    return ENEW(ConstantArraySubstriptExpr) 
-                    {
-                        .loc = ptrPart->loc, 
-                        .ty = ptrPart->ty, 
-                        .carray = ptrPart->array, 
-                        .cidx = offset
-                    };
+                    return ENEW(ConstantArraySubstriptExpr){
+                        .loc = ptrPart->loc, .ty = ptrPart->ty, .carray = ptrPart->array, .cidx = offset};
                 if (ptrPart->k == EConstantArraySubstript) {
                     bool overflow = false;
-                    auto result = ENEW(ConstantArraySubstriptExpr) {.loc = ptrPart->loc, .ty = ptrPart->ty, .carray = ptrPart->array, .cidx = offset.uadd_ov(ptrPart->cidx, overflow)};
+                    auto result = ENEW(ConstantArraySubstriptExpr){.loc = ptrPart->loc,
+                                                                   .ty = ptrPart->ty,
+                                                                   .carray = ptrPart->array,
+                                                                   .cidx = offset.uadd_ov(ptrPart->cidx, overflow)};
                     if (overflow)
                         warning("overflow when doing addition on pointers, the result is %A", &result->cidx);
                     return result;
@@ -739,14 +719,14 @@ PTR_CAST:
                     if (CI2->isZero())
                         return;
                     bool overflow = false;
-                    result = wrap(result->ty, 
-                        ConstantInt::get(irgen.ctx, result->ty->isSigned() ?
-                         CI->getValue().sadd_ov(CI2->getValue(), overflow) :
-                         CI->getValue().uadd_ov(CI2->getValue(), overflow)
-                        )
-                    );
+                    result = wrap(result->ty,
+                                  ConstantInt::get(irgen.ctx, result->ty->isSigned()
+                                                                  ? CI->getValue().sadd_ov(CI2->getValue(), overflow)
+                                                                  : CI->getValue().uadd_ov(CI2->getValue(), overflow)));
                     if (overflow)
-                        warning("%s addition overflow, the result is %A", result->ty->isSigned() ? "signed" : "unsigned", &cast<ConstantInt>(result->C)->getValue());
+                        warning("%s addition overflow, the result is %A",
+                                result->ty->isSigned() ? "signed" : "unsigned",
+                                &cast<ConstantInt>(result->C)->getValue());
                     return;
                 }
             }
@@ -794,14 +774,14 @@ PTR_CAST:
                     if (CI2->isZero())
                         return;
                     bool overflow = false;
-                    result = wrap(result->ty, 
-                        ConstantInt::get(irgen.ctx, result->ty->isSigned() ?
-                         CI->getValue().sadd_ov(CI2->getValue(), overflow) :
-                         CI->getValue().uadd_ov(CI2->getValue(), overflow)
-                        )
-                    );
+                    result = wrap(result->ty,
+                                  ConstantInt::get(irgen.ctx, result->ty->isSigned()
+                                                                  ? CI->getValue().sadd_ov(CI2->getValue(), overflow)
+                                                                  : CI->getValue().uadd_ov(CI2->getValue(), overflow)));
                     if (overflow)
-                        warning("%s addition overflow, the result is %A", result->ty->isSigned() ? "signed" : "unsigned", &cast<ConstantInt>(result->C)->getValue());
+                        warning("%s addition overflow, the result is %A",
+                                result->ty->isSigned() ? "signed" : "unsigned",
+                                &cast<ConstantInt>(result->C)->getValue());
                     return;
                 }
             }
@@ -906,17 +886,10 @@ NOT_CONSTANT:
                     if (const auto CI2 = dyn_cast<ConstantInt>(r->C)) {
                         APInt val(CI->getValue());
                         switch (op) {
-                        case And:
-                            val &= CI2->getValue();
-                            break;
-                        case Or:
-                            val |= CI2->getValue();
-                            break;
-                        case Xor:
-                            val ^= CI2->getValue();
-                            break;
-                        default:
-                            llvm_unreachable("");
+                        case And: val &= CI2->getValue(); break;
+                        case Or: val |= CI2->getValue(); break;
+                        case Xor: val ^= CI2->getValue(); break;
+                        default: llvm_unreachable("");
                         }
                         result = wrap(result->ty, ConstantInt::get(irgen.ctx, val), result->loc);
                         return;
@@ -1060,20 +1033,13 @@ NOT_CONSTANT:
     }
     static BinOp get_relational_expression_op(Token tok, bool isFloating, bool isSigned) {
         switch (tok) {
-        case TLe:
-            return isFloating ? FLE : (isSigned ? SLE : ULE);
-        case TLt:
-            return isFloating ? FLT : (isSigned ? SLT : ULT);
-        case TGt:
-            return isFloating ? FGT : (isSigned ? SGT : UGT);
-        case TGe:
-            return isFloating ? FGE : (isSigned ? SGE : UGE);
-        case TNe:
-            return isFloating ? FNE : NE;
-        case TEq:
-            return isFloating ? FEQ : EQ;
-        default:
-            llvm_unreachable("");
+        case TLe: return isFloating ? FLE : (isSigned ? SLE : ULE);
+        case TLt: return isFloating ? FLT : (isSigned ? SLT : ULT);
+        case TGt: return isFloating ? FGT : (isSigned ? SGT : UGT);
+        case TGe: return isFloating ? FGE : (isSigned ? SGE : UGE);
+        case TNe: return isFloating ? FNE : NE;
+        case TEq: return isFloating ? FEQ : EQ;
+        default: llvm_unreachable("");
         }
     }
     void make_cmp(Expr &result, Token tok, bool isEq = false) {
@@ -1111,26 +1077,13 @@ NOT_CONSTANT:
                 }
                 bool B;
                 switch (tok) {
-                case TGt:
-                    B = status > 0;
-                    break;
-                case TGe:
-                    B = status >= 0;
-                    break;
-                case TEq:
-                    B = status == 0;
-                    break;
-                case TNe:
-                    B = status != 0;
-                    break;
-                case TLt:
-                    B = status < 0;
-                    break;
-                case TLe:
-                    B = status <= 0;
-                    break;
-                default:
-                    llvm_unreachable("bad operator to make_cmp");
+                case TGt: B = status > 0; break;
+                case TGe: B = status >= 0; break;
+                case TEq: B = status == 0; break;
+                case TNe: B = status != 0; break;
+                case TLt: B = status < 0; break;
+                case TLe: B = status <= 0; break;
+                default: llvm_unreachable("bad operator to make_cmp");
                 }
                 result =
                     wrap(context.getInt(),
@@ -1144,26 +1097,13 @@ NOT_CONSTANT:
                 constexpr APFloat::cmpResult cmpGreaterThan = APFloat::cmpGreaterThan, cmpEqual = APFloat::cmpEqual,
                                              cmpLessThan = APFloat::cmpLessThan;
                 switch (tok) {
-                case TGt:
-                    B = status == cmpGreaterThan;
-                    break;
-                case TGe:
-                    B = status == cmpEqual || status == cmpGreaterThan;
-                    break;
-                case TEq:
-                    B = status == cmpEqual;
-                    break;
-                case TNe:
-                    B = status != cmpEqual;
-                    break;
-                case TLt:
-                    B = status == cmpLessThan || status == cmpEqual;
-                    break;
-                case TLe:
-                    B = status == cmpLessThan;
-                    break;
-                default:
-                    llvm_unreachable("bad operator to make_cmp");
+                case TGt: B = status == cmpGreaterThan; break;
+                case TGe: B = status == cmpEqual || status == cmpGreaterThan; break;
+                case TEq: B = status == cmpEqual; break;
+                case TNe: B = status != cmpEqual; break;
+                case TLt: B = status == cmpLessThan || status == cmpEqual; break;
+                case TLe: B = status == cmpLessThan; break;
+                default: llvm_unreachable("bad operator to make_cmp");
                 }
                 result =
                     wrap(context.getInt(),
@@ -1202,41 +1142,18 @@ NOT_CONSTANT:
     bool addTag(CType &ty, Token theTok) {
         // add a tag to type
         switch (theTok) {
-        case Kinline:
-            ty->tags |= TYINLINE;
-            break;
-        case K_Noreturn:
-            ty->tags |= TYNORETURN;
-            break;
-        case Kextern:
-            ty->tags |= TYEXTERN;
-            break;
-        case Kstatic:
-            ty->tags |= TYSTATIC;
-            break;
-        case K_Thread_local:
-            ty->tags |= TYTHREAD_LOCAL;
-            break;
-        case Kregister:
-            ty->tags |= TYREGISTER;
-            break;
-        case Krestrict:
-            ty->tags |= TYRESTRICT;
-            break;
-        case Kvolatile:
-            ty->tags |= TYVOLATILE;
-            break;
-        case Ktypedef:
-            ty->tags |= TYTYPEDEF;
-            break;
-        case Kconst:
-            ty->tags |= TYCONST;
-            break;
-        case K_Atomic:
-            ty->tags |= TYATOMIC;
-            break;
-        default:
-            return false;
+        case Kinline: ty->tags |= TYINLINE; break;
+        case K_Noreturn: ty->tags |= TYNORETURN; break;
+        case Kextern: ty->tags |= TYEXTERN; break;
+        case Kstatic: ty->tags |= TYSTATIC; break;
+        case K_Thread_local: ty->tags |= TYTHREAD_LOCAL; break;
+        case Kregister: ty->tags |= TYREGISTER; break;
+        case Krestrict: ty->tags |= TYRESTRICT; break;
+        case Kvolatile: ty->tags |= TYVOLATILE; break;
+        case Ktypedef: ty->tags |= TYTYPEDEF; break;
+        case Kconst: ty->tags |= TYCONST; break;
+        case K_Atomic: ty->tags |= TYATOMIC; break;
+        default: return false;
         }
         return true;
     }
@@ -1263,63 +1180,33 @@ NOT_CONSTANT:
         if (b.size() == 1) { // one type
             result->tags |= ([](Token theTok) {
                 switch (theTok) {
-                case Kchar:
-                    return TYCHAR;
-                case Kint:
-                    return TYINT;
-                case Kvoid:
-                    return TYVOID;
-                case Klong:
-                    return TYLONG;
-                case Ksigned:
-                    return TYINT;
-                case Kunsigned:
-                    return TYUINT;
-                case Kshort:
-                    return TYSHORT;
-                case Kdouble:
-                    return TYDOUBLE;
-                case Kfloat:
-                    return TYFLOAT;
-                case K_Bool:
-                    return TYBOOL;
-                default:
-                    llvm_unreachable("");
+                case Kchar: return TYCHAR;
+                case Kint: return TYINT;
+                case Kvoid: return TYVOID;
+                case Klong: return TYLONG;
+                case Ksigned: return TYINT;
+                case Kunsigned: return TYUINT;
+                case Kshort: return TYSHORT;
+                case Kdouble: return TYDOUBLE;
+                case Kfloat: return TYFLOAT;
+                case K_Bool: return TYBOOL;
+                default: llvm_unreachable("");
                 }
             })(b.front());
             return result;
         }
         for (const auto tok : b) {
             switch (tok) {
-            case Ksigned:
-                numsigned++;
-                break;
-            case Kunsigned:
-                numunsigned++;
-                break;
-            case Klong:
-                l++;
-                break;
-            case Kshort:
-                s++;
-                break;
-            case Kint:
-                i++;
-                break;
-            case Kdouble:
-                d++;
-                break;
-            case Kfloat:
-                f++;
-                break;
-            case Kvoid:
-                v++;
-                break;
-            case Kchar:
-                c++;
-                break;
-            default:
-                break;
+            case Ksigned: numsigned++; break;
+            case Kunsigned: numunsigned++; break;
+            case Klong: l++; break;
+            case Kshort: s++; break;
+            case Kint: i++; break;
+            case Kdouble: d++; break;
+            case Kfloat: f++; break;
+            case Kvoid: v++; break;
+            case Kchar: c++; break;
+            default: break;
             }
         }
         su = numsigned + numunsigned;
@@ -1359,14 +1246,9 @@ NOT_CONSTANT:
             if ((l + i + su) != b.size())
                 return type_error(loc, "extra `long` declaration specifier"), nullptr;
             switch (l) {
-            case 1:
-                result->tags |= numunsigned ? TYULONG : TYLONG;
-                break;
-            case 2:
-                result->tags |= numunsigned ? TYULONGLONG : TYLONGLONG;
-                break;
-            default:
-                llvm_unreachable("too many longs");
+            case 1: result->tags |= numunsigned ? TYULONG : TYLONG; break;
+            case 2: result->tags |= numunsigned ? TYULONGLONG : TYLONGLONG; break;
+            default: llvm_unreachable("too many longs");
             }
             return result;
         }
@@ -1393,20 +1275,11 @@ NOT_CONSTANT:
         // parse many type qualifiers, add to type
         for (;;)
             switch (l.tok.tok) {
-            case Kconst:
-                ty->tags |= TYCONST, consume();
-                continue;
-            case Krestrict:
-                ty->tags |= TYRESTRICT, consume();
-                continue;
-            case Kvolatile:
-                ty->tags |= TYVOLATILE, consume();
-                continue;
-            case K_Atomic:
-                ty->tags |= TYATOMIC, consume();
-                continue;
-            default:
-                return;
+            case Kconst: ty->tags |= TYCONST, consume(); continue;
+            case Krestrict: ty->tags |= TYRESTRICT, consume(); continue;
+            case Kvolatile: ty->tags |= TYVOLATILE, consume(); continue;
+            case K_Atomic: ty->tags |= TYATOMIC, consume(); continue;
+            default: return;
             }
     }
     void more() {
@@ -1429,8 +1302,7 @@ NOT_CONSTANT:
         if (sema.tokens_cache.size()) {
             for (size_t i = 0; i < sema.tokens_cache.size(); ++i) {
                 switch (i) {
-                case Ktypedef:
-                    break;
+                case Ktypedef: break;
                 default:
                     if (!addTag(result, sema.tokens_cache[i]))
                         is_redefine = true;
@@ -1490,8 +1362,7 @@ NOT_CONSTANT:
                     return result;
                 }
                 LLVM_FALLTHROUGH;
-            default:
-                sema.tokens_cache.push_back(l.tok.tok), consume();
+            default: sema.tokens_cache.push_back(l.tok.tok), consume();
             }
         }
         if (l.tok.tok == TIdentifier) {
@@ -1674,8 +1545,7 @@ NOT_CONSTANT:
             consume();
             return direct_declarator_end(ty, name);
         }
-        default:
-            return Declator(name, base);
+        default: return Declator(name, base);
         }
     }
     Declator struct_declarator(CType base) {
@@ -1998,7 +1868,8 @@ NOT_CONSTANT:
             Variable_Info &var_info = sema.typedefs.getSym(e->sval);
             var_info.tags |= ASSIGNED;
             if (var_info.ty->tags & TYCONST) {
-                type_error(getLoc(), "cannot modify const-qualified variable %R: %T", sema.typedefs.getSymName(e->sval), var_info.ty);
+                type_error(getLoc(), "cannot modify const-qualified variable %R: %T", sema.typedefs.getSymName(e->sval),
+                           var_info.ty);
                 return false;
             }
             return true;
@@ -2124,7 +1995,8 @@ NOT_CONSTANT:
                 result->vars.back().init = init;
                 if (init->k == EConstant && st.ty->tags & TYCONST)
                     var_info.val = init->C; // for const and constexpr, their value can be fold to constant
-                if (isTopLevel() && init->k != EConstant && init->k != EConstantArray && init->k != EConstantArraySubstript)
+                if (isTopLevel() && init->k != EConstant && init->k != EConstantArray &&
+                    init->k != EConstantArraySubstript)
                     type_error(loc2, "global initializer is not constant");
             } else {
                 if (st.ty->k == TYARRAY) {
@@ -2235,9 +2107,8 @@ NOT_CONSTANT:
                 return nullptr;
             if (e->k == EConstantArray) {
                 assert(e->ty->k == TYPOINTER);
-                e->ty = context.getPointerType(
-                    context.getFixArrayType(e->ty->p, cast<llvm::ArrayType>(e->array->getValueType())->getNumElements())
-                );
+                e->ty = context.getPointerType(context.getFixArrayType(
+                    e->ty->p, cast<llvm::ArrayType>(e->array->getValueType())->getNumElements()));
                 return e;
             }
             if (e->k == EArrToAddress)
@@ -2346,22 +2217,16 @@ NOT_CONSTANT:
             consume();
             return result;
         }
-        default:
-            return postfix_expression();
+        default: return postfix_expression();
         }
     }
     static bool alwaysFitsInto64Bits(unsigned Radix, unsigned NumDigits) {
         switch (Radix) {
-        case 2:
-            return NumDigits <= 64;
-        case 8:
-            return NumDigits <= 64 / 3;
-        case 10:
-            return NumDigits <= 19;
-        case 16:
-            return NumDigits <= 64 / 4;
-        default:
-            llvm_unreachable("impossible Radix");
+        case 2: return NumDigits <= 64;
+        case 8: return NumDigits <= 64 / 3;
+        case 10: return NumDigits <= 19;
+        case 16: return NumDigits <= 64 / 4;
+        default: llvm_unreachable("impossible Radix");
         }
     }
 
@@ -2380,9 +2245,7 @@ NOT_CONSTANT:
         if (*s == '0') {
             s++;
             switch (*s) {
-            case '.':
-                DigitsBegin = s;
-                goto common;
+            case '.': DigitsBegin = s; goto common;
             case 'X':
             case 'x':
                 ++s;
@@ -2460,8 +2323,7 @@ READ_EXP:
         for (;;) {
             unsigned char c1;
             switch ((c1 = *s++)) {
-            case '\0':
-                goto NEXT;
+            case '\0': goto NEXT;
             case 'f':
             case 'F':
                 if (!isFPConstant || su.HasSize)
@@ -2621,8 +2483,7 @@ NEXT:
             case Ilonglong: // Ilonglong: L'c'
                 ty = context.getWchar();
                 break;
-            default:
-                llvm_unreachable("");
+            default: llvm_unreachable("");
             }
             result = wrap(ty, ConstantInt::get(irgen.ctx, APInt(ty->getBitWidth(), l.tok.i)), loc);
             consume();
@@ -2641,16 +2502,18 @@ NEXT:
             }
             switch (enc) {
             case 8:
-                result = ENEW(ConstantArrayExpr) { .loc = loc, .ty = context.typecache.str8ty, .array = string_pool.getAsUTF8(s)};
+                result = ENEW(ConstantArrayExpr){
+                    .loc = loc, .ty = context.typecache.str8ty, .array = string_pool.getAsUTF8(s)};
                 break;
             case 16:
-                result = ENEW(ConstantArrayExpr) { .loc = loc, .ty = context.typecache.str16ty, .array = string_pool.getAsUTF16(s)};
+                result = ENEW(ConstantArrayExpr){
+                    .loc = loc, .ty = context.typecache.str16ty, .array = string_pool.getAsUTF16(s)};
                 break;
             case 32:
-                result = ENEW(ConstantArrayExpr) { .loc = loc, .ty = context.typecache.str32ty, .array = string_pool.getAsUTF32(s)};
+                result = ENEW(ConstantArrayExpr){
+                    .loc = loc, .ty = context.typecache.str32ty, .array = string_pool.getAsUTF32(s)};
                 break;
-            default:
-                llvm_unreachable("bad encoding");
+            default: llvm_unreachable("bad encoding");
             }
         } break;
         case PPNumber: {
@@ -2666,7 +2529,8 @@ NEXT:
                 result = getIntZero();
             else if (l.tok.s->second.getToken() == PP__func__) {
                 xstring s = xstring::get(sema.pfunc->getKey());
-                result = ENEW(ConstantArrayExpr) {.loc = loc, .ty = context.typecache.str8ty, .array = string_pool.getAsUTF8(s)};
+                result = ENEW(ConstantArrayExpr){
+                    .loc = loc, .ty = context.typecache.str8ty, .array = string_pool.getAsUTF8(s)};
             } else {
                 IdentRef sym = l.tok.s;
                 size_t idx;
@@ -2679,8 +2543,8 @@ NEXT:
                 it->tags |= USED;
                 CType ty = context.clone(it->ty);
                 // lvalue conversions
-                ty->tags &= ~(type_qualifiers | TYREGISTER | TYTHREAD_LOCAL | TYEXTERN |
-                              TYSTATIC | TYNORETURN | TYINLINE | TYPARAM);
+                ty->tags &= ~(type_qualifiers | TYREGISTER | TYTHREAD_LOCAL | TYEXTERN | TYSTATIC | TYNORETURN |
+                              TYINLINE | TYPARAM);
                 ty->tags |= TYLVALUE;
                 bool want_lvalue =
                     sema.want_var || is_assigment_op(l.tok.tok) || l.tok.tok == TAddAdd || l.tok.tok == TSubSub;
@@ -2700,8 +2564,7 @@ NEXT:
                                                     .ty = context.getPointerType(ty->arrtype),
                                                     .arr3 = ENEW(VarExpr){.loc = loc, .ty = ty, .sval = idx}};
                     break;
-                default:
-                    result = ENEW(VarExpr){.loc = loc, .ty = ty, .sval = idx};
+                default: result = ENEW(VarExpr){.loc = loc, .ty = ty, .sval = idx};
                 }
             }
         } break;
@@ -2746,14 +2609,9 @@ NEXT:
                     result = e;
                 }
                 switch (l.tok.tok) {
-                case TComma:
-                    consume();
-                    continue;
-                case TRbracket:
-                    consume();
-                    goto GENERIC_END;
-                default:
-                    return expect(loc, "','' or ')'"), nullptr;
+                case TComma: consume(); continue;
+                case TRbracket: consume(); goto GENERIC_END;
+                default: return expect(loc, "','' or ')'"), nullptr;
                 }
             }
 GENERIC_END:
@@ -2780,9 +2638,7 @@ GENERIC_END:
             return nullptr;
         for (;;) {
             switch (l.tok.tok) {
-            case TSubSub:
-                isadd = PostfixDecrement;
-                goto ADD;
+            case TSubSub: isadd = PostfixDecrement; goto ADD;
             case TAddAdd: {
                 isadd = PostfixIncrement;
 ADD:
@@ -2792,9 +2648,7 @@ ADD:
                 result = ENEW(PostFixExpr){.loc = result->loc, .ty = result->ty, .pop = isadd, .poperand = result};
             }
                 continue;
-            case TArrow:
-                isarrow = false;
-                goto DOT;
+            case TArrow: isarrow = false; goto DOT;
             case TDot: {
                 isarrow = true;
 DOT:
@@ -2904,8 +2758,7 @@ CONTINUE:;
                     make_deref(result);
                 }
             } break;
-            default:
-                return result;
+            default: return result;
             }
         }
     }
@@ -2916,17 +2769,19 @@ CONTINUE:;
             llvm::Constant *C = e->carray->getInitializer();
             if (auto CS = dyn_cast<llvm::ConstantDataSequential>(C)) {
                 const unsigned numops = CS->getNumElements();
-                if (e->cidx.uge(numops)) 
-                    warning(getLoc(), "array index %A is past the end of the array (which contains %u elements)", &e->cidx, numops);
+                if (e->cidx.uge(numops))
+                    warning(getLoc(), "array index %A is past the end of the array (which contains %u elements)",
+                            &e->cidx, numops);
                 else
                     return (void)(e = wrap(e->ty->p, CS->getElementAsConstant(e->cidx.getZExtValue()), e->loc));
-                
+
             } else {
                 auto CA = cast<llvm::ConstantAggregate>(C);
                 const unsigned numops = CA->getNumOperands();
-                if (e->cidx.uge(numops)) 
-                    warning(getLoc(), "array index %A is past the end of the array (which contains %u elements)", &e->cidx, numops);
-                 else
+                if (e->cidx.uge(numops))
+                    warning(getLoc(), "array index %A is past the end of the array (which contains %u elements)",
+                            &e->cidx, numops);
+                else
                     return (void)(e = wrap(e->ty->p, CA->getOperand(i), e->loc));
             }
         }
@@ -2957,8 +2812,7 @@ CONTINUE:;
         case llvm::Value::ConstantPointerNullVal: {
             e = getBool(reverse);
         } break;
-        default:
-            break;
+        default: break;
         }
     }
     void valid_condition(Expr &e, bool reverse = false) {
@@ -2978,11 +2832,9 @@ CONTINUE:;
                 warning("unary operator %s in conditions can be removed", show(e->uop));
                 e = e->uoperand;
                 break;
-            default:
-                break;
+            default: break;
             }
-        default:
-            break;
+        default: break;
         }
         if (e->k == EConstant)
             foldBool(e, reverse);
@@ -3064,12 +2916,9 @@ NEXT:
         // parse a statement
         Location loc = getLoc();
         switch (l.tok.tok) {
-        case TSemicolon:
-            return consume();
-        case K__asm__:
-            return parse_asm(), checkSemicolon();
-        case TLcurlyBracket:
-            return compound_statement();
+        case TSemicolon: return consume();
+        case K__asm__: return parse_asm(), checkSemicolon();
+        case TLcurlyBracket: return compound_statement();
         /*case Kcase: {
           Expr e, c;
           Stmt body;
@@ -3145,7 +2994,7 @@ NEXT:
                 return warning(loc, "function should return a value in a function return void"),
                        note("A return statement with an expression shall not appear in a function whose return type is "
                             "void"),
-                       insertStmt(SNEW(ReturnStmt) {.loc = loc, .ret = nullptr});
+                       insertStmt(SNEW(ReturnStmt){.loc = loc, .ret = nullptr});
             return insertStmt(SNEW(ReturnStmt){.loc = loc, .ret = castto(e, sema.currentfunctionRet, Implict_Return)});
         }
         case Kwhile:
@@ -3272,8 +3121,7 @@ NEXT:
             }
             return insertLabel(IF_END);
         }
-        case Kelse:
-            return parse_error(loc, "'else' without a previous 'if'"), consume();
+        case Kelse: return parse_error(loc, "'else' without a previous 'if'"), consume();
         case TIdentifier: {
             TokenV tok = l.tok;
             consume();
@@ -3286,8 +3134,7 @@ NEXT:
             l.tokenq.push_back(l.tok), l.tok = tok;
             // goto default!
         }
-        default:
-            break;
+        default: break;
         }
         Expr e = expression();
         if (!e)
@@ -3322,8 +3169,7 @@ NEXT:
                     return nullptr;
                 make_rem(result, r);
                 continue;
-            default:
-                return result;
+            default: return result;
             }
     }
     Expr additive_expression() {
@@ -3371,10 +3217,8 @@ NEXT:
             case TLt:
             case TLe:
             case TGt:
-            case TGe:
-                make_cmp(result, l.tok.tok);
-            default:
-                return result;
+            case TGe: make_cmp(result, l.tok.tok);
+            default: return result;
             }
         }
     }
@@ -3385,10 +3229,8 @@ NEXT:
         for (;;) {
             switch (l.tok.tok) {
             case TEq:
-            case TNe:
-                make_cmp(result, l.tok.tok, true);
-            default:
-                return result;
+            case TNe: make_cmp(result, l.tok.tok, true);
+            default: return result;
             }
         }
     }
@@ -3591,38 +3433,24 @@ NEXT:
         case TAsignShr:
         case TAsignBitAnd:
         case TAsignBitOr:
-        case TAsignBitXor:
-            return true;
-        default:
-            return false;
+        case TAsignBitXor: return true;
+        default: return false;
         }
     }
     void make_assign(Token tok, Expr &lhs, Expr &rhs) {
         switch (tok) {
-        case TAssign:
-            return;
-        case TAsignAdd:
-            return make_add(lhs, rhs);
-        case TAsignSub:
-            return make_sub(lhs, rhs);
-        case TAsignMul:
-            return make_mul(lhs, rhs);
-        case TAsignDiv:
-            return make_div(lhs, rhs);
-        case TAsignRem:
-            return make_rem(lhs, rhs);
-        case TAsignShl:
-            return make_shl(lhs, rhs);
-        case TAsignShr:
-            return make_shr(lhs, rhs);
-        case TAsignBitAnd:
-            return make_bitop(lhs, rhs, And);
-        case TAsignBitOr:
-            return make_bitop(lhs, rhs, Or);
-        case TAsignBitXor:
-            return make_bitop(lhs, rhs, Xor);
-        default:
-            llvm_unreachable("bad assignment operator!");
+        case TAssign: return;
+        case TAsignAdd: return make_add(lhs, rhs);
+        case TAsignSub: return make_sub(lhs, rhs);
+        case TAsignMul: return make_mul(lhs, rhs);
+        case TAsignDiv: return make_div(lhs, rhs);
+        case TAsignRem: return make_rem(lhs, rhs);
+        case TAsignShl: return make_shl(lhs, rhs);
+        case TAsignShr: return make_shr(lhs, rhs);
+        case TAsignBitAnd: return make_bitop(lhs, rhs, And);
+        case TAsignBitOr: return make_bitop(lhs, rhs, Or);
+        case TAsignBitXor: return make_bitop(lhs, rhs, Xor);
+        default: llvm_unreachable("bad assignment operator!");
         }
     }
     Expr assignment_expression() {
@@ -3739,17 +3567,10 @@ NEXT:
         for (const auto &it : jumper.labels) {
             IdentRef name = it.first;
             switch (it.second.flags) {
-            case LBL_FORWARD:
-                type_error(loc, "use of undeclared label: %I", name);
-                break;
-            case LBL_DECLARED:
-                warning(loc, "unused label: %I", name);
-                break;
-            case LBL_OK:
-                dbgprint("push label into function: %s\n", name->getKey().data());
-                break;
-            default:
-                llvm_unreachable("");
+            case LBL_FORWARD: type_error(loc, "use of undeclared label: %I", name); break;
+            case LBL_DECLARED: warning(loc, "unused label: %I", name); break;
+            case LBL_OK: dbgprint("push label into function: %s\n", name->getKey().data()); break;
+            default: llvm_unreachable("");
             }
         }
         jumper.used_breaks.clear();

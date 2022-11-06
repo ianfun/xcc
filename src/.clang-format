@@ -10,6 +10,8 @@ SpaceAfterLogicalNot: false
 SortIncludes: CaseSensitive
 ReferenceAlignment: Right
 PointerAlignment: Right
+AllowShortCaseLabelsOnASingleLine: true
+AllowShortEnumsOnASingleLine: false
 SpaceInEmptyParentheses: false
 IndentWidth: 4
 Language: Cpp

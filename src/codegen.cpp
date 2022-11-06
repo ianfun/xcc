@@ -139,10 +139,8 @@ struct IRGen : public DiagnosticHelper {
     Type wrap(CType ty) {
         // wrap a CType to LLVM Type
         switch (ty->k) {
-        case TYPRIM:
-            return types[getNoSignTypeIndex(ty->tags)];
-        case TYPOINTER:
-            return types[xptr];
+        case TYPRIM: return types[getNoSignTypeIndex(ty->tags)];
+        case TYPOINTER: return types[xptr];
         case TYFUNCTION: {
             // fast case: search cached
             auto it = function_type_cache.find(ty);
@@ -158,23 +156,17 @@ struct IRGen : public DiagnosticHelper {
             function_type_cache[ty] = T; // add to cache
             return T;
         }
-        case TYARRAY:
-            return llvm::ArrayType::get(wrap(ty->arrtype), ty->arrsize);
-        case TYENUM:
-            return types[x32];
+        case TYARRAY: return llvm::ArrayType::get(wrap(ty->arrtype), ty->arrsize);
+        case TYENUM: return types[x32];
         case TYINCOMPLETE:
             switch (ty->tag) {
             case TYSTRUCT:
-            case TYUNION:
-                return tags[ty->iidx];
-            case TYENUM:
-                return types[x32];
-            default:
-                llvm_unreachable("");
+            case TYUNION: return tags[ty->iidx];
+            case TYENUM: return types[x32];
+            default: llvm_unreachable("");
             }
         case TYBITFIELD:
-        default:
-            llvm_unreachable("unexpected type!");
+        default: llvm_unreachable("unexpected type!");
         }
     }
     DIType wrap3(CType ty) {
@@ -266,8 +258,7 @@ struct IRGen : public DiagnosticHelper {
                 di->createBasicType("float", getSizeInBits(types[xfloat]), llvm::dwarf::DW_ATE_decimal_float);
             ditypes[doublety] =
                 di->createBasicType("double", getSizeInBits(types[xdouble]), llvm::dwarf::DW_ATE_decimal_float);
-            ditypes[ptrty] =
-                di->createPointerType(nullptr, pointerSizeInBits, 0, llvm::None, "void*");
+            ditypes[ptrty] = di->createPointerType(nullptr, pointerSizeInBits, 0, llvm::None, "void*");
             module->addModuleFlag(llvm::Module::Warning, "Debug Info Version", llvm::DEBUG_METADATA_VERSION);
             module->addModuleFlag(llvm::Module::Warning, "Dwarf Version", llvm::dwarf::DWARF_VERSION);
         }
@@ -302,10 +293,8 @@ struct IRGen : public DiagnosticHelper {
     }
     Type wrap2(CType ty) {
         switch (ty->k) {
-        case TYPRIM:
-            return types[getNoSignTypeIndex(ty->tags)];
-        case TYPOINTER:
-            return types[xptr];
+        case TYPRIM: return types[getNoSignTypeIndex(ty->tags)];
+        case TYPOINTER: return types[xptr];
         case TYSTRUCT:
         case TYUNION: {
             size_t L = ty->selems.size();
@@ -314,12 +303,9 @@ struct IRGen : public DiagnosticHelper {
                 buf[i] = wrap2(ty->selems[i].ty);
             return llvm::StructType::get(ctx, ArrayRef<Type>(buf, L));
         }
-        case TYARRAY:
-            return llvm::ArrayType::get(wrap(ty->arrtype), ty->arrsize);
-        case TYENUM:
-            return types[x32];
-        default:
-            llvm_unreachable("");
+        case TYARRAY: return llvm::ArrayType::get(wrap(ty->arrtype), ty->arrsize);
+        case TYENUM: return types[x32];
+        default: llvm_unreachable("");
         }
     }
     DIType createEnum(CType ty, llvm::DICompositeType *old) {
@@ -331,9 +317,9 @@ struct IRGen : public DiagnosticHelper {
             buf[i] = di->createEnumerator(ty->eelems[i].name->getKey(), ty->eelems[i].val);
         }
 
-        auto MD = di->createEnumerationType(
-            getLexScope(), Name, getFile(debugLoc.id), debugLoc.line, getSizeInBits(types[x32]), 0,
-            di->getOrCreateArray(ArrayRef<llvm::Metadata *>(buf, ty->selems.size())), ditypes[i32ty]);
+        auto MD = di->createEnumerationType(getLexScope(), Name, getFile(debugLoc.id), debugLoc.line, 32, 0,
+                                            di->getOrCreateArray(ArrayRef<llvm::Metadata *>(buf, ty->selems.size())),
+                                            ditypes[i32ty]);
         if (old) {
             old = llvm::MDNode::replaceWithPermanent(llvm::TempDICompositeType(old));
             llvm::MetadataTracking::untrack(&old, *old);
@@ -342,12 +328,11 @@ struct IRGen : public DiagnosticHelper {
     }
     DIType wrap3Noqualified(CType ty) {
         switch (ty->k) {
-        case TYPRIM:
-            return ditypes[getTypeIndex(ty->tags)];
+        case TYPRIM: return ditypes[getTypeIndex(ty->tags)];
         case TYPOINTER:
             if (ty->tags & TYVOID)
                 return ditypes[ptrty];
-            return di->createPointerType(wrap3(ty->p), ditypes[ptrty]->getSizeInBits());
+            return di->createPointerType(wrap3(ty->p), pointerSizeInBits);
         case TYSTRUCT:
         case TYUNION: {
             return dtags[ty->sidx];
@@ -398,14 +383,10 @@ struct IRGen : public DiagnosticHelper {
             auto arr = di->getOrCreateArray(ArrayRef<llvm::Metadata *>{subscripts});
             return di->createArrayType(size, getAlignof(ty) * 8, wrap3(ty->arrtype), arr);
         }
-        case TYFUNCTION:
-            return createDebugFuctionType(ty);
-        case TYENUM:
-            return dtags[ty->eidx];
-        case TYINCOMPLETE:
-            return dtags[ty->iidx];
-        default:
-            return nullptr;
+        case TYFUNCTION: return createDebugFuctionType(ty);
+        case TYENUM: return dtags[ty->eidx];
+        case TYINCOMPLETE: return dtags[ty->iidx];
+        default: return nullptr;
         }
     }
     Value gen_logical(Expr lhs, Expr rhs, bool isand = true) {
@@ -430,32 +411,19 @@ struct IRGen : public DiagnosticHelper {
     }
     auto getCastOp(CastOp a) {
         switch (a) {
-        case Trunc:
-            return llvm::Instruction::Trunc;
-        case ZExt:
-            return llvm::Instruction::ZExt;
-        case SExt:
-            return llvm::Instruction::SExt;
-        case FPToUI:
-            return llvm::Instruction::FPToUI;
-        case FPToSI:
-            return llvm::Instruction::FPToSI;
-        case UIToFP:
-            return llvm::Instruction::UIToFP;
-        case SIToFP:
-            return llvm::Instruction::SIToFP;
-        case FPTrunc:
-            return llvm::Instruction::FPTrunc;
-        case FPExt:
-            return llvm::Instruction::FPExt;
-        case PtrToInt:
-            return llvm::Instruction::PtrToInt;
-        case IntToPtr:
-            return llvm::Instruction::IntToPtr;
-        case BitCast:
-            return llvm::Instruction::BitCast;
-        default:
-            llvm_unreachable("bad cast operator");
+        case Trunc: return llvm::Instruction::Trunc;
+        case ZExt: return llvm::Instruction::ZExt;
+        case SExt: return llvm::Instruction::SExt;
+        case FPToUI: return llvm::Instruction::FPToUI;
+        case FPToSI: return llvm::Instruction::FPToSI;
+        case UIToFP: return llvm::Instruction::UIToFP;
+        case SIToFP: return llvm::Instruction::SIToFP;
+        case FPTrunc: return llvm::Instruction::FPTrunc;
+        case FPExt: return llvm::Instruction::FPExt;
+        case PtrToInt: return llvm::Instruction::PtrToInt;
+        case IntToPtr: return llvm::Instruction::IntToPtr;
+        case BitCast: return llvm::Instruction::BitCast;
+        default: llvm_unreachable("bad cast operator");
         }
     }
     llvm::Function *newFunction(llvm::FunctionType *fty, IdentRef name, uint32_t tags, size_t idx) {
@@ -489,8 +457,7 @@ struct IRGen : public DiagnosticHelper {
     void gen(Stmt s) {
         emitDebugLocation(s);
         switch (s->k) {
-        case SHead:
-            llvm_unreachable("");
+        case SHead: llvm_unreachable("");
         case SCompound: {
             if (options.g)
                 lexBlocks.push_back(di->createLexicalBlock(getLexScope(), getFile(s->loc.id), s->loc.line, s->loc.col));
@@ -510,17 +477,10 @@ struct IRGen : public DiagnosticHelper {
                 if (options.g) {
                     unsigned tag;
                     switch (s->decl_ty->tag) {
-                    case TYSTRUCT:
-                        tag = llvm::dwarf::DW_TAG_structure_type;
-                        break;
-                    case TYENUM:
-                        tag = llvm::dwarf::DW_TAG_enumeration_type;
-                        break;
-                    case TYUNION:
-                        tag = llvm::dwarf::DW_TAG_union_type;
-                        break;
-                    default:
-                        llvm_unreachable("invalid type tag");
+                    case TYSTRUCT: tag = llvm::dwarf::DW_TAG_structure_type; break;
+                    case TYENUM: tag = llvm::dwarf::DW_TAG_enumeration_type; break;
+                    case TYUNION: tag = llvm::dwarf::DW_TAG_union_type; break;
+                    default: llvm_unreachable("invalid type tag");
                     }
                     auto MD = di->createReplaceableCompositeType(tag, s->decl_ty->name->getKey(), getLexScope(),
                                                                  getFile(s->loc.line), s->loc.line);
@@ -549,9 +509,7 @@ struct IRGen : public DiagnosticHelper {
             }
             // replaceAllUsesWith
         } break;
-        case SExpr:
-            (void)gen(s->exprbody);
-            break;
+        case SExpr: (void)gen(s->exprbody); break;
         case SFunction: {
             assert(this->labels.empty());
             enterScope();
@@ -602,9 +560,7 @@ struct IRGen : public DiagnosticHelper {
             this->labels.clear();
             this->currentfunction = nullptr;
         } break;
-        case SReturn:
-            B.CreateRet(s->ret ? gen(s->ret) : nullptr);
-            break;
+        case SReturn: B.CreateRet(s->ret ? gen(s->ret) : nullptr); break;
         case SDeclOnly:
             if (options.g)
                 (void)wrap3Noqualified(s->decl);
@@ -743,8 +699,7 @@ struct IRGen : public DiagnosticHelper {
     Value getAddress(Expr e) {
         emitDebugLocation(e);
         switch (e->k) {
-        case EVar:
-            return vars[e->sval];
+        case EVar: return vars[e->sval];
         case EMemberAccess: {
             auto basep = e->k == EMemberAccess ? getAddress(e->obj) : gen(e->obj);
             auto ty = wrap(e->obj->ty);
@@ -752,21 +707,16 @@ struct IRGen : public DiagnosticHelper {
         }
         case EUnary:
             switch (e->uop) {
-            case AddressOf:
-                return getAddress(e->uoperand);
-            case Dereference:
-                return gen(e->uoperand);
-            default:
-                llvm_unreachable("");
+            case AddressOf: return getAddress(e->uoperand);
+            case Dereference: return gen(e->uoperand);
+            default: llvm_unreachable("");
             }
         case ESubscript: {
             Type ty;
             return subscript(e, ty);
         }
-        case EArrToAddress:
-            return getAddress(e->voidexpr);
-        case EConstantArray:
-            return e->array;
+        case EArrToAddress: return getAddress(e->voidexpr);
+        case EConstantArray: return e->array;
         case EArray:
         case EStruct: {
             auto v = e->k == EArray ? getArray(e) : getStruct(e);
@@ -788,10 +738,10 @@ struct IRGen : public DiagnosticHelper {
     Value gen(Expr e) {
         emitDebugLocation(e);
         switch (e->k) {
-        case EConstant:
-            return e->C;
+        case EConstant: return e->C;
         case EConstantArraySubstript:
-            return llvm::ConstantExpr::getInBoundsGetElementPtr(wrap(e->ty->p), e->carray, ConstantInt::get(ctx, e->cidx));
+            return llvm::ConstantExpr::getInBoundsGetElementPtr(wrap(e->ty->p), e->carray,
+                                                                ConstantInt::get(ctx, e->cidx));
         case EPostFix: {
             auto p = getAddress(e->poperand);
             auto ty = wrap(e->ty);
@@ -807,8 +757,7 @@ struct IRGen : public DiagnosticHelper {
             store(p, v, e->poperand->ty->align);
             return r;
         }
-        case EArrToAddress:
-            return getAddress(e->voidexpr);
+        case EArrToAddress: return getAddress(e->voidexpr);
         case ESubscript: {
             Type ty;
             auto v = subscript(e, ty);
@@ -820,8 +769,7 @@ struct IRGen : public DiagnosticHelper {
             //   base = load(base, wrap(e->obj->ty), e->obj->ty->align);
             return B.CreateExtractValue(base, e->idx);
         }
-        case EConstantArray:
-            return e->array;
+        case EConstantArray: return e->array;
         case EBin: {
             if (e->bop == LogicalAnd)
                 return gen_logical(e->lhs, e->rhs, true);
@@ -842,36 +790,22 @@ struct IRGen : public DiagnosticHelper {
             Value rhs = gen(e->rhs);
             unsigned pop = 0;
             switch (e->bop) {
-            case LogicalOr:
-                llvm_unreachable("");
-            case LogicalAnd:
-                llvm_unreachable("");
-            case Assign:
-                llvm_unreachable("");
-            case AtomicrmwAdd:
-                pop = static_cast<unsigned>(llvm::AtomicRMWInst::Add);
-                goto BINOP_ATOMIC_RMW;
-            case AtomicrmwSub:
-                pop = static_cast<unsigned>(llvm::AtomicRMWInst::Sub);
-                goto BINOP_ATOMIC_RMW;
-            case AtomicrmwXor:
-                pop = static_cast<unsigned>(llvm::AtomicRMWInst::Xor);
-                goto BINOP_ATOMIC_RMW;
-            case AtomicrmwOr:
-                pop = static_cast<unsigned>(llvm::AtomicRMWInst::Or);
-                goto BINOP_ATOMIC_RMW;
+            case LogicalOr: llvm_unreachable("");
+            case LogicalAnd: llvm_unreachable("");
+            case Assign: llvm_unreachable("");
+            case AtomicrmwAdd: pop = static_cast<unsigned>(llvm::AtomicRMWInst::Add); goto BINOP_ATOMIC_RMW;
+            case AtomicrmwSub: pop = static_cast<unsigned>(llvm::AtomicRMWInst::Sub); goto BINOP_ATOMIC_RMW;
+            case AtomicrmwXor: pop = static_cast<unsigned>(llvm::AtomicRMWInst::Xor); goto BINOP_ATOMIC_RMW;
+            case AtomicrmwOr: pop = static_cast<unsigned>(llvm::AtomicRMWInst::Or); goto BINOP_ATOMIC_RMW;
             case AtomicrmwAnd:
                 pop = static_cast<unsigned>(llvm::AtomicRMWInst::And);
                 goto BINOP_ATOMIC_RMW;
 BINOP_ATOMIC_RMW:
                 return B.CreateAtomicRMW(static_cast<llvm::AtomicRMWInst::BinOp>(pop), lhs, rhs, llvm::None,
                                          llvm::AtomicOrdering::SequentiallyConsistent);
-            case SAdd:
-                return B.CreateNSWAdd(lhs, rhs);
-            case SSub:
-                return B.CreateNSWSub(lhs, rhs);
-            case SMul:
-                return B.CreateNSWMul(lhs, rhs);
+            case SAdd: return B.CreateNSWAdd(lhs, rhs);
+            case SSub: return B.CreateNSWSub(lhs, rhs);
+            case SMul: return B.CreateNSWMul(lhs, rhs);
             case PtrDiff: {
                 auto sub = B.CreateSub(lhs, rhs);
                 auto s = getsizeof(e->lhs->castval->ty->p);
@@ -887,113 +821,50 @@ BINOP_ATOMIC_RMW:
                     lhs = B.CreateZExt(lhs, intptrTy);
                 }
                 return B.CreateInBoundsGEP(wrap(e->ty->p), lhs, {rhs});
-            case EQ:
-                pop = static_cast<unsigned>(llvm::CmpInst::ICMP_EQ);
-                goto BINOP_ICMP;
-            case NE:
-                pop = static_cast<unsigned>(llvm::CmpInst::ICMP_NE);
-                goto BINOP_ICMP;
-            case UGT:
-                pop = static_cast<unsigned>(llvm::CmpInst::ICMP_UGT);
-                goto BINOP_ICMP;
-            case UGE:
-                pop = static_cast<unsigned>(llvm::CmpInst::ICMP_UGE);
-                goto BINOP_ICMP;
-            case ULT:
-                pop = static_cast<unsigned>(llvm::CmpInst::ICMP_ULT);
-                goto BINOP_ICMP;
-            case ULE:
-                pop = static_cast<unsigned>(llvm::CmpInst::ICMP_ULE);
-                goto BINOP_ICMP;
-            case SGT:
-                pop = static_cast<unsigned>(llvm::CmpInst::ICMP_SGT);
-                goto BINOP_ICMP;
-            case SGE:
-                pop = static_cast<unsigned>(llvm::CmpInst::ICMP_SGE);
-                goto BINOP_ICMP;
-            case SLT:
-                pop = static_cast<unsigned>(llvm::CmpInst::ICMP_SLT);
-                goto BINOP_ICMP;
+            case EQ: pop = static_cast<unsigned>(llvm::CmpInst::ICMP_EQ); goto BINOP_ICMP;
+            case NE: pop = static_cast<unsigned>(llvm::CmpInst::ICMP_NE); goto BINOP_ICMP;
+            case UGT: pop = static_cast<unsigned>(llvm::CmpInst::ICMP_UGT); goto BINOP_ICMP;
+            case UGE: pop = static_cast<unsigned>(llvm::CmpInst::ICMP_UGE); goto BINOP_ICMP;
+            case ULT: pop = static_cast<unsigned>(llvm::CmpInst::ICMP_ULT); goto BINOP_ICMP;
+            case ULE: pop = static_cast<unsigned>(llvm::CmpInst::ICMP_ULE); goto BINOP_ICMP;
+            case SGT: pop = static_cast<unsigned>(llvm::CmpInst::ICMP_SGT); goto BINOP_ICMP;
+            case SGE: pop = static_cast<unsigned>(llvm::CmpInst::ICMP_SGE); goto BINOP_ICMP;
+            case SLT: pop = static_cast<unsigned>(llvm::CmpInst::ICMP_SLT); goto BINOP_ICMP;
             case SLE:
                 pop = static_cast<unsigned>(llvm::CmpInst::ICMP_SLE);
                 goto BINOP_ICMP;
 BINOP_ICMP:
                 return B.CreateICmp(static_cast<llvm::CmpInst::Predicate>(pop), lhs, rhs);
-            case FEQ:
-                pop = static_cast<unsigned>(llvm::FCmpInst::FCMP_OEQ);
-                goto BINOP_FCMP;
-            case FNE:
-                pop = static_cast<unsigned>(llvm::FCmpInst::FCMP_ONE);
-                goto BINOP_FCMP;
-            case FGT:
-                pop = static_cast<unsigned>(llvm::FCmpInst::FCMP_OGT);
-                goto BINOP_FCMP;
-            case FGE:
-                pop = static_cast<unsigned>(llvm::FCmpInst::FCMP_OGE);
-                goto BINOP_FCMP;
-            case FLT:
-                pop = static_cast<unsigned>(llvm::FCmpInst::FCMP_OLT);
-                goto BINOP_FCMP;
+            case FEQ: pop = static_cast<unsigned>(llvm::FCmpInst::FCMP_OEQ); goto BINOP_FCMP;
+            case FNE: pop = static_cast<unsigned>(llvm::FCmpInst::FCMP_ONE); goto BINOP_FCMP;
+            case FGT: pop = static_cast<unsigned>(llvm::FCmpInst::FCMP_OGT); goto BINOP_FCMP;
+            case FGE: pop = static_cast<unsigned>(llvm::FCmpInst::FCMP_OGE); goto BINOP_FCMP;
+            case FLT: pop = static_cast<unsigned>(llvm::FCmpInst::FCMP_OLT); goto BINOP_FCMP;
             case FLE:
                 pop = static_cast<unsigned>(llvm::FCmpInst::FCMP_OLE);
                 goto BINOP_FCMP;
 BINOP_FCMP:
                 return B.CreateFCmp(static_cast<llvm::CmpInst::Predicate>(pop), lhs, rhs);
-            case Comma:
-                return rhs;
-            case UAdd:
-                pop = llvm::Instruction::Add;
-                goto BINOP_ARITH;
-            case FAdd:
-                pop = llvm::Instruction::FAdd;
-                goto BINOP_ARITH;
-            case USub:
-                pop = llvm::Instruction::Sub;
-                goto BINOP_ARITH;
-            case FSub:
-                pop = llvm::Instruction::FSub;
-                goto BINOP_ARITH;
-            case UMul:
-                pop = llvm::Instruction::Mul;
-                goto BINOP_ARITH;
-            case FMul:
-                pop = llvm::Instruction::FMul;
-                goto BINOP_ARITH;
-            case UDiv:
-                pop = llvm::Instruction::UDiv;
-                goto BINOP_ARITH;
-            case SDiv:
-                pop = llvm::Instruction::SDiv;
-                goto BINOP_ARITH;
-            case FDiv:
-                pop = llvm::Instruction::FDiv;
-                goto BINOP_ARITH;
-            case URem:
-                pop = llvm::Instruction::URem;
-                goto BINOP_ARITH;
-            case SRem:
-                pop = llvm::Instruction::SRem;
-                goto BINOP_ARITH;
-            case FRem:
-                pop = llvm::Instruction::FRem;
-                goto BINOP_ARITH;
+            case Comma: return rhs;
+            case UAdd: pop = llvm::Instruction::Add; goto BINOP_ARITH;
+            case FAdd: pop = llvm::Instruction::FAdd; goto BINOP_ARITH;
+            case USub: pop = llvm::Instruction::Sub; goto BINOP_ARITH;
+            case FSub: pop = llvm::Instruction::FSub; goto BINOP_ARITH;
+            case UMul: pop = llvm::Instruction::Mul; goto BINOP_ARITH;
+            case FMul: pop = llvm::Instruction::FMul; goto BINOP_ARITH;
+            case UDiv: pop = llvm::Instruction::UDiv; goto BINOP_ARITH;
+            case SDiv: pop = llvm::Instruction::SDiv; goto BINOP_ARITH;
+            case FDiv: pop = llvm::Instruction::FDiv; goto BINOP_ARITH;
+            case URem: pop = llvm::Instruction::URem; goto BINOP_ARITH;
+            case SRem: pop = llvm::Instruction::SRem; goto BINOP_ARITH;
+            case FRem: pop = llvm::Instruction::FRem; goto BINOP_ARITH;
 
-            case Shr:
-                pop = llvm::Instruction::LShr;
-                goto BINOP_SHIFT;
-            case AShr:
-                pop = llvm::Instruction::AShr;
-                goto BINOP_SHIFT;
-            case Shl:
-                pop = llvm::Instruction::Shl;
-                goto BINOP_SHIFT;
+            case Shr: pop = llvm::Instruction::LShr; goto BINOP_SHIFT;
+            case AShr: pop = llvm::Instruction::AShr; goto BINOP_SHIFT;
+            case Shl: pop = llvm::Instruction::Shl; goto BINOP_SHIFT;
 
-            case And:
-                pop = llvm::Instruction::And;
-                goto BINOP_BITWISE;
-            case Xor:
-                pop = llvm::Instruction::Xor;
-                goto BINOP_BITWISE;
+            case And: pop = llvm::Instruction::And; goto BINOP_BITWISE;
+            case Xor: pop = llvm::Instruction::Xor; goto BINOP_BITWISE;
             case Or:
                 pop = llvm::Instruction::Or;
                 goto BINOP_BITWISE;
@@ -1003,20 +874,14 @@ BINOP_SHIFT:
                 return B.CreateBinOp(static_cast<llvm::Instruction::BinaryOps>(pop), lhs, rhs);
             }
         }
-        case EVoid:
-            return (void)gen(e->voidexpr), nullptr;
+        case EVoid: return (void)gen(e->voidexpr), nullptr;
         case EUnary:
             switch (e->uop) {
-            case SNeg:
-                return B.CreateNSWNeg(gen(e->uoperand));
-            case UNeg:
-                return B.CreateNeg(gen(e->uoperand));
-            case FNeg:
-                return B.CreateFNeg(gen(e->uoperand));
-            case Not:
-                return B.CreateNot(gen(e->uoperand));
-            case AddressOf:
-                return getAddress(e->uoperand);
+            case SNeg: return B.CreateNSWNeg(gen(e->uoperand));
+            case UNeg: return B.CreateNeg(gen(e->uoperand));
+            case FNeg: return B.CreateFNeg(gen(e->uoperand));
+            case Not: return B.CreateNot(gen(e->uoperand));
+            case AddressOf: return getAddress(e->uoperand);
             case Dereference: {
                 auto g = gen(e->uoperand);
                 auto ty = wrap(e->ty);
@@ -1028,8 +893,7 @@ BINOP_SHIFT:
                     r->setOrdering(llvm::AtomicOrdering::SequentiallyConsistent);
                 return r;
             }
-            case LogicalNot:
-                return B.CreateIsNull(gen(e->uoperand));
+            case LogicalNot: return B.CreateIsNull(gen(e->uoperand));
             }
         case EVar: {
             auto pvar = vars[e->sval];
@@ -1077,8 +941,7 @@ BINOP_SHIFT:
             phi->addIncoming(right, iffalse);
             return phi;
         }
-        case ECast:
-            return B.CreateCast(getCastOp(e->castop), gen(e->castval), wrap(e->ty));
+        case ECast: return B.CreateCast(getCastOp(e->castop), gen(e->castval), wrap(e->ty));
         case ECall: {
             Value f;
             auto ty = cast<llvm::FunctionType>(wrap(e->callfunc->ty->p));
@@ -1095,12 +958,9 @@ BINOP_SHIFT:
             auto r = B.CreateCall(ty, f, ArrayRef<Value>(buf, l));
             return r;
         }
-        case EStruct:
-            return getStruct(e);
-        case EArray:
-            return getArray(e);
-        default:
-            llvm_unreachable("bad enum kind!");
+        case EStruct: return getStruct(e);
+        case EArray: return getArray(e);
+        default: llvm_unreachable("bad enum kind!");
         }
     }
 };
