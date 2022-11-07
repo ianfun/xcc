@@ -1,5 +1,14 @@
 ## The XCC Compiler
 
+XCC is a Clang-like C compiler.
+
+screenshots
+
 ![](screenshots.png)
 
-XCC is a C compiler, written in C++, and code generation to LLVM IR
+## JIT
+
+Just In Time Compilation demo
+
+![](jit.png)
+

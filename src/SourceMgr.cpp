@@ -117,6 +117,9 @@ struct SourceMgr : public DiagnosticHelper {
         streams.push_back(f);
         return true;
     }
+    bool empty() const {
+        return includeStack.empty();
+    }
     // read a char from a stream
     LLVM_NODISCARD char raw_read(Stream &f) {
         switch (f.k) {

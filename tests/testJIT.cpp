@@ -1,67 +1,111 @@
-// program to test C preprocessor
+// the main program include file
 
 #include "../src/xcc.h"
 #include "../src/xInitLLVM.cpp"
-#include <llvm/Support/CommandLine.h>
-#include <llvm/Support/TargetSelect.h>
+#include "../src/Driver/Driver.cpp"
+#include <llvm/Support/Allocator.h>
+#include <llvm/Support/StringSaver.h>
 
-static llvm::cl::list<std::string> InputFiles(llvm::cl::Positional, llvm::cl::desc("<input files>"), llvm::cl::ZeroOrMore);
+void myGetLine(std::string &line) {
+    char c;
+    ssize_t L;
 
-static xcc::Options options;
+    std::string str = "Enter command line arguments for main():\n> ";
+    str += line;
 
-int main(int argc, const char **argv)
+    write(STDERR_FILENO, str.data(), str.size());
+
+    for (;;) {
+        L = read(STDIN_FILENO, &c, sizeof(char));
+        if (L <= 0 || c == '\n' || c == '\r') break;
+        line += c;
+    }
+}
+
+int main(int argc_, const char **argv_)
 {
-    xcc::xcc_context ctx;
+    // make our text printer that print to stderr
+    xcc::TextDiagnosticPrinter printer(llvm::errs()); 
 
-    XInitLLVM crashReport(ctx, argc, argv);
+    // create xcc_context
+    xcc::xcc_context ctx {&printer};
 
-    if (!options.run(argc, argv))
-        return 1;    
+    // create a crash report info
+    XInitLLVM crashReport(ctx, argc_, argv_);
 
+    // init args
+    llvm::SmallVector<const char *, 8> argv(argv_, argv_ + argc_);
+    
+    // register targets
+    llvm::InitializeAllTargets();
+
+    // create the Driver
+    xcc::driver::Driver theDriver(ctx);
+
+    // XCC options
+    xcc::Options options;
+
+    // create SourceMgr for mangement source files
     xcc::SourceMgr SM(ctx);
 
-    auto thePrinter = std::make_unique<xcc::TextDiagnosticPrinter>(SM);
+    // set SourceMgr to the printer for printing source lines
+    ctx.printer->setSourceMgr(&SM);
 
-    ctx.setPrinter(thePrinter.get());
+    // parse options ...
+    if (theDriver.BuildCompilation(argv, options, SM))
+        return 1;
 
-    if (InputFiles.empty())
-        return SM.fatal("no input files"), 1;
+    llvm::InitializeAllAsmParsers();
+    llvm::InitializeAllAsmPrinters();
+    llvm::InitializeAllTargetMCs();
+    llvm::InitializeAllDisassemblers();
 
-    for (const auto &str: InputFiles)
-        SM.addFile(str.c_str());
-
-    llvm::InitializeNativeTarget();
-    llvm::InitializeNativeTargetAsmParser();
-    llvm::InitializeNativeTargetAsmPrinter();
-    llvm::InitializeNativeTargetDisassembler();
-
+    // create LLVMContext - this will delete all modules when it deleted(dtor)
     auto llvmcontext = std::make_unique<llvm::LLVMContext>();
-
     llvmcontext->setDiscardValueNames(true);
     llvmcontext->setOpaquePointers(true);
-    llvmcontext->setDiagnosticHandler(std::make_unique<xcc::XCCDiagnosticHandler>());
+    // set our DiagnosticHandler
+    llvmcontext->setDiagnosticHandler(std::make_unique<xcc::XCCDiagnosticHandler>()); 
 
+    // preparing target information and ready for code generation to LLVM IR
     xcc::IRGen ig(ctx, SM, *llvmcontext, options);
 
+    // create parser
     xcc::Parser parser(SM, ctx, ig);
 
+    // now, parsing source files ...
     size_t num_typedefs, num_tags;
     auto ast = parser.run(num_typedefs, num_tags);
-    thePrinter->finalize();
+    printer.finalize();
     if (ctx.printer->NumErrors)
         return 1;
 
     ig.run(ast, num_typedefs, num_tags);
     std::unique_ptr<llvm::Module> M;
     M.reset(ig.module);
-    
+
+    std::string cmdline = options.mainFileName;
+    cmdline += ' ';
+
+    myGetLine(cmdline);
+
+    llvm::BumpPtrAllocator bumpAlloc;
+    llvm::SmallVector<const char*, 4> newArgvs;
+    llvm::StringSaver string_Saver(bumpAlloc);
+
+#if WINDOWS
+    llvm::cl::TokenizeGNUCommandLine(cmdline, string_Saver, newArgvs);
+#else
+    llvm::cl::TokenizeWindowsCommandLineFull(cmdline, string_Saver, newArgvs);
+#endif
+
     auto JITE = xcc::JITRunner::Create();
     if (!JITE)
         return llvm::errs() << "cannot create JIT compiler and session:\n" << JITE.takeError(), 1;
     std::unique_ptr<xcc::JITRunner> TheJIT = std::move(*JITE);
     if (auto Error = TheJIT->addModule(llvm::orc::ThreadSafeModule(std::move(M), std::move(llvmcontext))))
         return llvm::errs() << "cannot add LLVM IR module:\n" << Error, 1;
-    auto E = TheJIT->runMain(argc, argv, environ);
+    auto E = TheJIT->runMain(newArgvs.size(), newArgvs.data(), environ);
     if (!E)
         return llvm::errs() << "cannot run main function:\n" << E.takeError(), 1;
     return *E;

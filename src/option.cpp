@@ -3,7 +3,5 @@ struct Options {
     llvm::Triple triple;
     SmallString<256> CWD;
     bool g;
-    Options() {
-        llvm::sys::fs::current_path(CWD);
-    }
+    Options() { llvm::sys::fs::current_path(CWD); }
 };

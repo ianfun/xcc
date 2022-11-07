@@ -4,7 +4,7 @@ void TextDiagnosticPrinter::printSource(Location loc) {
 #else
     off_t saved_posl;
 #endif
-    Stream &stream_ref = SM.streams[loc.id];
+    Stream &stream_ref = SM->streams[loc.id];
     if (stream_ref.k != AFileStream)
         return;
     uint32_t old_line = stream_ref.line;
@@ -28,7 +28,7 @@ void TextDiagnosticPrinter::printSource(Location loc) {
         char lastc, c = '\0';
         while (stream_ref.line < loc.line) {
             lastc = c;
-            c = SM.raw_read_from_id(loc.id);
+            c = SM->raw_read_from_id(loc.id);
             if (c == '\r') {
                 ++stream_ref.line;
             } else if (c == '\n') {
@@ -47,7 +47,7 @@ void TextDiagnosticPrinter::printSource(Location loc) {
         unsigned line_chars = 0, displayed_chars = 0, real = 0;
 
         for (;;) {
-            unsigned char c = SM.raw_read_from_id(loc.id);
+            unsigned char c = SM->raw_read_from_id(loc.id);
             if (c == '\0' || c == '\n' || c == '\r') {
                 if (real == 0)
                     real = displayed_chars;
@@ -96,8 +96,8 @@ EXIT:
 }
 void TextDiagnosticPrinter::realHandleDiagnostic(enum DiagnosticLevel level, const Diagnostic &Info) {
     bool locValid = Info.loc.isValid();
-    if (locValid) {
-        OS << SM.getFileName(Info.loc.id) << ':' << Info.loc.line << ':' << Info.loc.col << ": ";
+    if (SM && locValid) {
+        OS << SM->getFileName(Info.loc.id) << ':' << Info.loc.line << ':' << Info.loc.col << ": ";
     } else {
         OS << "xcc: ";
     }

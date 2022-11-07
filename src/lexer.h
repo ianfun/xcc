@@ -354,7 +354,7 @@ END:
         } else if (tok.tok == PPMacroPop)
             return endExpandMacro(tok.s), cpp();
     }
-    #define TOK2(tc, ac, at, bt)                                                                                           \
+#define TOK2(tc, ac, at, bt)                                                                                           \
     case tc:                                                                                                           \
         eat();                                                                                                         \
         if (c == ac)                                                                                                   \
@@ -391,593 +391,593 @@ END:
         default: return d;                                                                                             \
         }
 
-TokenV lex() {
-    // Tokenize
-    for (;;) {
-        if (c == '\0') {
-            return isPPMode = false, TEOF;
-        }
-        if (isCSkip(c)) {
-            for (;;) {
-                eat();
-                if (!isCSkip(c))
-                    break;
+    TokenV lex() {
+        // Tokenize
+        for (;;) {
+            if (c == '\0') {
+                return isPPMode = false, TEOF;
             }
-            if (isPPMode && !want_expr) {
-                return TSpace;
+            if (isCSkip(c)) {
+                for (;;) {
+                    eat();
+                    if (!isCSkip(c))
+                        break;
+                }
+                if (isPPMode && !want_expr) {
+                    return TSpace;
+                }
+                continue;
             }
-            continue;
-        }
-        updateLoc();
-        if (c == '#') {
-            goto RUN;
+            updateLoc();
+            if (c == '#') {
+                goto RUN;
 BAD_RET:
-            return isPPMode = false, lex();
+                return isPPMode = false, lex();
 RUN:
-            if (isPPMode) {
+                if (isPPMode) {
+                    eat();
+                    if (c == '#')
+                        return eat(), PPSharpSharp;
+                    return PPSharp;
+                }
+                isPPMode = true;
                 eat();
-                if (c == '#')
-                    return eat(), PPSharpSharp;
-                return PPSharp;
-            }
-            isPPMode = true;
-            eat();
-            tok = lex(); // directive
-            if (tok.tok < kw_start) {
-                pp_error(loc, "%s", "expect identifier");
-                goto BAD_RET;
-            }
-
-            IdentRef saved_name = tok.s;
-            Token saved_tok = saved_name->second.getToken();
-            if (saved_tok != PPinclude) {
-                do {
-                    tok = lex();
-                } while (tok.tok == TSpace);
-            }
-            switch (saved_tok) {
-            case PPdefine: {
-                PPMacro m = PPMacro();
-                IdentRef name;
-
+                tok = lex(); // directive
                 if (tok.tok < kw_start) {
                     pp_error(loc, "%s", "expect identifier");
                     goto BAD_RET;
                 }
-                name = tok.s;
-                if (tok.tok >= PP__LINE__ && tok.tok <= PP_Pragma)
-                    warning(loc, "redefining builtin macro %I", name);
-                tok = lex();
-                if (tok.tok == TLbracket)
-                    m.k = MFUNC;
-                while (tok.tok == TSpace)
-                    tok = lex();
-                if (m.k == MFUNC) {
-                    for (;;) {
+
+                IdentRef saved_name = tok.s;
+                Token saved_tok = saved_name->second.getToken();
+                if (saved_tok != PPinclude) {
+                    do {
                         tok = lex();
-                        if (tok.tok == PPIdent) {
-                            m.params.push_back(tok.s);
-                            tok = lex();
-                            if (tok.tok == TRbracket)
-                                break;
-                            if (tok.tok == TComma)
-                                continue;
-                            parse_error(loc, "%s", "')' or ',' expected");
-                            goto BAD_RET;
-                        }
-                        if (tok.tok == TEllipsis) {
-                            tok = lex();
-                            if (tok.tok != TEllipsis) {
-                                parse_error(loc, "%s", "'.' expected");
-                                goto BAD_RET;
-                            }
-                            tok = lex();
-                            if (tok.tok != TEllipsis) {
-                                parse_error(loc, "%s", "'.' expected");
-                                goto BAD_RET;
-                            }
-                            m.ivarargs = true;
-                            tok = lex();
-                            if (tok.tok != TRbracket) {
-                                parse_error(loc, "%s", "')' expected");
-                                goto BAD_RET;
-                            }
-                            continue;
-                        }
-                        if (tok.s->second.getToken() == PP__VA_ARGS__) {
-                            m.ivarargs = true;
-                            tok = lex();
-                            if (tok.tok != TRbracket) {
-                                parse_error(loc, "%s", "')' expected");
-                                goto BAD_RET;
-                            }
-                            break;
-                        }
-                        if (tok.tok == TRbracket)
-                            break;
-                        else
-                            parse_error(loc, "unexpected token: %C", c);
+                    } while (tok.tok == TSpace);
+                }
+                switch (saved_tok) {
+                case PPdefine: {
+                    PPMacro m = PPMacro();
+                    IdentRef name;
+
+                    if (tok.tok < kw_start) {
+                        pp_error(loc, "%s", "expect identifier");
+                        goto BAD_RET;
                     }
-                    tok = lex(); // eat ')'
+                    name = tok.s;
+                    if (tok.tok >= PP__LINE__ && tok.tok <= PP_Pragma)
+                        warning(loc, "redefining builtin macro %I", name);
+                    tok = lex();
+                    if (tok.tok == TLbracket)
+                        m.k = MFUNC;
                     while (tok.tok == TSpace)
                         tok = lex();
-                }
-                while (isPPMode) {
-                    m.tokens.push_back(tok), tok = lex();
-                }
-                if (m.tokens.size())
-                    while (m.tokens.back().tok == TSpace)
-                        m.tokens.pop_back();
-                bool ok = true;
-                if (m.tokens.size()) {
-                    if (m.tokens.front().tok == PPSharpSharp)
-                        parse_error(loc, "%s", "'##' cannot appear at start of macro expansion"), ok = false;
-                    if (m.tokens.size() >= 2)
-                        if (m.tokens.back().tok == PPSharpSharp)
-                            parse_error(loc, "'##' cannot appear at end of macro expansion"), ok = false;
-                }
-                if (ok) {
-                    const auto it = macros.find(name);
-                    if (it != macros.end())
-                        if (!m.equals(it->second))
-                            warning(loc, "macro %I redefined", name);
-                    macros[name] = m;
-                }
-            } break;
-            case Kif: {
-                Expr e;
-
-                want_expr = true;
-                e = constant_expression();
-                want_expr = false;
-                ok = true;
-                // TODO
-                dbgprint("#if: %s\n", ok ? "true" : "false");
-                ppstack.push_back(ok ? 1 : 0);
-                (void)e;
-            } break;
-            case PPifdef:
-            case PPifndef: {
-                if (tok.tok < kw_start) {
-                    isPPMode = false;
-                    pp_error(loc, "expect identifier");
-                    goto BAD_RET;
-                }
-                ok = macros.find(tok.s) != macros.end();
-                if (saved_tok == PPundef)
-                    ok = !ok;
-                dbgprint(saved_tok == PPundef ? "#ifdef: %s\n" : "#ifndef: %s\n", ok ? "true" : "false");
-                ppstack.push_back(ok ? 1 : 0);
-            } break;
-            case Kelse: {
-                if (ppstack.empty()) {
-                    pp_error(loc, "no matching #if");
-                    goto BAD_RET;
-                }
-                if (ppstack.back() & 2) {
-                    pp_error(loc, "#else after #else");
-                    goto BAD_RET;
-                }
-                auto &ref = ppstack.back();
-                ref |= 2;
-                ok = !ok;
-                dbgprint("#else: %s\n", ok ? "true" : "false");
-            } break;
-            case PPelif: {
-                if (ppstack.empty()) {
-                    pp_error(loc, "%s", "no matching #if");
-                    break;
-                }
-                if (ppstack.back() & 2) {
-                    pp_error(loc, "%s", "#elif after #else");
-                    break;
-                }
-                if (!ok) {
-                    Location cloc = getLoc();
+                    if (m.k == MFUNC) {
+                        for (;;) {
+                            tok = lex();
+                            if (tok.tok == PPIdent) {
+                                m.params.push_back(tok.s);
+                                tok = lex();
+                                if (tok.tok == TRbracket)
+                                    break;
+                                if (tok.tok == TComma)
+                                    continue;
+                                parse_error(loc, "%s", "')' or ',' expected");
+                                goto BAD_RET;
+                            }
+                            if (tok.tok == TEllipsis) {
+                                tok = lex();
+                                if (tok.tok != TEllipsis) {
+                                    parse_error(loc, "%s", "'.' expected");
+                                    goto BAD_RET;
+                                }
+                                tok = lex();
+                                if (tok.tok != TEllipsis) {
+                                    parse_error(loc, "%s", "'.' expected");
+                                    goto BAD_RET;
+                                }
+                                m.ivarargs = true;
+                                tok = lex();
+                                if (tok.tok != TRbracket) {
+                                    parse_error(loc, "%s", "')' expected");
+                                    goto BAD_RET;
+                                }
+                                continue;
+                            }
+                            if (tok.s->second.getToken() == PP__VA_ARGS__) {
+                                m.ivarargs = true;
+                                tok = lex();
+                                if (tok.tok != TRbracket) {
+                                    parse_error(loc, "%s", "')' expected");
+                                    goto BAD_RET;
+                                }
+                                break;
+                            }
+                            if (tok.tok == TRbracket)
+                                break;
+                            else
+                                parse_error(loc, "unexpected token: %C", c);
+                        }
+                        tok = lex(); // eat ')'
+                        while (tok.tok == TSpace)
+                            tok = lex();
+                    }
+                    while (isPPMode) {
+                        m.tokens.push_back(tok), tok = lex();
+                    }
+                    if (m.tokens.size())
+                        while (m.tokens.back().tok == TSpace)
+                            m.tokens.pop_back();
+                    bool ok = true;
+                    if (m.tokens.size()) {
+                        if (m.tokens.front().tok == PPSharpSharp)
+                            parse_error(loc, "%s", "'##' cannot appear at start of macro expansion"), ok = false;
+                        if (m.tokens.size() >= 2)
+                            if (m.tokens.back().tok == PPSharpSharp)
+                                parse_error(loc, "'##' cannot appear at end of macro expansion"), ok = false;
+                    }
+                    if (ok) {
+                        const auto it = macros.find(name);
+                        if (it != macros.end())
+                            if (!m.equals(it->second))
+                                warning(loc, "macro %I redefined", name);
+                        macros[name] = m;
+                    }
+                } break;
+                case Kif: {
                     Expr e;
+
                     want_expr = true;
                     e = constant_expression();
                     want_expr = false;
-                    ok = false;
-                    if (!e)
-                        pp_error(loc, "%s", "expect constant_expression");
-                    else {
-                        ok = force_eval(e, cloc);
-                        dbgprint("#if: %s\n", ok ? "true" : "false");
-                    }
-                } else
-                    ok = false;
-            } break;
-            case PPendif: {
-                if (ppstack.empty()) {
-                    pp_error(loc, "%s", "no matching #if");
-                    break;
-                }
-                ppstack.pop_back();
-                if (ppstack.empty())
                     ok = true;
-                else
-                    ok = (ppstack.back() & 1);
-                dbgprint("#endif: reset to %s\n", ok ? "true" : "false");
-            } break;
-            case PPinclude: {
-                while (c == ' ')
-                    eat();
-                char is_std = '\"';
-                xstring path = xstring::get();
-
-                switch (c) {
-                case '"':
-STD_INCLUDE:
-                    for (;;) {
-                        eat();
-                        if (c == is_std) {
-                            eat();
-                            break;
-                        }
-                        if (c == '\0' || c == '\n') {
-                            pp_error(loc, "%s", "unexpected EOF, expect path or '\"'");
-                            goto BAD_RET;
-                        }
-                        path.push_back(c);
-                    }
-                    path.make_eos();
-                    dbgprint("#including file %s\n", path.data());
-                    if (!SM.addIncludeFile(path.str(), is_std == '>'))
-                        pp_error("#include file not found: %R", StringRef(path.data(), path.length() - 1));
-                    path.free();
-                    break;
-                case '<': is_std = '>'; goto STD_INCLUDE;
-                default: pp_error(loc, "%s", "expect \"FILENAME\" or <FILENAME>"); goto BAD_RET;
-                }
-            } break;
-            case PPline: {
-                uint32_t line = 0;
-                if (!llvm::isDigit(c)) {
-                    pp_error(loc, "%s", "expect digits (positive line number)");
-                    break;
-                }
-                do
-                    line = line * 10 + (unsigned char)c;
-                while (eat(), llvm::isDigit(c));
-                SM.setLine(line);
-                while (isCSkip(c))
-                    eat();
-                if (c == '"') {
-                    xstring str = xstring::get(SM.getFileName());
-                    for (;;) {
-                        eat();
-                        if (c == '\n' || c == '"' || c == '\\' || c == '\0')
-                            break;
-                        str.push_back(c);
-                    }
-                    str.make_eos();
-                    SM.setFileName(str.data());
-                    // the string will not freed!
-                    if (c != '"') {
-                        pp_error(loc, "%s", "'\"' expected");
-                        break;
-                    }
-                    eat();
-                } else {
-                    if (c != '\n' && c != '\0') {
-                        pp_error(loc, "%s", "expect \"FILENAME\"");
+                    // TODO
+                    dbgprint("#if: %s\n", ok ? "true" : "false");
+                    ppstack.push_back(ok ? 1 : 0);
+                    (void)e;
+                } break;
+                case PPifdef:
+                case PPifndef: {
+                    if (tok.tok < kw_start) {
+                        isPPMode = false;
+                        pp_error(loc, "expect identifier");
                         goto BAD_RET;
                     }
-                }
-            } break;
-            case PPundef: {
-                if (tok.tok < kw_start)
-                    pp_error(loc, "%s", "macro name should be a identifier");
-                else {
+                    ok = macros.find(tok.s) != macros.end();
+                    if (saved_tok == PPundef)
+                        ok = !ok;
+                    dbgprint(saved_tok == PPundef ? "#ifdef: %s\n" : "#ifndef: %s\n", ok ? "true" : "false");
+                    ppstack.push_back(ok ? 1 : 0);
+                } break;
+                case Kelse: {
+                    if (ppstack.empty()) {
+                        pp_error(loc, "no matching #if");
+                        goto BAD_RET;
+                    }
+                    if (ppstack.back() & 2) {
+                        pp_error(loc, "#else after #else");
+                        goto BAD_RET;
+                    }
+                    auto &ref = ppstack.back();
+                    ref |= 2;
+                    ok = !ok;
+                    dbgprint("#else: %s\n", ok ? "true" : "false");
+                } break;
+                case PPelif: {
+                    if (ppstack.empty()) {
+                        pp_error(loc, "%s", "no matching #if");
+                        break;
+                    }
+                    if (ppstack.back() & 2) {
+                        pp_error(loc, "%s", "#elif after #else");
+                        break;
+                    }
+                    if (!ok) {
+                        Location cloc = getLoc();
+                        Expr e;
+                        want_expr = true;
+                        e = constant_expression();
+                        want_expr = false;
+                        ok = false;
+                        if (!e)
+                            pp_error(loc, "%s", "expect constant_expression");
+                        else {
+                            ok = force_eval(e, cloc);
+                            dbgprint("#if: %s\n", ok ? "true" : "false");
+                        }
+                    } else
+                        ok = false;
+                } break;
+                case PPendif: {
+                    if (ppstack.empty()) {
+                        pp_error(loc, "%s", "no matching #if");
+                        break;
+                    }
+                    ppstack.pop_back();
+                    if (ppstack.empty())
+                        ok = true;
+                    else
+                        ok = (ppstack.back() & 1);
+                    dbgprint("#endif: reset to %s\n", ok ? "true" : "false");
+                } break;
+                case PPinclude: {
+                    while (c == ' ')
+                        eat();
+                    char is_std = '\"';
+                    xstring path = xstring::get();
+
+                    switch (c) {
+                    case '"':
+STD_INCLUDE:
+                        for (;;) {
+                            eat();
+                            if (c == is_std) {
+                                eat();
+                                break;
+                            }
+                            if (c == '\0' || c == '\n') {
+                                pp_error(loc, "%s", "unexpected EOF, expect path or '\"'");
+                                goto BAD_RET;
+                            }
+                            path.push_back(c);
+                        }
+                        path.make_eos();
+                        dbgprint("#including file %s\n", path.data());
+                        if (!SM.addIncludeFile(path.str(), is_std == '>'))
+                            pp_error("#include file not found: %R", StringRef(path.data(), path.length() - 1));
+                        path.free();
+                        break;
+                    case '<': is_std = '>'; goto STD_INCLUDE;
+                    default: pp_error(loc, "%s", "expect \"FILENAME\" or <FILENAME>"); goto BAD_RET;
+                    }
+                } break;
+                case PPline: {
+                    uint32_t line = 0;
+                    if (!llvm::isDigit(c)) {
+                        pp_error(loc, "%s", "expect digits (positive line number)");
+                        break;
+                    }
+                    do
+                        line = line * 10 + (unsigned char)c;
+                    while (eat(), llvm::isDigit(c));
+                    SM.setLine(line);
+                    while (isCSkip(c))
+                        eat();
+                    if (c == '"') {
+                        xstring str = xstring::get(SM.getFileName());
+                        for (;;) {
+                            eat();
+                            if (c == '\n' || c == '"' || c == '\\' || c == '\0')
+                                break;
+                            str.push_back(c);
+                        }
+                        str.make_eos();
+                        SM.setFileName(str.data());
+                        // the string will not freed!
+                        if (c != '"') {
+                            pp_error(loc, "%s", "'\"' expected");
+                            break;
+                        }
+                        eat();
+                    } else {
+                        if (c != '\n' && c != '\0') {
+                            pp_error(loc, "%s", "expect \"FILENAME\"");
+                            goto BAD_RET;
+                        }
+                    }
+                } break;
+                case PPundef: {
+                    if (tok.tok < kw_start)
+                        pp_error(loc, "%s", "macro name should be a identifier");
+                    else {
 #if CC_DEBUG
-                    macros.erase(tok.s);
+                        macros.erase(tok.s);
 #else
-                    dbgprint("#undef: ", macros.erase(tok.s) ? "found" : "not found");
+                        dbgprint("#undef: ", macros.erase(tok.s) ? "found" : "not found");
 #endif
+                    }
+                } break;
+                case PPpragma: {
+                    llvm::SmallVector<TokenV> pragmas;
+                    while (isPPMode) {
+                        if (tok.tok != TSpace)
+                            pragmas.push_back(tok);
+                        tok = lex();
+                    }
+                    // TODO: pragma
+                } break;
+                case PPerror:
+                case PPwarning: {
+                    SmallString<256> s;
+                    for (; c != '\n' && c != '\0';) {
+                        s.push_back(c), eat();
+                    }
+                    if (saved_tok == PPwarning)
+                        warning(loc, "#warning: %R", s.str());
+                    else
+                        pp_error(loc, "#error: %R", s.str());
+                } break;
+                case TNewLine: continue;
+                default: pp_error(loc, "invalid preprocessing directive: %I", saved_name);
                 }
-            } break;
-            case PPpragma: {
-                llvm::SmallVector<TokenV> pragmas;
-                while (isPPMode) {
-                    if (tok.tok != TSpace)
-                        pragmas.push_back(tok);
+                while (tok.tok != TNewLine && tok.tok != TEOF)
                     tok = lex();
-                }
-                // TODO: pragma
-            } break;
-            case PPerror:
-            case PPwarning: {
-                SmallString<256> s;
-                for (; c != '\n' && c != '\0';) {
-                    s.push_back(c), eat();
-                }
-                if (saved_tok == PPwarning)
-                    warning(loc, "#warning: %R", s.str());
-                else
-                    pp_error(loc, "#error: %R", s.str());
-            } break;
-            case TNewLine: continue;
-            default: pp_error(loc, "invalid preprocessing directive: %I", saved_name);
+                isPPMode = false;
+                continue;
             }
-            while (tok.tok != TNewLine && tok.tok != TEOF)
-                tok = lex();
-            isPPMode = false;
-            continue;
-        }
-        if (!isPPMode && !ok) {
-            char lastc = c;
-            for (;;) {
-                if (c == '\0')
-                    return isPPMode = false, TEOF;
-                lastc = c;
+            if (!isPPMode && !ok) {
+                char lastc = c;
+                for (;;) {
+                    if (c == '\0')
+                        return isPPMode = false, TEOF;
+                    lastc = c;
+                    eat();
+                    if (lastc == '\n' && c == '#')
+                        goto RUN;
+                }
+            }
+            switch (c) {
+            case '\n':
+                if (isPPMode) {
+                    return isPPMode = false, TNewLine;
+                }
                 eat();
-                if (lastc == '\n' && c == '#')
-                    goto RUN;
-            }
-        }
-        switch (c) {
-        case '\n':
-            if (isPPMode) {
-                return isPPMode = false, TNewLine;
-            }
-            eat();
-            continue;
-        case 'u':
-            eat();
-            if (c == '"')
-                return lexStringLit(16);
-            if (c == '\'')
-                return lexCharLit(Ilong);
-            if (c == '8') {
+                continue;
+            case 'u':
+                eat();
+                if (c == '"')
+                    return lexStringLit(16);
+                if (c == '\'')
+                    return lexCharLit(Ilong);
+                if (c == '8') {
+                    eat();
+                    if (c != '"') {
+                        if (c == '\'')
+                            return lexCharLit();
+                        return lexIdent("u8");
+                    }
+                    return lexStringLit(8);
+                }
+                return lexIdent("u");
+            case 'U':
                 eat();
                 if (c != '"') {
                     if (c == '\'')
-                        return lexCharLit();
-                    return lexIdent("u8");
+                        return lexCharLit(Iulong);
+                    return lexIdent("U");
                 }
+                return lexStringLit(32);
+            case 'L':
+                eat();
+                if (c != '"') {
+                    if (c == '\'')
+                        return lexCharLit(Ilonglong);
+                    return lexIdent("L");
+                }
+                return lexStringLit(16);
+            case '.':
+                eat(); // first
+                if (c == '.') {
+                    eat(); // second
+                    if (c != '.')
+                        return TEllipsis2;
+                    eat(); // third
+                    return TEllipsis;
+                }
+                if (llvm::isDigit(c))
+                    return lexPPNumberAfterDot();
+                return TDot;
+            case '0':
+            case '1':
+            case '2':
+            case '3':
+            case '4':
+            case '5':
+            case '6':
+            case '7':
+            case '8':
+            case '9': return lexPPNumber();
+            case '\'': return lexCharLit();
+            case '(': eat(); return TLbracket;
+            case ')': eat(); return TRbracket;
+            case '~': eat(); return TBash;
+            case '?': eat(); return TQuestionMark;
+            case '{': eat(); return TLcurlyBracket;
+            case '}': eat(); return TRcurlyBracket;
+            case ',': eat(); return TComma;
+            case '[': eat(); return TLSquareBrackets;
+            case ']': eat(); return TRSquareBrackets;
+            case ';': eat(); return TSemicolon;
+            case '@': eat(); return TMouse;
+            case '"':
                 return lexStringLit(8);
-            }
-            return lexIdent("u");
-        case 'U':
+                TOK2('*', '=', TAsignMul, TMul)
+                TOK2('=', '=', TEq, TAssign)
+                TOK2('^', '=', TAsignBitXor, TXor)
+                TOK2('/', '=', TAsignDiv, TSlash)
+                TOK2('!', '=', TNe, TNot)
+                TOK2(':', '>', TRSquareBrackets, TColon)
+                TOK3('+', '+', TAddAdd, '=', TAsignAdd, TAdd)
+                TOK3('>', '=', TGe, '>', Tshr, TGt)
+                TOK3('|', '=', TAsignBitOr, '|', TLogicalOr, TBitOr)
+                TOK3('&', '=', TAsignBitAnd, '&', TLogicalAnd, TBitAnd)
+                TOK4('%', '=', TAsignRem, '>', TRcurlyBracket, ':', TBash, TPercent)
+                TOK4('-', '-', TSubSub, '=', TAsignSub, '>', TArrow, TDash)
+                TOK5('<', '<', Tshl, '=', TLe, ':', TLSquareBrackets, '%', TLcurlyBracket, TLt)
+            default:
+                if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_' || c == '$' || c == '\\' ||
+                    (unsigned char)c >= 128)
+                    return lexIdent();
+                warning(loc, "stray %C(ascii %u) in program", c, (unsigned)(unsigned char)c);
+                break;
+            } // end switch
             eat();
-            if (c != '"') {
-                if (c == '\'')
-                    return lexCharLit(Iulong);
-                return lexIdent("U");
+        } // end for
+    }     // end lex
+    void checkMacro() {
+        IdentRef name = tok.s;
+        Token saved_tok;
+        switch ((saved_tok = name->second.getToken())) {
+        case PP__LINE__:
+        case PP__COUNTER__: {
+            // 4294967295 - the highest unsigned 32 bit value, require 10 chars
+            xstring str = xstring::get_with_length(11);
+            {
+                uint32_t val = saved_tok == PP__LINE__ ? SM.getLine() : counter++;
+                str[0] = '0' + val / 1000000000;
+                str[1] = '0' + val / 100000000;
+                str[2] = '0' + val / 10000000;
+                str[3] = '0' + val / 1000000;
+                str[4] = '0' + val / 100000;
+                str[5] = '0' + val / 10000;
+                str[6] = '0' + val / 1000;
+                str[7] = '0' + val / 100;
+                str[8] = '0' + val / 10;
+                str[9] = '0' + val;
+                str[10] = '\0';
             }
-            return lexStringLit(32);
-        case 'L':
-            eat();
-            if (c != '"') {
-                if (c == '\'')
-                    return lexCharLit(Ilonglong);
-                return lexIdent("L");
-            }
-            return lexStringLit(16);
-        case '.':
-            eat(); // first
-            if (c == '.') {
-                eat(); // second
-                if (c != '.')
-                    return TEllipsis2;
-                eat(); // third
-                return TEllipsis;
-            }
-            if (llvm::isDigit(c))
-                return lexPPNumberAfterDot();
-            return TDot;
-        case '0':
-        case '1':
-        case '2':
-        case '3':
-        case '4':
-        case '5':
-        case '6':
-        case '7':
-        case '8':
-        case '9': return lexPPNumber();
-        case '\'': return lexCharLit();
-        case '(': eat(); return TLbracket;
-        case ')': eat(); return TRbracket;
-        case '~': eat(); return TBash;
-        case '?': eat(); return TQuestionMark;
-        case '{': eat(); return TLcurlyBracket;
-        case '}': eat(); return TRcurlyBracket;
-        case ',': eat(); return TComma;
-        case '[': eat(); return TLSquareBrackets;
-        case ']': eat(); return TRSquareBrackets;
-        case ';': eat(); return TSemicolon;
-        case '@': eat(); return TMouse;
-        case '"':
-            return lexStringLit(8);
-            TOK2('*', '=', TAsignMul, TMul)
-            TOK2('=', '=', TEq, TAssign)
-            TOK2('^', '=', TAsignBitXor, TXor)
-            TOK2('/', '=', TAsignDiv, TSlash)
-            TOK2('!', '=', TNe, TNot)
-            TOK2(':', '>', TRSquareBrackets, TColon)
-            TOK3('+', '+', TAddAdd, '=', TAsignAdd, TAdd)
-            TOK3('>', '=', TGe, '>', Tshr, TGt)
-            TOK3('|', '=', TAsignBitOr, '|', TLogicalOr, TBitOr)
-            TOK3('&', '=', TAsignBitAnd, '&', TLogicalAnd, TBitAnd)
-            TOK4('%', '=', TAsignRem, '>', TRcurlyBracket, ':', TBash, TPercent)
-            TOK4('-', '-', TSubSub, '=', TAsignSub, '>', TArrow, TDash)
-            TOK5('<', '<', Tshl, '=', TLe, ':', TLSquareBrackets, '%', TLcurlyBracket, TLt)
-        default:
-            if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_' || c == '$' || c == '\\' ||
-                (unsigned char)c >= 128)
-                return lexIdent();
-            warning(loc, "stray %C(ascii %u) in program", c, (unsigned)(unsigned char)c);
-            break;
-        } // end switch
-        eat();
-    } // end for
-} // end lex
-void checkMacro() {
-    IdentRef name = tok.s;
-    Token saved_tok;
-    switch ((saved_tok = name->second.getToken())) {
-    case PP__LINE__:
-    case PP__COUNTER__: {
-        // 4294967295 - the highest unsigned 32 bit value, require 10 chars
-        xstring str = xstring::get_with_length(11);
-        {
-            uint32_t val = saved_tok == PP__LINE__ ? SM.getLine() : counter++;
-            str[0] = '0' + val / 1000000000;
-            str[1] = '0' + val / 100000000;
-            str[2] = '0' + val / 10000000;
-            str[3] = '0' + val / 1000000;
-            str[4] = '0' + val / 100000;
-            str[5] = '0' + val / 10000;
-            str[6] = '0' + val / 1000;
-            str[7] = '0' + val / 100;
-            str[8] = '0' + val / 10;
-            str[9] = '0' + val;
-            str[10] = '\0';
-        }
-        tok = TokenV(ATokenVStrLit, TStringLit);
-        tok.str = str;
-        return;
-    }
-    case PP__DATE__:
-    case PP__TIME__: {
-        time_t now = time(nullptr);
-        struct tm *t = localtime(&now);
-
-        xstring str = xstring::get_with_capacity(32);
-        if (saved_tok == PP__DATE__)
-            // Mmm dd yyyy
-            str.msize() = snprintf(str.data(), 32, "%s %2d %4d", months[t->tm_mon], t->tm_mday, t->tm_year + 1900);
-        else
-            // hh:mm:ss
-            str.msize() = snprintf(str.data(), 32, "%02d:%02d:%02d", t->tm_hour, t->tm_min, t->tm_sec);
-        tok = TokenV(ATokenVStrLit, TStringLit);
-        tok.str = str;
-        return;
-    }
-    case PP__FILE__: {
-        tok = TokenV(ATokenVStrLit, TStringLit);
-        tok.str = xstring::get(SM.getFileName());
-        return;
-    }
-    case PP_Pragma: {
-        cpp();
-        if (tok.tok != TLbracket)
-            return expectLB(loc);
-        cpp();
-        if (tok.tok != TStringLit)
-            return expect(loc, "expect string literal");
-        cpp();
-        if (tok.tok != TStringLit)
-            return expect(loc, "string literal");
-        cpp();
-        if (tok.tok != TRbracket)
-            return expectRB(loc);
-        cpp(); // advance to next token
-        return;
-    }
-    default: {
-        auto it = macros.find(name);
-        if (it == macros.end()) {
-            if (tok.tok == PPIdent)
-                tok.tok = TIdentifier;
+            tok = TokenV(ATokenVStrLit, TStringLit);
+            tok.str = str;
             return;
         }
-        PPMacro &m = it->second;
-        switch (it->second.k) {
-        case MOBJ: {
-            if (m.tokens.size()) {
-                beginExpandMacro(name);
-                for (size_t i = 0; i < m.tokens.size(); i++) {
-                    TokenV theTok = m.tokens[i]; // copy ctor
-                    if (theTok.tok != TSpace) {
-                        if (tok.tok >= kw_start && isMacroInUse(theTok.s)) {
-                            // https://gcc.gnu.org/onlinedocs/cpp/Self-Referential-Macros.html
-                            dbgprint("skipping self-referential macro %s\n", theTok.s->getKey().data());
-                            if (theTok.tok == PPIdent)
-                                theTok.tok = TIdentifier;
-                        }
-                        tokenq.push_back(theTok);
-                    }
-                }
-            }
-            return cpp();
+        case PP__DATE__:
+        case PP__TIME__: {
+            time_t now = time(nullptr);
+            struct tm *t = localtime(&now);
+
+            xstring str = xstring::get_with_capacity(32);
+            if (saved_tok == PP__DATE__)
+                // Mmm dd yyyy
+                str.msize() = snprintf(str.data(), 32, "%s %2d %4d", months[t->tm_mon], t->tm_mday, t->tm_year + 1900);
+            else
+                // hh:mm:ss
+                str.msize() = snprintf(str.data(), 32, "%02d:%02d:%02d", t->tm_hour, t->tm_min, t->tm_sec);
+            tok = TokenV(ATokenVStrLit, TStringLit);
+            tok.str = str;
+            return;
         }
-        case MFUNC: {
-            TokenV saved_token = tok; // copy ctor
+        case PP__FILE__: {
+            tok = TokenV(ATokenVStrLit, TStringLit);
+            tok.str = xstring::get(SM.getFileName());
+            return;
+        }
+        case PP_Pragma: {
             cpp();
-            if (tok.tok == TLbracket) {
-                SmallVector<SmallVector<TokenV, 3>, 5> args;
-                args.push_back(SmallVector<TokenV, 3>());
-                cpp();
-                for (;; cpp()) {
-                    if (tok.tok == TEOF) {
-                        pp_error(loc, "unexpected EOF while parsing function-like macro arguments");
-                        return;
-                    }
-                    if (tok.tok == TRbracket)
-                        break;
-                    if (tok.tok == TComma)
-                        args.push_back(SmallVector<TokenV, 3>());
-                    else if (tok.tok == TNewLine) {
-                        //  new-line is considered a normal white-space character
-                        args.back().emplace_back(TSpace);
-                        isPPMode = true;
-                        eat();
-                    } else if (tok.tok == TSpace) {
-                        if (args.back().size())
-                            args.back().push_back(tok);
-                    } else
-                        args.back().push_back(tok);
-                }
-                for (size_t i = 0; i < args.size(); ++i) {
-                    while (args[i].size() && args[i].back().tok == TSpace)
-                        args[i].pop_back();
-                }
-                if (m.ivarargs ? args.size() < m.params.size() : args.size() != m.params.size()) {
-                    pp_error(loc, "macro %I expect %z arguments, %z provided", name, m.params.size(), args.size());
-                    return;
-                }
+            if (tok.tok != TLbracket)
+                return expectLB(loc);
+            cpp();
+            if (tok.tok != TStringLit)
+                return expect(loc, "expect string literal");
+            cpp();
+            if (tok.tok != TStringLit)
+                return expect(loc, "string literal");
+            cpp();
+            if (tok.tok != TRbracket)
+                return expectRB(loc);
+            cpp(); // advance to next token
+            return;
+        }
+        default: {
+            auto it = macros.find(name);
+            if (it == macros.end()) {
+                if (tok.tok == PPIdent)
+                    tok.tok = TIdentifier;
+                return;
+            }
+            PPMacro &m = it->second;
+            switch (it->second.k) {
+            case MOBJ: {
                 if (m.tokens.size()) {
                     beginExpandMacro(name);
                     for (size_t i = 0; i < m.tokens.size(); i++) {
                         TokenV theTok = m.tokens[i]; // copy ctor
                         if (theTok.tok != TSpace) {
-                            if (theTok.tok >= kw_start) {
-                                size_t j;
-                                IdentRef s = theTok.s;
-                                for (j = 0; j < m.params.size(); j++) {
-                                    if (s == m.params[i]) {
-                                        // xxx: llvm::SmallVector's append does better
-                                        for (const auto it : args[i])
-                                            tokenq.push_back(it);
-                                        goto BREAK;
-                                    }
-                                }
-                                if (isMacroInUse(s)) {
-                                    if (theTok.tok == PPIdent)
-                                        theTok.tok = TIdentifier;
-                                }
-                                tokenq.push_back(theTok);
-BREAK:;
+                            if (tok.tok >= kw_start && isMacroInUse(theTok.s)) {
+                                // https://gcc.gnu.org/onlinedocs/cpp/Self-Referential-Macros.html
+                                dbgprint("skipping self-referential macro %s\n", theTok.s->getKey().data());
+                                if (theTok.tok == PPIdent)
+                                    theTok.tok = TIdentifier;
                             }
-                        } else {
                             tokenq.push_back(theTok);
                         }
                     }
                 }
                 return cpp();
             }
-            tokenq.push_back(tok);
-            tok = saved_token;
-            if (saved_token.tok == PPIdent)
-                tok.tok = TIdentifier;
-            return;
-        } // end cast
-        default: llvm_unreachable("bad macro kind");
-        } // end switch
-    }     // end default
-    }     // end switch
-}
+            case MFUNC: {
+                TokenV saved_token = tok; // copy ctor
+                cpp();
+                if (tok.tok == TLbracket) {
+                    SmallVector<SmallVector<TokenV, 3>, 5> args;
+                    args.push_back(SmallVector<TokenV, 3>());
+                    cpp();
+                    for (;; cpp()) {
+                        if (tok.tok == TEOF) {
+                            pp_error(loc, "unexpected EOF while parsing function-like macro arguments");
+                            return;
+                        }
+                        if (tok.tok == TRbracket)
+                            break;
+                        if (tok.tok == TComma)
+                            args.push_back(SmallVector<TokenV, 3>());
+                        else if (tok.tok == TNewLine) {
+                            //  new-line is considered a normal white-space character
+                            args.back().emplace_back(TSpace);
+                            isPPMode = true;
+                            eat();
+                        } else if (tok.tok == TSpace) {
+                            if (args.back().size())
+                                args.back().push_back(tok);
+                        } else
+                            args.back().push_back(tok);
+                    }
+                    for (size_t i = 0; i < args.size(); ++i) {
+                        while (args[i].size() && args[i].back().tok == TSpace)
+                            args[i].pop_back();
+                    }
+                    if (m.ivarargs ? args.size() < m.params.size() : args.size() != m.params.size()) {
+                        pp_error(loc, "macro %I expect %z arguments, %z provided", name, m.params.size(), args.size());
+                        return;
+                    }
+                    if (m.tokens.size()) {
+                        beginExpandMacro(name);
+                        for (size_t i = 0; i < m.tokens.size(); i++) {
+                            TokenV theTok = m.tokens[i]; // copy ctor
+                            if (theTok.tok != TSpace) {
+                                if (theTok.tok >= kw_start) {
+                                    size_t j;
+                                    IdentRef s = theTok.s;
+                                    for (j = 0; j < m.params.size(); j++) {
+                                        if (s == m.params[i]) {
+                                            // xxx: llvm::SmallVector's append does better
+                                            for (const auto it : args[i])
+                                                tokenq.push_back(it);
+                                            goto BREAK;
+                                        }
+                                    }
+                                    if (isMacroInUse(s)) {
+                                        if (theTok.tok == PPIdent)
+                                            theTok.tok = TIdentifier;
+                                    }
+                                    tokenq.push_back(theTok);
+BREAK:;
+                                }
+                            } else {
+                                tokenq.push_back(theTok);
+                            }
+                        }
+                    }
+                    return cpp();
+                }
+                tokenq.push_back(tok);
+                tok = saved_token;
+                if (saved_token.tok == PPIdent)
+                    tok.tok = TIdentifier;
+                return;
+            } // end cast
+            default: llvm_unreachable("bad macro kind");
+            } // end switch
+        }     // end default
+        }     // end switch
+    }
 };

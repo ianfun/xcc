@@ -1,54 +1,58 @@
-// build: clang++/g++ testXXX.cpp `llvm-config --cxxflags --ldflags --libs`
+// the main program include file
 
 #include "../src/xcc.h"
 #include "../src/xInitLLVM.cpp"
-//#include "../src/Driver/Driver.cpp"
-#include <llvm/Support/CommandLine.h>
-#include <llvm/Support/TargetSelect.h>
+#include "../src/Driver/Driver.cpp"
 
-static llvm::cl::list<std::string> InputFiles(llvm::cl::Positional, llvm::cl::desc("<input files>"), llvm::cl::ZeroOrMore);
-
-int main(int argc, const char **argv)
+int main(int argc_, const char **argv_)
 {
-    llvm::SmallVector<const char *, 8> argv(argv_, argv_ + argc_);
-    xcc::xcc_context ctx;
+    // make our text printer that print to stderr
+    xcc::TextDiagnosticPrinter printer(llvm::errs()); 
 
-    XInitLLVM crashReport(ctx, argc, argv);
+    // create xcc_context
+    xcc::xcc_context ctx {&printer};
+
+    // create a crash report info
+    XInitLLVM crashReport(ctx, argc_, argv_);
+
+    // init args
+    llvm::SmallVector<const char *, 8> argv(argv_, argv_ + argc_);
+    
+    // register targets
     llvm::InitializeAllTargets();
 
+    // create the Driver
+    xcc::driver::Driver theDriver(ctx);
+
+    // XCC options
     xcc::Options options;
-    Driver theDriver(ctx);
 
-    if (!thePrinter.BuildCompilation(argv, options))
-        return 1;
-
+    // create SourceMgr for mangement source files
     xcc::SourceMgr SM(ctx);
 
-    auto thePrinter = std::make_unique<xcc::TextDiagnosticPrinter>(SM);
+    // set SourceMgr to the printer for printing source lines
+    ctx.printer->setSourceMgr(&SM);
 
-    ctx.setPrinter(thePrinter.get());
-
-    if (InputFiles.empty())
-        return SM.fatal("no input files"), 1;
-
-    for (const auto &str: InputFiles) {
-        if (str.length() == 1 && str.front() == '-')
-            SM.addStdin();
-        else
-            SM.addFile(str.c_str());
-    }
+    // parse options ...
+    if (theDriver.BuildCompilation(argv, options, SM))
+        return 1;
 
     llvm::InitializeAllAsmParsers();
     llvm::InitializeAllAsmPrinters();
     llvm::InitializeAllTargetMCs();
     llvm::InitializeAllDisassemblers();
 
+    // create LLVMContext - this will delete all modules when it deleted(dtor)
     llvm::LLVMContext llvmcontext;
     llvmcontext.setDiscardValueNames(true);
     llvmcontext.setOpaquePointers(true);
-    llvmcontext.setDiagnosticHandler(std::make_unique<xcc::XCCDiagnosticHandler>());
+    // set our DiagnosticHandler
+    llvmcontext.setDiagnosticHandler(std::make_unique<xcc::XCCDiagnosticHandler>()); 
 
+    // preparing target information and ready for code generation to LLVM IR
     xcc::IRGen ig(ctx, SM, llvmcontext, options);
 
+    // create parser
     xcc::Parser parser(SM, ctx, ig);
 
+    // now, parsing source files ...

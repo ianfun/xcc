@@ -26,6 +26,7 @@ namespace driver {
 using namespace llvm::opt;
 
 #include "XCCOptions.cpp"
+using namespace options;
 
 struct Driver: public DiagnosticHelper
 {
@@ -104,7 +105,7 @@ static void setTripleTypeForMachOArchName(llvm::Triple &T, llvm::StringRef Str) 
   }
 }
 
-static llvm::Triple computeTargetTriple(const Driver &D,
+llvm::Triple computeTargetTriple(const Driver &D,
                                         llvm::StringRef TargetTriple,
                                         const ArgList &Args,
                                         llvm::StringRef DarwinArchName = "") {
@@ -310,12 +311,25 @@ bool HandleImmediateArgs() {
 
   return true;
 }
-bool BuildCompilation(ArrayRef<const char *> Args, Options &opts) {
+bool BuildInputs(SourceMgr &SM, Options &opts) {
+  for (Arg *A : getArgs()) {
+    if (A->getOption().getKind() == Option::InputClass) { 
+      const char *Value = A->getValue();
+      SM.addFile(Value);
+    }
+  }
+  if (SM.empty())
+    return fatal("no input files"), true;
+  opts.mainFileName = SM.streams[SM.includeStack[0]].name;
+  return false;
+}
+bool BuildCompilation(ArrayRef<const char *> Args, Options &opts, SourceMgr &SM) {
   bool ContainsError = false;
-  ParseArgStrings(argv, ContainsError);
+  ParseArgStrings(Args.slice(1), ContainsError);
   HandleImmediateArgs();
   opts.triple = llvm::Triple(TargetTriple);
   opts.g = getArgs().hasArg(OPT_g_Flag);
+  ContainsError |= BuildInputs(SM, opts);
   return ContainsError;
 }
 void ParseArgStrings(llvm::ArrayRef<const char *> ArgStrings, bool &ContainsError) {
@@ -340,15 +354,15 @@ void ParseArgStrings(llvm::ArrayRef<const char *> ArgStrings, bool &ContainsErro
       if (getOpts().findNearest(
             ArgString, Nearest, IncludedFlagsBitmask,
             ExcludedFlagsBitmask | options::Unsupported) > 1) {
-        error("unsupported option '%R'\n", ArgString);
+        error("unsupported option %R\n", ArgString);
       } else {
-        error("unsupported option '%R'; did you mean '%R'?", ArgString, Nearest);
+        error("unsupported option %R; did you mean %R?", ArgString, Nearest);
       }
       ContainsError |= true;
       continue;
     }
     if (A->getOption().matches(options::OPT_mcpu_EQ) && A->containsValue("")) {
-        error("joined argument expects additional value: '%R'", A->getAsString(*inputArgs));
+        error("joined argument expects additional value: %R", A->getAsString(*inputArgs));
       ContainsError |= false;
     }
   }
@@ -358,9 +372,9 @@ void ParseArgStrings(llvm::ArrayRef<const char *> ArgStrings, bool &ContainsErro
     std::string Nearest;
     if (getOpts().findNearest(
           ArgString, Nearest, IncludedFlagsBitmask, ExcludedFlagsBitmask) > 1) {
-      printf("unknown argument '%R'", ArgString);
+      error("unknown argument %R", ArgString);
     } else {
-      printf("unknown argument '%R'; did you mean '%R'?", ArgString, Nearest);
+      error("unknown argument %R; did you mean %R?", ArgString, Nearest);
     }
     ContainsError |= false;
   }

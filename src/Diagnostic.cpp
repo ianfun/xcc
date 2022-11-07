@@ -197,15 +197,17 @@ struct TextDiagnosticPrinter : public DiagnosticConsumer {
                           warningColor = raw_ostream::MAGENTA, templateColor = raw_ostream::CYAN,
                           errorColor = raw_ostream::RED, fatalColor = raw_ostream::RED,
                           savedColor = raw_ostream::SAVEDCOLOR;
-    llvm::raw_ostream &OS = llvm::errs();
+    llvm::raw_ostream &OS;
     bool ShowColors;
-    struct SourceMgr &SM;
-    TextDiagnosticPrinter(SourceMgr &SM)
-        : DiagnosticConsumer{&HandleDiagnosticImpl, &finalizeImpl}, ShowColors{OS.has_colors()}, SM{SM} { }
+    struct SourceMgr *SM;
+    TextDiagnosticPrinter(llvm::raw_ostream &OS = llvm::errs(), struct SourceMgr *SM = nullptr)
+        : DiagnosticConsumer{&HandleDiagnosticImpl, &finalizeImpl}, OS{OS}, ShowColors{OS.has_colors()}, SM{SM} { }
     void realHandleDiagnostic(enum DiagnosticLevel level, const Diagnostic &Info);
     static void HandleDiagnosticImpl(void *self, enum DiagnosticLevel level, const Diagnostic &Info) {
         return reinterpret_cast<TextDiagnosticPrinter *>(self)->realHandleDiagnostic(level, Info);
     }
+    bool hasSourceMgr() const { return SM != nullptr; }
+    void setSourceMgr(struct SourceMgr *SM) { this->SM = SM; }
     static void finalizeImpl(void *self) { return reinterpret_cast<TextDiagnosticPrinter *>(self)->realfinalize(); }
     void realfinalize() {
         if (NumWarnings)
