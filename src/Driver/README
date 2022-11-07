@@ -1,0 +1,4 @@
+This directory contains a clang like driver.
+
+Dirver options is copied from clang, you can found them in `clang/include/clang/Driver/Options.h`, `clang/lib/Driver/DriverOptions.cpp`.
+

@@ -21,7 +21,15 @@ struct Diagnostic {
     Diagnostic(const char *fmt) : fmt{fmt}, data{}, loc{Location::make_invalid()} { }
     Diagnostic(const char *fmt, Location loc) : fmt{fmt}, data{}, loc{loc} { }
     template <typename T> void write_impl(const T *ptr) { data.push_back(reinterpret_cast<storage_type>(ptr)); }
-    void write_impl(StringRef str) {
+    void write_impl(const StringRef &str) {
+        data.push_back(static_cast<storage_type>(str.size()));
+        write_impl(str.data());
+    }
+    void write_impl(const std::string &str) {
+        data.push_back(static_cast<storage_type>(str.size()));
+        write_impl(str.data());
+    }
+    void write_impl(const SmallVectorImpl<char> &str) {
         data.push_back(static_cast<storage_type>(str.size()));
         write_impl(str.data());
     }

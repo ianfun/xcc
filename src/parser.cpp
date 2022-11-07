@@ -1919,11 +1919,6 @@ NOT_CONSTANT:
                     return type_error(loc2, "unexpected function definition");
                 // function definition
                 if (st.name->second.getToken() == PP_main) {
-                    if (irgen.options.libtrace) {
-                        if (st.ty->params.size() < 2) {
-                            type_error("main should be at lease two arguments(argc, argv) when using libtrace.");
-                        }
-                    }
                     if (st.ty->params.size()) {
                         if (!(st.ty->params.front().ty->tags & TYINT)) {
                             type_error("first parameter of main is not 'int'");

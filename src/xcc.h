@@ -271,10 +271,11 @@ static const char *show(enum PostFixOp o) {
     default: return "(unknown postfix operator)";
     }
 }
+#include "option.cpp"
 #include "Arena.cpp"
+#include "tokens.inc"
 #include "IdentifierTable.h"
 #include "tempAllocator.h"
-#include "tokens.inc"
 #include "types.inc"
 #include "xint128.cpp"
 #include "xstring.h"
@@ -450,6 +451,7 @@ static enum BinOp getAtomicrmwOp(Token tok) {
 #include "expressions.inc"
 #include "printer.cpp"
 #include "statements.inc"
+#include "utf8.cpp"
 
 static const char hexs[] = "0123456789ABCDEF";
 
@@ -629,22 +631,20 @@ static unsigned intRank(uint32_t a) {
         return 5;
     return 6;
 }
+#include "console.cpp"
+#include "State.cpp"
 #include "Diagnostic.cpp"
 #include "JIT.cpp"
 #include "LLVMDiagnosticHandler.cpp"
 #include "Scope.cpp"
 #include "SourceMgr.cpp"
-#include "State.cpp"
-#include "StringPool.cpp"
 #include "TextDiagnosticPrinter.cpp"
 #include "codegen.cpp"
-#include "console.cpp"
-#include "lexer.cpp"
 #include "lexer.h"
 #include "linker.cpp"
-#include "option.cpp"
 #include "output.cpp"
+#include "StringPool.cpp"
 #include "parser.cpp"
-#include "utf8.cpp"
+#include "lexer.cpp"
 
 } // namespace xcc

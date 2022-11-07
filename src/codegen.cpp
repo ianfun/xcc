@@ -23,10 +23,9 @@ struct IRGen : public DiagnosticHelper {
                           DLLExportStorageClass = llvm::GlobalValue::DLLExportStorageClass;
 
     IRGen(xcc_context &context, SourceMgr &SM, LLVMContext &ctx, const Options &options)
-        : DiagnosticHelper{context}, SM{SM}, ctx{ctx}, B{ctx}, options{options}, triple{options.triple} {
+        : DiagnosticHelper{context}, SM{SM}, ctx{ctx}, B{ctx}, options{options} {
         std::string Error;
-        // auto theTriple = llvm::Triple(options.triple);
-        auto target = llvm::TargetRegistry::lookupTarget(options.triple, Error);
+        auto target = llvm::TargetRegistry::lookupTarget(options.triple.str(), Error);
         if (!target) {
             fatal("TargetRegistry::lookupTarget: %s", Error.data());
             return;
@@ -35,7 +34,7 @@ struct IRGen : public DiagnosticHelper {
         auto Features = "";
         llvm::TargetOptions opt;
 
-        machine = target->createTargetMachine(options.triple, CPU, Features, opt, llvm::Reloc::PIC_, llvm::None,
+        machine = target->createTargetMachine(options.triple.str(), CPU, Features, opt, llvm::Reloc::PIC_, llvm::None,
                                               llvm::CodeGenOpt::Aggressive);
         if (!machine) {
             fatal("Target::createTargetMachine failed!");
@@ -225,7 +224,7 @@ struct IRGen : public DiagnosticHelper {
         module = new llvm::Module(ModuleID, ctx);
         module->setSourceFileName(source_file);
         module->setDataLayout(*layout);
-        module->setTargetTriple(triple.str());
+        module->setTargetTriple(options.triple.str());
 
         auto llvm_ident = module->getOrInsertNamedMetadata("llvm.ident");
         auto llvm_flags = module->getOrInsertNamedMetadata("llvm.module.flags");

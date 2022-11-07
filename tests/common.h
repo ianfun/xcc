@@ -2,20 +2,24 @@
 
 #include "../src/xcc.h"
 #include "../src/xInitLLVM.cpp"
+//#include "../src/Driver/Driver.cpp"
 #include <llvm/Support/CommandLine.h>
 #include <llvm/Support/TargetSelect.h>
 
 static llvm::cl::list<std::string> InputFiles(llvm::cl::Positional, llvm::cl::desc("<input files>"), llvm::cl::ZeroOrMore);
 
-static xcc::Options options;
-
 int main(int argc, const char **argv)
 {
+    llvm::SmallVector<const char *, 8> argv(argv_, argv_ + argc_);
     xcc::xcc_context ctx;
 
     XInitLLVM crashReport(ctx, argc, argv);
-    
-    if (!options.run(argc, argv))
+    llvm::InitializeAllTargets();
+
+    xcc::Options options;
+    Driver theDriver(ctx);
+
+    if (!thePrinter.BuildCompilation(argv, options))
         return 1;
 
     xcc::SourceMgr SM(ctx);
@@ -34,7 +38,6 @@ int main(int argc, const char **argv)
             SM.addFile(str.c_str());
     }
 
-    llvm::InitializeAllTargets();
     llvm::InitializeAllAsmParsers();
     llvm::InitializeAllAsmPrinters();
     llvm::InitializeAllTargetMCs();

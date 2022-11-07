@@ -7,7 +7,7 @@ InsertTrailingCommas: None
 SpaceInEmptyBlock: true
 SpaceAfterCStyleCast: false
 SpaceAfterLogicalNot: false
-SortIncludes: CaseSensitive
+SortIncludes: Never
 ReferenceAlignment: Right
 PointerAlignment: Right
 AllowShortCaseLabelsOnASingleLine: true
