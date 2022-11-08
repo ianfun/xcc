@@ -3,6 +3,9 @@ CC=clang++
 FLAGS=`llvm-config --cxxflags --ldflags --libs`
 MOREFLAGS='-g'
 
+main:
+	$(CC) main.cpp $(FLAGS) -o xcc $(MOREFLAGS)
+
 testCodeGen:
 	$(CC) testCodeGen.cpp $(FLAGS) -o codegen $(MOREFLAGS)
 
@@ -21,6 +24,6 @@ testJit:
 all: testLexer testCpp testParser testCodeGen testJit
 
 clean:
-	rm lexer cpp parser codegen jit
+	rm lexer cpp parser codegen jit xcc
 
 

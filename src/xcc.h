@@ -88,11 +88,12 @@
 
 #define dbgprint(msg, ...) ((void)logtime(), (void)fprintf(stderr, msg, ##__VA_ARGS__))
 
-namespace xcc {
 static void logtime() {
     time_t now = time(nullptr);
     fprintf(stderr, "\33[01;33m[debug]: \33[01;34m%s\33[0m", ctime(&now));
 }
+
+namespace xcc {
 #if WINDOWS
 HANDLE
 hStdin = GetStdHandle(STD_INPUT_HANDLE), hStdout = GetStdHandle(STD_OUTPUT_HANDLE),

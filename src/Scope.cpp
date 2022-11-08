@@ -3,7 +3,7 @@ template <typename T, unsigned InitialSize> struct ScopeBase {
         IdentRef sym;
         T info;
     };
-    SmallVector<Storage, InitialSize> data;
+    SmallVector<Storage, InitialSize> data{};
     using iterator = Storage *;
     using const_iterator = const Storage *;
     iterator begin() { return data.data(); }
@@ -49,8 +49,8 @@ template <typename T, unsigned InitialSize> struct ScopeBase {
 template <typename T, unsigned InitialSize = 64> struct BlockScope : public ScopeBase<T, InitialSize> {
     // https://stackoverflow.com/q/1120833
     // Derived template-class access to base-class member-data
-    SmallVector<size_t, 8> blocks;
-    size_t maxSyms;
+    SmallVector<size_t, 8> blocks{};
+    size_t maxSyms = 0;
     size_t numSymsThisBlock() const { return blocks.back(); }
     void push() { blocks.push_back(this->data.size()); }
     void pop() {

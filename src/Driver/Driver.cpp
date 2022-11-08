@@ -31,31 +31,29 @@ using namespace options;
 struct Driver: public DiagnosticHelper
 {
 std::string TargetTriple;
-Driver(xcc_context &context, llvm::StringRef TargetTriple = llvm::sys::getDefaultTargetTriple()): 
+Driver(xcc_context &context, StringRef TargetTriple = llvm::sys::getDefaultTargetTriple()): 
   DiagnosticHelper(context),
   TargetTriple{TargetTriple} {}
 std::unique_ptr<InputArgList> inputArgs;
 static const llvm::opt::OptTable &getOpts() {
     return options::getDriverOptTable();
 }
-auto &getArgs() {
+InputArgList &getArgs() {
   return *inputArgs;
 }
 static void PrintVersion(llvm::raw_ostream &OS) {
-  OS << "XCC Version XXX\n"
-     << "Target: XDD\n"
-     << "Thread model: WTF";
+  OS << CC_VERSION_FULL << '\n';
 }
 static void PrintHelp(bool ShowHidden) {
   unsigned IncludedFlagsBitmask = 0;
-  unsigned ExcludedFlagsBitmask = 0;
+  unsigned ExcludedFlagsBitmask = options::FlangOnlyOption | options::NoDriverOption;
   if (!ShowHidden)
     ExcludedFlagsBitmask |= HelpHidden;
   getOpts().printHelp(llvm::outs(), "xcc [options] file...", "XCC C compiler",
-                      IncludedFlagsBitmask, options::FlangOnlyOption | options::NoDriverOption,
+                      IncludedFlagsBitmask, ExcludedFlagsBitmask,
                       /*ShowAllAliases=*/false);
 }
-static llvm::Triple::ArchType getArchTypeForMachOArchName(llvm::StringRef Str) {
+static llvm::Triple::ArchType getArchTypeForMachOArchName(StringRef Str) {
   // See arch(3) and llvm-gcc's driver-driver.c. We don't implement support for
   // archs which Darwin doesn't use.
 
@@ -90,7 +88,7 @@ static llvm::Triple::ArchType getArchTypeForMachOArchName(llvm::StringRef Str) {
       .Case("spir", llvm::Triple::spir)
       .Default(llvm::Triple::UnknownArch);
 }
-static void setTripleTypeForMachOArchName(llvm::Triple &T, llvm::StringRef Str) {
+static void setTripleTypeForMachOArchName(llvm::Triple &T, StringRef Str) {
   const llvm::Triple::ArchType Arch = getArchTypeForMachOArchName(Str);
   llvm::ARM::ArchKind ArchKind = llvm::ARM::parseArch(Str);
   T.setArch(Arch);
@@ -106,9 +104,9 @@ static void setTripleTypeForMachOArchName(llvm::Triple &T, llvm::StringRef Str) 
 }
 
 llvm::Triple computeTargetTriple(const Driver &D,
-                                        llvm::StringRef TargetTriple,
+                                        StringRef TargetTriple,
                                         const ArgList &Args,
-                                        llvm::StringRef DarwinArchName = "") {
+                                        StringRef DarwinArchName = "") {
   // FIXME: Already done in Compilation *Driver::BuildCompilation
   if (const Arg *A = Args.getLastArg(options::OPT_target))
     TargetTriple = A->getValue();
@@ -131,7 +129,7 @@ llvm::Triple computeTargetTriple(const Driver &D,
 
     // Handle the Darwin '-arch' flag.
     if (Arg *A = Args.getLastArg(options::OPT_arch)) {
-      llvm::StringRef ArchName = A->getValue();
+      StringRef ArchName = A->getValue();
       setTripleTypeForMachOArchName(Target, ArchName);
     }
   }
@@ -160,7 +158,7 @@ llvm::Triple computeTargetTriple(const Driver &D,
   if (Target.isOSAIX()) {
     if (llvm::Optional<std::string> ObjectModeValue =
             llvm::sys::Process::GetEnv("OBJECT_MODE")) {
-      llvm::StringRef ObjectMode = *ObjectModeValue;
+      StringRef ObjectMode = *ObjectModeValue;
       llvm::Triple::ArchType AT = llvm::Triple::UnknownArch;
 
       if (ObjectMode.equals("64")) {
@@ -234,7 +232,7 @@ llvm::Triple computeTargetTriple(const Driver &D,
   // accordingly to provided ABI name.
   A = Args.getLastArg(options::OPT_mabi_EQ);
   if (A && Target.isMIPS()) {
-    llvm::StringRef ABIName = A->getValue();
+    StringRef ABIName = A->getValue();
     if (ABIName == "32") {
       Target = Target.get32BitArchVariant();
       if (Target.getEnvironment() == llvm::Triple::GNUABI64 ||
@@ -257,7 +255,7 @@ llvm::Triple computeTargetTriple(const Driver &D,
   // provided architecture name
   A = Args.getLastArg(options::OPT_march_EQ);
   if (A && Target.isRISCV()) {
-    llvm::StringRef ArchName = A->getValue();
+    StringRef ArchName = A->getValue();
     if (ArchName.startswith_insensitive("rv32"))
       Target.setArch(llvm::Triple::riscv32);
     else if (ArchName.startswith_insensitive("rv64"))
@@ -272,7 +270,7 @@ bool HandleImmediateArgs() {
     return false;
   }
   if (getArgs().hasArg(options::OPT_dumpversion)) {
-    llvm::outs() << CC_VERSION_FULL;
+    llvm::outs() << CC_VERSION_FULL << '\n';
     return false;
   }
 
@@ -292,6 +290,7 @@ bool HandleImmediateArgs() {
       getArgs().hasArg(options::OPT__HASH_HASH_HASH) ||
       getArgs().hasArg(options::OPT_print_supported_cpus)) {
     PrintVersion(llvm::errs());
+    return false;
   }
 
   if (getArgs().hasArg(options::OPT_print_search_dirs)) {
@@ -323,14 +322,25 @@ bool BuildInputs(SourceMgr &SM, Options &opts) {
   opts.mainFileName = SM.streams[SM.includeStack[0]].name;
   return false;
 }
-bool BuildCompilation(ArrayRef<const char *> Args, Options &opts, SourceMgr &SM) {
-  bool ContainsError = false;
-  ParseArgStrings(Args.slice(1), ContainsError);
-  HandleImmediateArgs();
-  opts.triple = llvm::Triple(TargetTriple);
+bool BuildCompilation(ArrayRef<const char *> Args, Options &opts, SourceMgr &SM, int &ret) {
+  bool should_exit = false;
+  ParseArgStrings(Args.slice(1), should_exit);
+  if (Arg *WD = getArgs().getLastArg(options::OPT_working_directory))
+    if (llvm::sys::fs::set_current_path(WD->getValue()))
+      error("unable to set working directory: %s", WD->getValue());
+  if (!HandleImmediateArgs())
+    return true;
+  opts.triple = computeTargetTriple(*this, TargetTriple, getArgs());
+  std::string Error;
+  opts.theTarget = llvm::TargetRegistry::lookupTarget(opts.triple.str(), Error);;
+  if (!opts.theTarget) {
+   error("unknown target triple %R, please use -triple or -arch", opts.triple.str());
+   should_exit |= true;
+  }
   opts.g = getArgs().hasArg(OPT_g_Flag);
-  ContainsError |= BuildInputs(SM, opts);
-  return ContainsError;
+  should_exit |= BuildInputs(SM, opts);
+  ret = should_exit ? 1 : 0;
+  return should_exit;
 }
 void ParseArgStrings(llvm::ArrayRef<const char *> ArgStrings, bool &ContainsError) {
   // clang/include/clang/Basic/DiagnosticDriverKinds.td
@@ -348,7 +358,6 @@ void ParseArgStrings(llvm::ArrayRef<const char *> ArgStrings, bool &ContainsErro
   }
   for (const Arg *A : *inputArgs) {
     if (A->getOption().hasFlag(options::Unsupported)) {
-      unsigned DiagID;
       auto ArgString = A->getAsString(*inputArgs);
       std::string Nearest;
       if (getOpts().findNearest(
@@ -367,7 +376,6 @@ void ParseArgStrings(llvm::ArrayRef<const char *> ArgStrings, bool &ContainsErro
     }
   }
   for (const Arg *A : inputArgs->filtered(options::OPT_UNKNOWN)) {
-    unsigned DiagID;
     auto ArgString = A->getAsString(*inputArgs);
     std::string Nearest;
     if (getOpts().findNearest(

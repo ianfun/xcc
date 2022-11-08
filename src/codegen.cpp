@@ -24,17 +24,11 @@ struct IRGen : public DiagnosticHelper {
 
     IRGen(xcc_context &context, SourceMgr &SM, LLVMContext &ctx, const Options &options)
         : DiagnosticHelper{context}, SM{SM}, ctx{ctx}, B{ctx}, options{options} {
-        std::string Error;
-        auto target = llvm::TargetRegistry::lookupTarget(options.triple.str(), Error);
-        if (!target) {
-            fatal("TargetRegistry::lookupTarget: %s", Error.data());
-            return;
-        }
         auto CPU = "generic";
         auto Features = "";
         llvm::TargetOptions opt;
 
-        machine = target->createTargetMachine(options.triple.str(), CPU, Features, opt, llvm::Reloc::PIC_, llvm::None,
+        machine = options.theTarget->createTargetMachine(options.triple.str(), CPU, Features, opt, llvm::Reloc::PIC_, llvm::None,
                                               llvm::CodeGenOpt::Aggressive);
         if (!machine) {
             fatal("Target::createTargetMachine failed!");
@@ -69,21 +63,20 @@ struct IRGen : public DiagnosticHelper {
     SourceMgr &SM;
     LLVMContext &ctx;
     llvm::IRBuilder<> B;
-    SmallVector<DIScope, 7> lexBlocks;
+    SmallVector<DIScope, 7> lexBlocks{};
     llvm::DIBuilder *di = nullptr;
 
-    llvm::Target *target = nullptr;
     llvm::TargetMachine *machine = nullptr;
     llvm::DataLayout *layout = nullptr;
     const Options &options;
     llvm::Triple triple;
     llvm::Function *currentfunction = nullptr;
     // `i32 1/0/-1` constant
-    llvm::ConstantInt *i32_1, *i32_0, *i32_n1;
-    llvm::IntegerType *intptrTy;
-    unsigned pointerSizeInBits;
+    llvm::ConstantInt *i32_1 = nullptr, *i32_0 = nullptr, *i32_n1 = nullptr;
+    llvm::IntegerType *intptrTy = nullptr;
+    unsigned pointerSizeInBits = 0;
     // LLVM false/true constant
-    llvm::ConstantInt *i1_0, *i1_1;
+    llvm::ConstantInt *i1_0 = nullptr, *i1_1 = nullptr;
     unsigned lastFileID = -1;
     llvm::DIFile *lastFile = nullptr;
     OnceAllocator alloc{};
@@ -92,10 +85,10 @@ struct IRGen : public DiagnosticHelper {
     // jump labels
     llvm::SmallVector<Label, 5> labels{};
     // struct/union
-    llvm::Value **vars;
-    llvm::Type **tags;
-    llvm::DIType **dtags;
-    llvm::DIType **dtypes;
+    llvm::Value **vars = nullptr;
+    llvm::Type **tags = nullptr;
+    llvm::DIType **dtags = nullptr;
+    llvm::DIType **dtypes = nullptr;
     Location debugLoc;
     DenseMap<CType, llvm::FunctionType *> function_type_cache{};
 
