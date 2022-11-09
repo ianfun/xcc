@@ -121,7 +121,7 @@ struct SourceMgr : public DiagnosticHelper {
         return includeStack.empty();
     }
     // read a char from a stream
-    LLVM_NODISCARD char raw_read(Stream &f) {
+    char raw_read(Stream &f) {
         switch (f.k) {
         case AFileStream: {
 AGAIN:
@@ -276,7 +276,7 @@ REPEAT:
         default: llvm_unreachable("bad stream kind");
         }
     }
-    LLVM_NODISCARD char raw_read_from_id(unsigned id) { return raw_read(streams[id]); }
+    char raw_read_from_id(unsigned id) { return raw_read(streams[id]); }
     void resetBuffer() {
         Stream &target = streams[includeStack[includeStack.size() - 2]];
         switch (target.k) {
@@ -369,9 +369,9 @@ REPEAT:
         f.column = 1;
     }
     uint16_t lastc = 256;
-    LLVM_NODISCARD char raw_read_from_stack() { return raw_read(streams[includeStack.back()]); }
+    char raw_read_from_stack() { return raw_read(streams[includeStack.back()]); }
     // Translation phases 1
-    LLVM_NODISCARD char stream_read() {
+    char stream_read() {
         // for support '\r' end-of-lines
         if (LLVM_UNLIKELY(lastc <= 0xFF)) {
             // trunc to i8
@@ -400,7 +400,7 @@ REPEAT:
         }
     }
     // Translation phases 2, 3
-    LLVM_NODISCARD char skip_read() {
+    char skip_read() {
         char c = stream_read();
         if (c == '/') {
             char c2 = stream_read();

@@ -8105,11 +8105,11 @@ bool ValuesWereAdded;
     const char *Values =
     #define GET_CHECKERS
     #define CHECKER(FULLNAME, CLASS, HT, DOC_URI, IS_HIDDEN)  FULLNAME ","
-    #include "clang/StaticAnalyzer/Checkers/Checkers.inc"
+    #include "Checkers.inc"
     #undef GET_CHECKERS
     #define GET_PACKAGES
     #define PACKAGE(FULLNAME)  FULLNAME ","
-    #include "clang/StaticAnalyzer/Checkers/Checkers.inc"
+    #include "Checkers.inc"
     #undef GET_PACKAGES
     ;
   
@@ -8123,7 +8123,7 @@ bool ValuesWereAdded;
     const char *Values =
     #define LANGSTANDARD(id, name, lang, desc, features) name ","
     #define LANGSTANDARD_ALIAS(id, alias) alias ","
-    #include "clang/Basic/LangStandards.def"
+    #include "../Target/LangStandards.def"
     ;
   
 ValuesWereAdded = Opt.addValues("-std=", Values);

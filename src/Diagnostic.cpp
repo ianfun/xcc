@@ -75,6 +75,7 @@ struct Diagnostic {
                     llvm::printEscapedString(StringRef(msg, len), OS);
                     OS << rquote;
                 } break;
+                case 'd':
                 case 'i': OS << static_cast<int>(data[idx++]); break;
                 case 'I': OS << lquote << get<IdentRef>(idx++)->getKey() << rquote; break;
                 case 'z': OS << static_cast<size_t>(data[idx++]); break;

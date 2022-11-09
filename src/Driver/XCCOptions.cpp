@@ -37,7 +37,7 @@ enum ID {
 #define OPTION(PREFIX, NAME, ID, KIND, GROUP, ALIAS, ALIASARGS, FLAGS, PARAM,  \
                HELPTEXT, METAVAR, VALUES)                                      \
   OPT_##ID,
-#include "clang/Driver/Options.inc"
+#include "Options.inc"
     LastOption
 #undef OPTION
   };
@@ -51,7 +51,7 @@ enum ID {
 //===----------------------------------------------------------------------===//
 
 #define PREFIX(NAME, VALUE) static const char *const NAME[] = VALUE;
-#include "clang/Driver/Options.inc"
+#include "Options.inc"
 #undef PREFIX
 
 static const OptTable::Info InfoTable[] = {
@@ -59,7 +59,7 @@ static const OptTable::Info InfoTable[] = {
                HELPTEXT, METAVAR, VALUES)                                      \
   {PREFIX, NAME,  HELPTEXT,    METAVAR,     OPT_##ID,  Option::KIND##Class,    \
    PARAM,  FLAGS, OPT_##GROUP, OPT_##ALIAS, ALIASARGS, VALUES},
-#include "clang/Driver/Options.inc"
+#include "Options.inc"
 #undef OPTION
 };
 
@@ -75,7 +75,7 @@ const auto &getDriverOptTable() {
     auto Result = std::make_unique<DriverOptTable>();
     OptTable &Opt = *Result;
 #define OPTTABLE_ARG_INIT
-#include "clang/Driver/Options.inc"
+#include "Options.inc"
 #undef OPTTABLE_ARG_INIT
     return Result.release();
   }();

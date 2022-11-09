@@ -31,9 +31,13 @@ And install gdb
 $ pacman -S mingw-w64-x86_64-gdb
 ```
 
-```bash
+In Debian and Ubuntu, https://apt.llvm.org/ provides `llvm.sh` can help you install LLVM and Clang.
 
-in Debian and Ubuntu, https://apt.llvm.org/ provides `llvm.sh` can help you install LLVM and Clang.
+Or use apt
+
+```bash
+sudo apt install llvm-15
+```
 
 ## Linking
 
@@ -55,3 +59,16 @@ $ clang++ main.cpp -DCC_HAS_LLD -fno-exceptions -fno-rtti -D_FILE_OFFSET_BITS=64
 ```
 
 (pretty long)
+
+* linux - GNU Make
+
+```bash
+$ make
+$ make main
+$ make testLexer
+$ make testCpp
+$ make testParser
+$ make testCodeGen
+$ make all
+$ make all -j
+```

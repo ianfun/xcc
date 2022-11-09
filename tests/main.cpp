@@ -37,7 +37,7 @@ int xcc_link_gcc(xcc::DiagnosticHelper &Diags, llvm::StringRef objFileName) {
     std::string linker = xcc_getLinkerPath();
     int status = llvm::sys::ExecuteAndWait(
         linker,
-        llvm::makeArrayRef(objFileName),
+        {llvm::StringRef(linker), objFileName},
         llvm::None,
         {},
         0,
@@ -50,7 +50,7 @@ int xcc_link_gcc(xcc::DiagnosticHelper &Diags, llvm::StringRef objFileName) {
         return CC_EXIT_FAILURE;
     }
     else if (status) {
-        Diags.error("linker command failed with exit code %d (use -v to see invocation)", status);
+        Diags.error("linker command failed with exit code %i (use -v to see invocation)", status);
         return CC_EXIT_FAILURE;
     }
     return CC_EXIT_SUCCESS;
@@ -90,7 +90,7 @@ int xcc_link(xcc::DiagnosticHelper &Diags, llvm::StringRef objFileName, const ll
     Diags.error("lld linking failed");
     return CC_EXIT_FAILURE;
 #else
-    dbgprint("linking: GCC");
+    dbgprint("linking: GCC\n");
     return xcc_link_gcc(Diags, objFileName);
 #endif
 }
@@ -128,6 +128,14 @@ int main(int argc_, const char **argv_)
     // parse options ...
     if (theDriver.BuildCompilation(argv, options, SM, ret))
         return ret;
+
+    auto tos = std::make_shared<xcc::TargetOptions>();
+
+    tos->Triple = options.triple.str();
+
+    auto theTarget = xcc::TargetInfo::CreateTargetInfo(tos);
+
+    printf("theTarget = %p\n", theTarget);
 
     llvm::InitializeAllAsmParsers();
     llvm::InitializeAllAsmPrinters();
@@ -176,6 +184,7 @@ int main(int argc_, const char **argv_)
             goto CC_ERROR;
         dbgprint("bitcode writting to %s\n", outputFileName.data());
         llvm::WriteBitcodeToFile(*ig.module, OS);
+        OS.close();
         return CC_EXIT_SUCCESS;
     }
 
@@ -188,6 +197,7 @@ int main(int argc_, const char **argv_)
             goto CC_ERROR;
         dbgprint("printing module to %s\n", outputFileName.data());
         ig.module->print(OS, nullptr);
+        OS.close();
         return CC_EXIT_SUCCESS;
     }
 

@@ -29,18 +29,18 @@ template <typename T> struct xvector {
         return res;
     }
     void clear() { p->_length = 0; }
-    LLVM_NODISCARD size_t size() const { return p->_length; }
-    LLVM_NODISCARD size_t &msize() { return p->_length; }
-    LLVM_NODISCARD size_t length() const { return p->_length; }
-    LLVM_NODISCARD size_t size_in_bytes() const { return p->_length * sizeof(_xvector_impl) * sizeof(T); }
-    LLVM_NODISCARD size_t capacity() const { return p->_capacity; }
-    LLVM_NODISCARD const T *data() const { return p->_data; }
-    LLVM_NODISCARD T *data() { return p->_data; }
-    LLVM_NODISCARD T operator[](size_t Index) const {
+    size_t size() const { return p->_length; }
+    size_t &msize() { return p->_length; }
+    size_t length() const { return p->_length; }
+    size_t size_in_bytes() const { return p->_length * sizeof(_xvector_impl) * sizeof(T); }
+    size_t capacity() const { return p->_capacity; }
+    const T *data() const { return p->_data; }
+    T *data() { return p->_data; }
+    T operator[](size_t Index) const {
         assert(Index < p->_length && "Index too large!");
         return p->_data[Index];
     }
-    LLVM_NODISCARD T &operator[](size_t Index) {
+    T &operator[](size_t Index) {
         assert(Index < p->_length && "Index too large!");
         return p->_data[Index];
     }
@@ -65,15 +65,15 @@ template <typename T> struct xvector {
         assert(p->_length && "string empty!");
         --p->_length;
     }
-    LLVM_NODISCARD bool empty() const { return p->_length == 0; }
-    LLVM_NODISCARD T front() const { return *p->_data; }
-    LLVM_NODISCARD T &front() { return *p->_data; }
-    LLVM_NODISCARD T back() const { return p->_data[p->_length - 1]; }
-    LLVM_NODISCARD T &back() { return p->_data[p->_length - 1]; }
-    LLVM_NODISCARD const T *begin() const { return p->_data; };
-    LLVM_NODISCARD T *begin() { return p->_data; }
-    LLVM_NODISCARD const T *end() const { return p->_data + p->_length; }
-    LLVM_NODISCARD T *end() { return p->_data + p->_length; }
+    bool empty() const { return p->_length == 0; }
+    T front() const { return *p->_data; }
+    T &front() { return *p->_data; }
+    T back() const { return p->_data[p->_length - 1]; }
+    T &back() { return p->_data[p->_length - 1]; }
+    const T *begin() const { return p->_data; };
+    T *begin() { return p->_data; }
+    const T *end() const { return p->_data + p->_length; }
+    T *end() { return p->_data + p->_length; }
 };
 
 static_assert(sizeof(xvector<int>) == sizeof(void *), "sizeof xvector<T> should equals to sizeof pointer");

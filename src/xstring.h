@@ -85,30 +85,30 @@ struct xstring {
         return xstring::get(s.toStringRef(buf));
     }
     void clear() { p->_length = 0; }
-    LLVM_NODISCARD size_t size() const { return p->_length; }
-    LLVM_NODISCARD size_t &msize() { return p->_length; }
-    LLVM_NODISCARD size_t length() const { return p->_length; }
-    LLVM_NODISCARD size_t size_in_bytes() const { return p->_length * sizeof(_xstring_impl); }
-    LLVM_NODISCARD size_t capacity() const { return p->_capacity; }
+    size_t size() const { return p->_length; }
+    size_t &msize() { return p->_length; }
+    size_t length() const { return p->_length; }
+    size_t size_in_bytes() const { return p->_length * sizeof(_xstring_impl); }
+    size_t capacity() const { return p->_capacity; }
     // return maybe not null-termiated string
-    LLVM_NODISCARD const char *data() const { return p->_data; }
-    LLVM_NODISCARD char *data() { return p->_data; }
+    const char *data() const { return p->_data; }
+    char *data() { return p->_data; }
     // add '\0', and return null-termiated string
-    LLVM_NODISCARD char *c_str() {
+    char *c_str() {
         add('\0');
         return p->_data;
     }
-    LLVM_NODISCARD StringRef str() const { return StringRef(p->_data, p->_length); }
-    LLVM_NODISCARD operator StringRef() const { return str(); }
-    LLVM_NODISCARD operator std::string() const { return std::string(p->_data, p->_length); }
-    LLVM_NODISCARD operator const char *() const { return data(); }
-    LLVM_NODISCARD size_t count(char C) const { return str().count(C); }
-    LLVM_NODISCARD bool equals(StringRef RHS) const { return str().equals(RHS); }
-    LLVM_NODISCARD char operator[](size_t Index) const {
+    StringRef str() const { return StringRef(p->_data, p->_length); }
+    operator StringRef() const { return str(); }
+    operator std::string() const { return std::string(p->_data, p->_length); }
+    operator const char *() const { return data(); }
+    size_t count(char C) const { return str().count(C); }
+    bool equals(StringRef RHS) const { return str().equals(RHS); }
+    char operator[](size_t Index) const {
         assert(Index < p->_length && "Index too large!");
         return p->_data[Index];
     }
-    LLVM_NODISCARD char &operator[](size_t Index) {
+    char &operator[](size_t Index) {
         assert(Index < p->_length && "Index too large!");
         return p->_data[Index];
     }
@@ -147,15 +147,15 @@ struct xstring {
         assert(p->_length && "string empty!");
         --p->_length;
     }
-    LLVM_NODISCARD bool empty() const { return p->_length == 0; }
-    LLVM_NODISCARD char front() const { return *p->_data; }
-    LLVM_NODISCARD char &front() { return *p->_data; }
-    LLVM_NODISCARD char back() const { return p->_data[p->_length - 1]; }
-    LLVM_NODISCARD char &back() { return p->_data[p->_length - 1]; }
-    LLVM_NODISCARD const char *begin() const { return p->_data; };
-    LLVM_NODISCARD char *begin() { return p->_data; }
-    LLVM_NODISCARD const char *end() const { return p->_data + p->_length; }
-    LLVM_NODISCARD char *end() { return p->_data + p->_length; }
+    bool empty() const { return p->_length == 0; }
+    char front() const { return *p->_data; }
+    char &front() { return *p->_data; }
+    char back() const { return p->_data[p->_length - 1]; }
+    char &back() { return p->_data[p->_length - 1]; }
+    const char *begin() const { return p->_data; };
+    char *begin() { return p->_data; }
+    const char *end() const { return p->_data + p->_length; }
+    char *end() { return p->_data + p->_length; }
     void lower_inplace() {
         for (size_t i = 0; i < p->_length; ++i)
             p->_data[i] = std::tolower(p->_data[i]);

@@ -4,8 +4,11 @@
 #include <llvm/ADT/APInt.h>
 #include <llvm/ADT/ArrayRef.h>
 #include <llvm/ADT/DenseMap.h>
-#include <llvm/ADT/SmallSet.h>
+#include <llvm/ADT/STLArrayExtras.h>
 #include <llvm/ADT/SmallString.h>
+#include <llvm/ADT/IntrusiveRefCntPtr.h>
+#include <llvm/ADT/Optional.h>
+#include <llvm/ADT/SmallSet.h>
 #include <llvm/ADT/SmallVector.h>
 #include <llvm/ADT/StringExtras.h>
 #include <llvm/ADT/StringSwitch.h>
@@ -30,6 +33,7 @@
 #include <llvm/IR/DiagnosticInfo.h>
 #include <llvm/IR/DiagnosticPrinter.h>
 #include <llvm/IR/Function.h>
+#include <llvm/IR/CallingConv.h>
 #include <llvm/IR/GlobalVariable.h>
 #include <llvm/IR/IRBuilder.h>
 #include <llvm/IR/InlineAsm.h>
@@ -59,7 +63,15 @@
 #include <llvm/Support/WithColor.h>
 #include <llvm/Support/raw_ostream.h>
 #include <llvm/Target/TargetMachine.h>
+#include <llvm/Support/VersionTuple.h>
+#include <llvm/Support/TargetParser.h>
+#include <llvm/Support/AArch64TargetParser.h>
+#include <llvm/Support/X86TargetParser.h>
+#include <llvm/Support/SaveAndRestore.h>
+#include <llvm/Support/RISCVISAInfo.h>
+#include <llvm/Support/DataTypes.h>
 #include <llvm/Target/TargetOptions.h>
+#include <llvm/Frontend/OpenMP/OMPGridValues.h>
 
 // va_list, va_arg
 #include <cstdarg>
@@ -74,6 +86,10 @@
 #include <deque>
 #include <fcntl.h>
 #include <unistd.h>
+#include <cassert>
+#include <string>
+#include <vector>
+#include <map>
 
 #if !CC_NO_RAEADLINE
 #include <readline/history.h>  // add_history
@@ -124,6 +140,16 @@ using llvm::SmallVectorImpl;
 using llvm::StringRef;
 using llvm::Twine;
 using llvm::sys::ProcessInfo;
+using llvm::MutableArrayRef;
+using llvm::None;
+using llvm::Optional;
+using llvm::OwningArrayRef;
+using llvm::SaveAndRestore;
+using llvm::VersionTuple;
+using llvm::Expected;
+using llvm::IntrusiveRefCntPtr;
+using llvm::IntrusiveRefCntPtrInfo;
+using llvm::RefCountedBase;
 
 enum PostFixOp {
     PostfixIncrement = 1,
@@ -647,5 +673,6 @@ static unsigned intRank(uint32_t a) {
 #include "StringPool.cpp"
 #include "parser.cpp"
 #include "lexer.cpp"
+#include "Target/TargetInfo.h"
 
 } // namespace xcc
