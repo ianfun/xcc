@@ -225,6 +225,12 @@ struct TextDiagnosticPrinter : public DiagnosticConsumer {
 };
 struct DiagnosticHelper {
     xcc_context &context;
+    unsigned getNumErrors() {
+        return context.printer->getNumErrors();
+    }
+    unsigned getNumWarnings() {
+        return context.printer->getNumWarnings();
+    }
     DiagnosticHelper(xcc_context &context) : context{context} { }
     template <typename... Args> void note(const char *msg, const Args &...args) {
         context.printer->emitDiagnostic(msg, DiagnosticLevel::Note, args...);

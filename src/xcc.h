@@ -673,6 +673,6 @@ static unsigned intRank(uint32_t a) {
 #include "StringPool.cpp"
 #include "parser.cpp"
 #include "lexer.cpp"
-#include "Target/TargetInfo.h"
+//#include "Target/TargetInfo.h"
 
 } // namespace xcc

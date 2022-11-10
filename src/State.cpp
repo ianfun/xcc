@@ -46,6 +46,9 @@ struct xcc_context {
             return typecache.u64;
         return typecache.u32;
     }
+    CType getChar() {
+        return typecache.i8;
+    }
     CType getWchar() {
 #if CC_WCHAR32
         return typecache.i32;

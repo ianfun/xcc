@@ -8,7 +8,8 @@ struct Type_info {
 struct Label_Info {
     label_t idx;
     uint8_t flags;
-    Label_Info() : flags{LBL_UNDEFINED} { }
+    Location loc;
+    Label_Info() : idx{0}, flags{LBL_UNDEFINED}, loc{Location()} { }
 };
 // bit enums for Variable_Info::tags
 constexpr uint8_t GARBAGE = 0, // just declared
@@ -95,18 +96,20 @@ struct Parser : public DiagnosticHelper {
         }
         return ref.idx;
     }
-    label_t putLable(IdentRef Name) {
+    label_t putLable(IdentRef Name, Location loc) {
         Label_Info &ref = jumper.lookupLabel(Name);
         switch (ref.flags) {
         case LBL_UNDEFINED: // not used, declared
             ref.flags = LBL_DECLARED;
             ref.idx = jumper.createLabel();
+            ref.loc = loc;
             break;
         case LBL_FORWARD: // used, and defined => ok!
             ref.flags = LBL_OK;
             break;
         case LBL_DECLARED: // declared => declared twice!
-            type_error(getLoc(), "duplicate label: %I", Name);
+            type_error(loc, "duplicate label: %I", Name);
+            note(ref.loc, "previous declaration of label %I is here", Name);
             break;
         default: llvm_unreachable("");
         }
@@ -129,9 +132,9 @@ struct Parser : public DiagnosticHelper {
         return result;
     }
     size_t puttag(IdentRef Name, CType ty, Location loc, enum CTypeKind k) {
-        size_t prev;
         bool found = false;
         if (Name) {
+            size_t prev;
             auto old = sema.tags.getSymInCurrentScope(Name, prev);
             if (old) {
                 if (old->ty->k != TYINCOMPLETE) {
@@ -149,10 +152,11 @@ struct Parser : public DiagnosticHelper {
                 found = true;
             }
         }
+        size_t Idx = sema.tags.putSym(Name, Type_info{.ty = ty, .loc = loc});
         if (!found) {
-            insertStmt(SNEW(DeclStmt){.loc = loc, .decl_idx = prev, .decl_ty = ty});
+            insertStmt(SNEW(DeclStmt){.loc = loc, .decl_idx = Idx, .decl_ty = ty});
         }
-        return sema.tags.putSym(Name, Type_info{.ty = ty, .loc = loc});
+        return Idx;
     }
     void putenum(IdentRef Name, uint64_t val, Location loc) {
         if (sema.typedefs.containsInCurrentScope(Name))
@@ -1388,16 +1392,76 @@ NOT_CONSTANT:
         Expr e, result;
         int m;
         if (l.tok.tok != TLcurlyBracket) {
-            if (!sema.currentInitTy)
+            auto ty = sema.currentInitTy;
+            if (!ty)
                 // when 'excess elements in initializer-list', 'sema.currentInitTy' is
                 // nullptr
                 return assignment_expression();
-            auto k = sema.currentInitTy->k;
+            auto k = ty->k;
+            if (k == TYARRAY && l.tok.tok == TStringLit) {
+                xstring s = l.tok.str;
+                auto enc = l.tok.enc;
+                Location loc1 = getLoc();
+                consume();
+                while (l.tok.tok == TStringLit) {
+                    s.push_back(l.tok.str);
+                    if (l.tok.enc != enc)
+                        type_error(loc1, "unsupported non-standard concatenation of string literals for UTF-%u and UTF-%u",(unsigned)enc, (unsigned)l.tok.enc);
+                    consume();
+                }
+                s.make_eos();
+                switch (enc) {
+                    case 8:
+                        if (!(ty->arrtype->tags & TYCHAR))
+                            type_error(loc1, "initializing non-char array with string literal");
+                        return wrap(context.getFixArrayType(context.getChar(), s.size() + 1), llvm::ConstantDataArray::getString(irgen.ctx, s.str(), false), loc1);
+                    case 16:
+                    {
+#if CC_WCHAR32
+                        SmallVector<uint16_t> data;
+#else
+                        SmallVector<uint32_t> data;
+#endif
+                        uint32_t state = 0, codepoint;
+                        for (auto c : s) {
+                            if (decode(&state, &codepoint, (uint32_t)(unsigned char)c))
+                                continue;
+                            if (codepoint <= 0xFFFF) {
+                                data.push_back(codepoint);
+                                continue;
+                            }
+                            data.push_back(0xD7C0 + (codepoint >> 10));
+                            data.push_back(0xDC00 + (codepoint & 0x3FF));
+                        }
+                        data.push_back(0);
+#if CC_WCHAR32
+                        if (!(ty->arrtype->tags & TYINT32))
+#else
+                        if (!(ty->arrtype->tags & TYINT16))
+#endif
+                            type_error(loc1, "initializing %T array with wide string literal", ty->arrtype);
+                        return wrap(context.getFixArrayType(context.getWchar(), s.size()), llvm::ConstantDataArray::get(irgen.ctx, data), loc1);
+                    }
+                    case 32:
+                    {
+                        SmallVector<uint32_t> data;
+                        uint32_t state = 0, codepoint;
+                        for (const auto c : s)
+                            if (!decode(&state, &codepoint, (uint32_t)(unsigned char)c))
+                                data.push_back(codepoint);
+                        data.push_back(0);
+                        if (!(ty->arrtype->tags & TYUINT32))
+                            type_error(loc1, "initializing %T array with wide string literal", ty->arrtype);
+                        return wrap(context.getFixArrayType(context.typecache.u32, s.size()), llvm::ConstantDataArray::get(irgen.ctx, data), loc1);
+                    }
+                    default: llvm_unreachable("bad string encoding");
+                }
+            }
             if (k != TYPRIM && k != TYPOINTER && k != TYENUM)
                 return type_error(getLoc(), "expect bracket initializer"), nullptr;
             if (!(e = assignment_expression()))
                 return nullptr;
-            return castto(e, sema.currentInitTy, Implict_Init);
+            return castto(e, ty, Implict_Init);
         }
         result = sema.currentInitTy->k == TYSTRUCT
                      ? ENEW(StructExpr){.ty = sema.currentInitTy, .arr2 = xvector<Expr>::get()}
@@ -1551,7 +1615,6 @@ NOT_CONSTANT:
     }
     Declator struct_declarator(CType base) {
         Declator d;
-
         if (l.tok.tok == TColon) {
             Expr e;
             unsigned bitsize;
@@ -1633,10 +1696,10 @@ NOT_CONSTANT:
                             checkSemicolon();
                             break;
                         }
-                        if (l.tok.tok == TRcurlyBracket) {
-                            consume();
-                            break;
-                        }
+                    }
+                    if (l.tok.tok == TRcurlyBracket) {
+                        consume();
+                        break;
                     }
                 }
             }
@@ -1981,19 +2044,30 @@ NOT_CONSTANT:
                 consume();
                 sema.want_var = true;
                 {
-                    CType old = sema.currentInitTy;
-                    sema.currentInitTy = st.ty;
+                    llvm::SaveAndRestore<CType> saved_ctype(sema.currentInitTy, st.ty);
                     init = initializer_list();
-                    sema.currentInitTy = old;
                 }
                 if (!init)
                     return expect(loc2, "initializer-list");
                 result->vars.back().init = init;
+                if (st.ty->k == TYARRAY && !st.ty->hassize && !st.ty->vla) 
+                    result->vars.back().ty = init->ty;
                 if (init->k == EConstant && st.ty->tags & TYCONST)
                     var_info.val = init->C; // for const and constexpr, their value can be fold to constant
-                if (isTopLevel() && init->k != EConstant && init->k != EConstantArray &&
-                    init->k != EConstantArraySubstript)
-                    type_error(loc2, "global initializer is not constant");
+                if ((isTopLevel() || (st.ty->tags & TYSTATIC | TYEXTERN)) && init->k != EConstant && init->k != EConstantArray &&
+                    init->k != EConstantArraySubstript) {
+                    // take address of globals is constant!
+                    if (!
+                        (init->k == EVar && 
+                            (
+                                sema.typedefs.isInGlobalScope(init->sval) || 
+                                sema.typedefs.getSym(init->sval).ty->tags & (TYEXTERN | TYSTATIC)
+                            )
+                        )
+                        ) {
+                        type_error(loc2, "global initializer is not constant");
+                    }
+                }
             } else {
                 if (st.ty->k == TYARRAY) {
                     if (st.ty->vla && isTopLevel())
@@ -2078,9 +2152,8 @@ NOT_CONSTANT:
                 return nullptr;
             if (e->ty->k != TYPOINTER)
                 return type_error(getLoc(), "pointer expected"), nullptr;
-            ty = context.clone(e->ty->p);
-            ty->tags |= TYLVALUE;
-            return unary(e, Dereference, ty);
+            make_deref(e);
+            return e;
         }
         case TBitNot: {
             Expr e;
@@ -2644,27 +2717,31 @@ ADD:
                 result = ENEW(PostFixExpr){.loc = result->loc, .ty = result->ty, .pop = isadd, .poperand = result};
             }
                 continue;
-            case TArrow: isarrow = false; goto DOT;
+            case TArrow: isarrow = true; goto DOT;
             case TDot: {
-                isarrow = true;
+                isarrow = false;
 DOT:
+                CType ty = result->ty;
                 bool isLvalue = false;
                 consume();
                 if (l.tok.tok != TIdentifier)
                     return expect(getLoc(), "identifier"), nullptr;
                 if (isarrow) {
                     if (result->ty->k != TYPOINTER)
-                        return type_error(getLoc(), "pointer member access('->') requires a pointer"), nullptr;
-                    result = unary(result, Dereference, result->ty->p);
+                        return type_error(getLoc(), "member reference type %T is not a pointer; did you mean to use '.'"), result;
+                    ty = result->ty->p;
                     isLvalue = true;
+                } else {
+                    if (result->ty->k == TYPOINTER) {
+                        return type_error("member reference type %T is a pointer; did you mean to use '->'", result->ty), result;
+                    }
                 }
-                if (result->ty->k != TYSTRUCT && result->ty->k != TYUNION)
-                    return type_error(getLoc(), "member access is not struct or union"), nullptr;
-
-                for (size_t i = 0; i < result->ty->selems.size(); ++i) {
-                    Declator pair = result->ty->selems[i];
+                if (ty->k != TYSTRUCT && ty->k != TYUNION)
+                    return type_error(getLoc(), "member access is not struct or union"), result;
+                for (size_t i = 0; i < ty->selems.size(); ++i) {
+                    Declator pair = ty->selems[i];
                     if (l.tok.s == pair.name) {
-                        result = ENEW(MemberAccessExpr){
+                        result = ENEW(MemberAccessExpr) {
                             .loc = result->loc, .ty = pair.ty, .obj = result, .idx = (uint32_t)i};
                         if (isLvalue) {
                             result->ty = context.clone(result->ty);
@@ -2760,6 +2837,10 @@ CONTINUE:;
     }
     void make_deref(Expr &e) {
         assert(e->ty->k == TYPOINTER && "bad call to make_deref: expect a pointer");
+        if (e->ty->p->k == TYINCOMPLETE || e->ty->tags | TYVOID) {
+            type_error("dereference from incomplete/void type %T", e->ty);
+            return;
+        }
         if (e->k == EConstantArraySubstript) {
             uint64_t i = e->cidx.getLimitedValue();
             llvm::Constant *C = e->carray->getInitializer();
@@ -3188,12 +3269,16 @@ NEXT:
             consume();
             if (l.tok.tok == TColon) { // labeled-statement
                 consume();
-                label_t L = putLable(tok.s);
+                label_t L = putLable(tok.s, loc);
                 insertLabel(L, tok.s);
+                if (l.tok.tok == TRcurlyBracket) {
+                    warning(loc, "missing statement after label, add ';' for you");
+                    return;
+                }
                 return statement();
             }
             l.tokenq.push_back(l.tok), l.tok = tok;
-            // goto default!
+            // not a labeled-statement, now put the token back and try to parse a expression
         }
         default: break;
         }
@@ -3554,6 +3639,8 @@ NEXT:
                 parse_asm(), checkSemicolon();
             else
                 declaration();
+            if (getNumErrors())
+                break;
         }
         insertStmtEnd();
         return head;
@@ -3591,6 +3678,8 @@ NEXT:
                 declaration();
             else
                 statement();
+            if (getNumErrors())
+                break;
         }
     }
     Stmt function_body(const xvector<Param> params, xvector<size_t> &args, Location loc) {
@@ -3628,9 +3717,9 @@ NEXT:
         for (const auto &it : jumper.labels) {
             IdentRef name = it.first;
             switch (it.second.flags) {
-            case LBL_FORWARD: type_error(loc, "use of undeclared label: %I", name); break;
-            case LBL_DECLARED: warning(loc, "unused label: %I", name); break;
-            case LBL_OK: dbgprint("push label into function: %s\n", name->getKey().data()); break;
+            case LBL_FORWARD: type_error(it.second.loc, "use of undeclared label: %I", name); break;
+            case LBL_DECLARED: warning(it.second.loc, "unused label: %I", name); break;
+            case LBL_OK: break;
             default: llvm_unreachable("");
             }
         }

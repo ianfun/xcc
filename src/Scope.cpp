@@ -58,6 +58,18 @@ template <typename T, unsigned InitialSize = 64> struct BlockScope : public Scop
         this->data.truncate(blocks.back());
         blocks.pop_back();
     }
+    bool isInGlobalScope(IdentRef Name) {
+        assert(blocks.size() && "no global scope");
+        for (size_t i = 0;i < blocks.size();i++) {
+            if (this->data[i].sym == Name)
+                return true;
+        }
+        return false;
+    }
+    bool isInGlobalScope(size_t idx) {
+        assert(blocks.size() && "no global scope");
+        return idx < blocks.front();
+    }
     auto current_block() { return this->data.data() + numSymsThisBlock(); }
     auto current_block() const { return this->data.data() + numSymsThisBlock(); }
     T *getSymInCurrentScope(IdentRef Name) {

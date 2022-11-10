@@ -67,11 +67,11 @@ int xcc_link(xcc::DiagnosticHelper &Diags, llvm::StringRef objFileName, const ll
         status = lld::mingw::link(args, llvm::outs(), llvm::errs(), false, false);
     } else if (theTriple.isOSBinFormatCOFF()) {
         args[0] = "lld-link";
-        dbgprint("linking: COFF");
+        dbgprint("linking: COFF\n");
         status = lld::coff::link(args, llvm::outs(), llvm::errs(), false, false);
     } else if (theTriple.isOSBinFormatELF()) {
         args[0] = "ld.lld";
-        dbgprint("linking: ELF");
+        dbgprint("linking: ELF\n");
         status = lld::elf::link(args, llvm::outs(), llvm::errs(), false, false);
     } else if (theTriple.isOSBinFormatMachO()) {
         args[0] = "ld64.lld";
@@ -129,13 +129,17 @@ int main(int argc_, const char **argv_)
     if (theDriver.BuildCompilation(argv, options, SM, ret))
         return ret;
 
-    auto tos = std::make_shared<xcc::TargetOptions>();
-
-    tos->Triple = options.triple.str();
-
-    auto theTarget = xcc::TargetInfo::CreateTargetInfo(tos);
-
-    printf("theTarget = %p\n", theTarget);
+    //auto tos = std::make_shared<xcc::TargetOptions>();
+//
+    //tos->Triple = options.triple.str();
+//
+    //auto theTarget = xcc::TargetInfo::CreateTargetInfo(tos);
+//
+    //printf("theTarget = %p\n", theTarget);
+    //auto target_builtins = theTarget->getTargetBuiltins();
+    //for (const auto &it : target_builtins) {
+    //    printf("%s(%s)\n", it.Name, it.Type);
+    //}
 
     llvm::InitializeAllAsmParsers();
     llvm::InitializeAllAsmPrinters();

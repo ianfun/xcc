@@ -150,12 +150,16 @@ struct IRGen : public DiagnosticHelper {
         case TYENUM: return types[x32];
         case TYINCOMPLETE:
             switch (ty->tag) {
-            case TYSTRUCT:
+            case TYSTRUCT: 
             case TYUNION: return tags[ty->iidx];
             case TYENUM: return types[x32];
             default: llvm_unreachable("");
             }
         case TYBITFIELD:
+        case TYSTRUCT:
+            return tags[ty->sidx];
+        case TYUNION:
+            return tags[ty->uidx];
         default: llvm_unreachable("unexpected type!");
         }
     }
@@ -289,7 +293,7 @@ struct IRGen : public DiagnosticHelper {
             Type *buf = alloc.Allocate<Type>(L);
             for (size_t i = 0; i < L; ++i)
                 buf[i] = wrap2(ty->selems[i].ty);
-            return llvm::StructType::get(ctx, ArrayRef<Type>(buf, L));
+            return llvm::StructType::create(ctx, ArrayRef<Type>(buf, L));
         }
         case TYARRAY: return llvm::ArrayType::get(wrap(ty->arrtype), ty->arrsize);
         case TYENUM: return types[x32];
@@ -498,8 +502,8 @@ struct IRGen : public DiagnosticHelper {
                     for (size_t i = 0; i < l; ++i)
                         buf[i] = wrap(s->decl_ty->selems[i].ty);
                     ArrayRef<Type> arr(buf, l);
-                    tags[s->decl_idx] = s->decl_ty->sname ? llvm::StructType::create(arr, s->decl_ty->sname->getKey())
-                                                          : llvm::StructType::create(arr);
+                    tags[s->decl_idx] = s->decl_ty->sname ? llvm::StructType::create(ctx, arr, s->decl_ty->sname->getKey())
+                                                          : llvm::StructType::create(ctx, arr);
                 }
             }
         } break;
@@ -766,11 +770,16 @@ struct IRGen : public DiagnosticHelper {
             auto v = subscript(e, ty);
             return load(v, ty);
         }
-        case EMemberAccess: {
-            auto base = gen(e->obj);
-            // if (e->k == EPointerMemberAccess)
-            //   base = load(base, wrap(e->obj->ty), e->obj->ty->align);
-            return B.CreateExtractValue(base, e->idx);
+        case EMemberAccess: 
+        {
+            bool isVar = e->k == EVar;
+            auto ty = wrap(e->obj->ty);
+            auto base = isVar ? getAddress(e->obj) : gen(e->obj);
+            if (isVar || e->obj->ty->k == TYPOINTER) {
+                auto pMember = B.CreateInBoundsGEP(ty, base, {llvm::ConstantInt::get(cast<llvm::IntegerType>(types[x32]), e->idx)});
+                return load(pMember, wrap(e->ty), e->obj->ty->align);
+            }
+            return B.CreateExtractValue(load(base, ty, e->obj->ty->align), e->idx);
         }
         case EConstantArray: return e->array;
         case EBin: {
