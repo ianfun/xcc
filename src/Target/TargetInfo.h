@@ -459,7 +459,9 @@ private:
      LastTSBuiltin
    };
    }
-  
+  #undef _ReadWriteBarrier
+  #undef _ReadBarrier
+  #undef _WriteBarrier
    /// X86 builtins
    namespace X86 {
    enum {

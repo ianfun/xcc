@@ -129,13 +129,13 @@ int main(int argc_, const char **argv_)
     if (theDriver.BuildCompilation(argv, options, SM, ret))
         return ret;
 
-    //auto tos = std::make_shared<xcc::TargetOptions>();
-//
-    //tos->Triple = options.triple.str();
-//
-    //auto theTarget = xcc::TargetInfo::CreateTargetInfo(tos);
-//
-    //printf("theTarget = %p\n", theTarget);
+    auto tos = std::make_shared<xcc::TargetOptions>();
+
+    tos->Triple = options.triple.str();
+
+    auto theTarget = xcc::TargetInfo::CreateTargetInfo(tos);
+
+    printf("theTarget = %p\n", theTarget);
     //auto target_builtins = theTarget->getTargetBuiltins();
     //for (const auto &it : target_builtins) {
     //    printf("%s(%s)\n", it.Name, it.Type);
@@ -178,7 +178,7 @@ int main(int argc_, const char **argv_)
         return CC_EXIT_SUCCESS;
     
     std::error_code EC;
-    
+
     // Build ASTs then convert to LLVM, emit .bc file
     if (theDriver.getArgs().hasArg(xcc::driver::options::OPT_emit_llvm_bc)) {
         std::string outputFileName = options.mainFileName;
@@ -206,6 +206,7 @@ int main(int argc_, const char **argv_)
     }
 
     {   // default - emit object file and linkning, or emit assembly
+        xcc::driver::ToolChain TC(theDriver, options.triple, theDriver.getArgs());
         bool assembly = theDriver.getArgs().hasArg(xcc::driver::options::OPT_S);
         std::string outputFileName = options.mainFileName;
         outputFileName += assembly ?  ".s" : ".o";

@@ -1,44 +1,3 @@
-#include <llvm/ADT/Triple.h>
-#include <llvm/ADT/Twine.h>
-#include <llvm/ADT/ArrayRef.h>
-#include <llvm/ADT/StringExtras.h>
-#include <llvm/ADT/StringMap.h>
-#include <llvm/ADT/StringSet.h>
-#include <llvm/ADT/StringMap.h>
-#include <llvm/ADT/SmallVector.h>
-#include <llvm/ADT/StringRef.h>
-#include <llvm/ADT/SmallString.h>
-#include <llvm/Option/Option.h>
-#include <llvm/Option/ArgList.h>
-#include <llvm/Option/Arg.h>
-#include <llvm/Support/Program.h>
-#include <llvm/Support/Path.h>
-#include <llvm/Support/Host.h>
-#include <llvm/Support/CSKYTargetParser.h>
-#include <llvm/Support/TargetParser.h>
-#include <llvm/BinaryFormat/Magic.h>
-#include <llvm/Config/llvm-config.h>
-#include <llvm/Support/CodeGen.h>
-#include <llvm/Support/Compression.h>
-#include <llvm/Support/Debug.h>
-#include <llvm/Support/ErrorHandling.h>
-#include <llvm/Support/FileSystem.h>
-#include <llvm/Support/Process.h>
-#include <llvm/Support/ScopedPrinter.h>
-#include <llvm/Support/Threading.h>
-#include <llvm/ProfileData/InstrProf.h>
-#include <llvm/Support/ScopedPrinter.h>
-#include <llvm/Support/VirtualFileSystem.h>
-#include <llvm/Support/YAMLParser.h>
-#include <llvm/MC/MCSubtargetInfo.h>
-#include <llvm/MC/SubtargetFeature.h>
-
-using llvm::StringRef;
-using llvm::ArrayRef;
-using llvm::SmallString;
-using llvm::SmallVectorImpl;
-using llvm::Twine;
-
 namespace driver {
   using namespace llvm::opt;
 enum FileType {
@@ -71,13 +30,9 @@ class Driver;
 
 class Command {
   StringRef Program;
-  ArrayRef<StringRef> args;
-  Command(const StringRef &Program, const ArrayRef<StringRef> &args): Program(Program), args(args) {}
+  SmallVector<StringRef> args;
   void addArg(StringRef arg) {
     args.push_back(arg);
-  }
-  bool HasNativeLLVMSupport() const {
-    return NativeLLVMSupport;
   }
   int ExecuteAndWait(bool &Failed, std::string &ErrorMsg) {
     return llvm::sys::ExecuteAndWait(
@@ -103,13 +58,20 @@ class Command {
     );
   }
 };
-class ToolChain {
+struct ToolChain;
+
+typedef void (*LinkerBuilder)(ToolChain &TC, Command &C);
+typedef void (*AssemblerBuilder)(ToolChain &TC, Command &C);
+
+struct ToolChain {
+  LinkerBuilder theLinker = nullptr;
+  AssemblerBuilder theAssembler = nullptr;
   llvm::Triple Triple;
   const Driver &D;
   const llvm::opt::ArgList &Args;
   ToolChain(const Driver &D, const llvm::Triple &T, const llvm::opt::ArgList &Args): D(D), Triple(T), Args(Args) {}
-  virtual void buildLinker(Command &C, const ArgList &args) {};
-  virtual void buildAssembler(Command &C, const ArgList &args) {};
+  auto getLinker() const { return theLinker; };
+  auto getAssembler() const { return theAssembler; };
   virtual void addSystemIncludes(llvm::SmallVectorImpl<const char*> paths) {};
   virtual ~ToolChain() {};
   ToolChain &getToolChain() { return *this; }
@@ -174,7 +136,7 @@ class ToolChain {
   
     return false;
   }
-  /*static*/ std::string concat(StringRef Path, const Twine &A,
+  static std::string concat(StringRef Path, const Twine &A,
                                            const Twine &B, const Twine &C,
                                            const Twine &D) {
     SmallString<128> Result(Path);

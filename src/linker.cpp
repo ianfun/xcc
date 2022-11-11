@@ -11,7 +11,7 @@ struct LinkerRunner : public DiagnosticHelper {
         if (failed)
             error("execute linker failed: %R", StringRef(ErrMsg));
     }
-    void wait() { (void)Wait(info, 0, true, &ErrMsg); }
+    void wait() { (void)llvm::sys::Wait(info, 0, true, &ErrMsg); }
     void runAndWait() {
         bool failed = false;
         int status = llvm::sys::ExecuteAndWait(linkerPath, {filePath, "-o", outputPath}, llvm::None, llvm::None, 0, 0,

@@ -46,19 +46,15 @@
 #include <llvm/IR/Type.h>
 #include <llvm/IR/Verifier.h>
 #include <llvm/Linker/Linker.h>
-#include <llvm/MC/TargetRegistry.h>
 #include <llvm/Support/Casting.h>
-#include <llvm/Support/CommandLine.h>
 #include <llvm/Support/Compiler.h>
 #include <llvm/Support/ConvertUTF.h>
 #include <llvm/Support/Errno.h>
-#include <llvm/Support/FileSystem.h>
 #include <llvm/Support/Host.h>
 #include <llvm/Support/InitLLVM.h>
 #include <llvm/Support/Path.h>
 #include <llvm/Support/PrettyStackTrace.h>
 #include <llvm/Support/Program.h>
-#include <llvm/Support/SaveAndRestore.h>
 #include <llvm/Support/TargetSelect.h>
 #include <llvm/Support/WithColor.h>
 #include <llvm/Support/raw_ostream.h>
@@ -72,6 +68,37 @@
 #include <llvm/Support/DataTypes.h>
 #include <llvm/Target/TargetOptions.h>
 #include <llvm/Frontend/OpenMP/OMPGridValues.h>
+#include <llvm/Support/CSKYTargetParser.h>
+#include <llvm/BinaryFormat/Magic.h>
+#include <llvm/Config/llvm-config.h>
+#include <llvm/Support/CodeGen.h>
+#include <llvm/Support/Compression.h>
+#include <llvm/Support/CommandLine.h>
+#include <llvm/Support/Debug.h>
+#include <llvm/Support/MathExtras.h>
+#include <llvm/Support/ErrorHandling.h>
+#include <llvm/Support/ExitCodes.h>
+#include <llvm/Support/FormatVariadic.h>
+#include <llvm/Support/PrettyStackTrace.h>
+#include <llvm/Support/Program.h>
+#include <llvm/Support/FileSystem.h>
+#include <llvm/Support/Process.h>
+#include <llvm/Support/ScopedPrinter.h>
+#include <llvm/Support/Threading.h>
+#include <llvm/Support/ARMTargetParser.h>
+#include <llvm/Support/MD5.h>
+#include <llvm/Support/StringSaver.h>
+#include <llvm/Support/ScopedPrinter.h>
+#include <llvm/Support/VirtualFileSystem.h>
+#include <llvm/Support/YAMLParser.h>
+#include <llvm/MC/MCSubtargetInfo.h>
+#include <llvm/MC/SubtargetFeature.h>
+#include <llvm/MC/TargetRegistry.h>
+#include <llvm/Option/Option.h>
+#include <llvm/Option/OptSpecifier.h>
+#include <llvm/Option/ArgList.h>
+#include <llvm/Option/Arg.h>
+#include <llvm/ProfileData/InstrProf.h>
 
 // va_list, va_arg
 #include <cstdarg>
@@ -673,6 +700,6 @@ static unsigned intRank(uint32_t a) {
 #include "StringPool.cpp"
 #include "parser.cpp"
 #include "lexer.cpp"
-//#include "Target/TargetInfo.h"
-
+#include "Target/TargetInfo.h"
+#include "toolchains/ToolChain.cpp"
 } // namespace xcc

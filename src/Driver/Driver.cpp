@@ -1,25 +1,3 @@
-#include <llvm/Option/Arg.h>
-#include <llvm/Option/ArgList.h>
-#include <llvm/Option/OptSpecifier.h>
-#include <llvm/Support/CommandLine.h>
-#include <llvm/Support/TargetSelect.h>
-#include <llvm/Support/raw_ostream.h>
-#include <llvm/MC/TargetRegistry.h>
-#include <llvm/Support/ErrorHandling.h>
-#include <llvm/Support/ExitCodes.h>
-#include <llvm/Support/FileSystem.h>
-#include <llvm/Support/FormatVariadic.h>
-#include <llvm/Support/Host.h>
-#include <llvm/Support/MD5.h>
-#include <llvm/Support/Path.h>
-#include <llvm/Support/PrettyStackTrace.h>
-#include <llvm/Support/Process.h>
-#include <llvm/Support/Program.h>
-#include <llvm/Support/StringSaver.h>
-#include <llvm/Support/VirtualFileSystem.h>
-#include <llvm/Support/raw_ostream.h>
-#include <llvm/Support/ARMTargetParser.h>
-
 namespace xcc {
 namespace driver {
 
