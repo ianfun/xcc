@@ -1,27 +1,18 @@
-class MinGW: public ToolChain {
-  CudaInstallationDetector CudaInstallation;
-  RocmInstallationDetector RocmInstallation;
+// Mingw.cpp - implements Mingw ToolChain class
 
+struct MinGW: public ToolChain {
   std::string Base;
   std::string GccLibDir;
   clang::driver::toolchains::Generic_GCC::GCCVersion GccVer;
   std::string Ver;
   std::string SubdirName;
-  mutable std::unique_ptr<tools::gcc::Preprocessor> Preprocessor;
-  mutable std::unique_ptr<tools::gcc::Compiler> Compiler;
+  bool NativeLLVMSupport;
   void findGccLibDir();
-  MinGW(const Driver &D, const llvm::Triple &Triple,
-                         const ArgList &Args)
-    : ToolChain(D, Triple, Args), CudaInstallation(D, Triple, Args),
-      RocmInstallation(D, Triple, Args) {
+  MinGW(const Driver &D, const llvm::Triple &Triple, const ArgList &Args)
+   : ToolChain(D, Triple, Args, buildAssembler, buildLinker) {
   getProgramPaths().push_back(getDriver().getInstalledDir());
-
-  // The sequence for detecting a sysroot here should be kept in sync with
-  // the testTriple function below.
   if (getDriver().SysRoot.size())
     Base = getDriver().SysRoot;
-  // Look for <clang-bin>/../<triplet>; if found, use <clang-bin>/.. as the
-  // base as it could still be a base for a gcc setup with libgcc.
   else if (llvm::ErrorOr<std::string> TargetSubdir =
                findClangRelativeSysroot(getDriver(), getTriple(), SubdirName))
     Base = std::string(llvm::sys::path::parent_path(TargetSubdir.get()));
@@ -34,26 +25,20 @@ class MinGW: public ToolChain {
 
   Base += llvm::sys::path::get_separator();
   findGccLibDir();
-  // GccLibDir must precede Base/lib so that the
-  // correct crtbegin.o ,cetend.o would be found.
   getFilePaths().push_back(GccLibDir);
   getFilePaths().push_back(
       (Base + SubdirName + llvm::sys::path::get_separator() + "lib").str());
-
-  // Gentoo
   getFilePaths().push_back(
       (Base + SubdirName + llvm::sys::path::get_separator() + "mingw/lib").str());
 
   getFilePaths().push_back(Base + "lib");
-  // openSUSE
   getFilePaths().push_back(Base + SubdirName + "/sys-root/mingw/lib");
-
   NativeLLVMSupport =
       Args.getLastArgValue(options::OPT_fuse_ld_EQ, CLANG_DEFAULT_LINKER)
           .equals_insensitive("lld");
 }
 bool IsIntegratedAssemblerDefault() const { return true; }
-bool NativeLLVMSupport;
+
 static bool findGccVersion(StringRef LibDir, std::string &GccLibDir,
                            std::string &Ver,
                            toolchains::Generic_GCC::GCCVersion &Version) {
@@ -248,15 +233,14 @@ static llvm::Triple adjustTriple(const Driver &D, const llvm::Triple &Triple,
   return Triple;
 }
 
-void fixTripleArch(const Driver &D, llvm::Triple &Triple,
-                                      const ArgList &Args) {
+void fixTripleArch(ToolChain &TC, Command &C) {
   if (Triple.getArch() == llvm::Triple::x86 ||
       Triple.getArch() == llvm::Triple::arm ||
       Triple.getArch() == llvm::Triple::thumb)
     Triple = adjustTriple(D, Triple, Args);
 }
 
-void buildLinker(Command &C, const ArgList &args) {
+static void buildLinker(ToolChain &TC, Command &C) {
   const Driver &D = getDriver();
   ArgStringList CmdArgs;
 
@@ -474,7 +458,7 @@ void buildLinker(Command &C, const ArgList &args) {
                                          ResponseFileSupport::AtFileUTF8(),
                                          Exec, CmdArgs, Inputs, Output));
 }
-void buildAssembler(Command &C, const ArgList &args) {
+static void buildAssembler(Command &C, const ArgList &args) {
     claimNoWarnArgs(Args);
     ArgStringList CmdArgs;
     
@@ -531,20 +515,6 @@ void AddLibGCC(const ArgList &Args, ArgStringList &CmdArgs) const {
         StringRef(Lib).startswith("crtdll"))
       return;
   CmdArgs.push_back("-lmsvcrt");
-}
-void AddCudaIncludeArgs(const ArgList &DriverArgs,
-                                           ArgStringList &CC1Args) const {
-  CudaInstallation.AddCudaIncludeArgs(DriverArgs, CC1Args);
-}
-
-void AddHIPIncludeArgs(const ArgList &DriverArgs,
-                                          ArgStringList &CC1Args) const {
-  RocmInstallation.AddHIPIncludeArgs(DriverArgs, CC1Args);
-}
-
-void printVerboseInfo(raw_ostream &OS) const {
-  CudaInstallation.print(OS);
-  RocmInstallation.print(OS);
 }
 
 };

@@ -1,68 +1,8 @@
-//===--- Hurd.cpp - Hurd ToolChain Implementations --------*- C++ -*-===//
-//
-// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
-// See https://llvm.org/LICENSE.txt for license information.
-// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
-//
-//===----------------------------------------------------------------------===//
+// Hurd.cpp - implements Hurd ToolChain class
 
-#include "Hurd.h"
-#include "CommonArgs.h"
-#include "clang/Config/config.h"
-#include "clang/Driver/Driver.h"
-#include "clang/Driver/Options.h"
-#include "llvm/Support/Path.h"
-#include "llvm/Support/VirtualFileSystem.h"
-
-using namespace clang::driver;
-using namespace clang::driver::toolchains;
-using namespace clang;
-using namespace llvm::opt;
-
-using tools::addPathIfExists;
-
-/// Get our best guess at the multiarch triple for a target.
-///
-/// Debian-based systems are starting to use a multiarch setup where they use
-/// a target-triple directory in the library and header search paths.
-/// Unfortunately, this triple does not align with the vanilla target triple,
-/// so we provide a rough mapping here.
-std::string Hurd::getMultiarchTriple(const Driver &D,
-                                     const llvm::Triple &TargetTriple,
-                                     StringRef SysRoot) const {
-  if (TargetTriple.getArch() == llvm::Triple::x86) {
-    // We use the existence of '/lib/<triple>' as a directory to detect some
-    // common hurd triples that don't quite match the Clang triple for both
-    // 32-bit and 64-bit targets. Multiarch fixes its install triples to these
-    // regardless of what the actual target triple is.
-    if (D.getVFS().exists(SysRoot + "/lib/i386-gnu"))
-      return "i386-gnu";
-  }
-
-  // For most architectures, just use whatever we have rather than trying to be
-  // clever.
-  return TargetTriple.str();
-}
-
-static StringRef getOSLibDir(const llvm::Triple &Triple, const ArgList &Args) {
-  // It happens that only x86 and PPC use the 'lib32' variant of oslibdir, and
-  // using that variant while targeting other architectures causes problems
-  // because the libraries are laid out in shared system roots that can't cope
-  // with a 'lib32' library search path being considered. So we only enable
-  // them when we know we may need it.
-  //
-  // FIXME: This is a bit of a hack. We should really unify this code for
-  // reasoning about oslibdir spellings with the lib dir spellings in the
-  // GCCInstallationDetector, but that is a more significant refactoring.
-
-  if (Triple.getArch() == llvm::Triple::x86)
-    return "lib32";
-
-  return Triple.isArch32Bit() ? "lib" : "lib64";
-}
-
-Hurd::Hurd(const Driver &D, const llvm::Triple &Triple, const ArgList &Args)
-    : Generic_ELF(D, Triple, Args) {
+struct Hurd : public Generic_ELF {
+  Hurd(const Driver &D, const llvm::Triple &Triple,
+       const llvm::opt::ArgList &Args) : Generic_ELF(D, Triple, Args, gnutools::Assembler, gnutools::Linker) {
   GCCInstallation.init(Triple, Args);
   Multilibs = GCCInstallation.getMultilibs();
   SelectedMultilib = GCCInstallation.getMultilib();
@@ -117,22 +57,58 @@ Hurd::Hurd(const Driver &D, const llvm::Triple &Triple, const ArgList &Args)
   addPathIfExists(D, SysRoot + "/usr/lib", Paths);
 }
 
-bool Hurd::HasNativeLLVMSupport() const { return true; }
+  bool HasNativeLLVMSupport() const override  { return true; }
 
-Tool *Hurd::buildLinker() const { return new tools::gnutools::Linker(*this); }
+  std::vector<std::string> ExtraOpts;
 
-Tool *Hurd::buildAssembler() const {
-  return new tools::gnutools::Assembler(*this);
+/// Get our best guess at the multiarch triple for a target.
+///
+/// Debian-based systems are starting to use a multiarch setup where they use
+/// a target-triple directory in the library and header search paths.
+/// Unfortunately, this triple does not align with the vanilla target triple,
+/// so we provide a rough mapping here.
+std::string getMultiarchTriple(const Driver &D,
+                                     const llvm::Triple &TargetTriple,
+                                     StringRef SysRoot) const {
+  if (TargetTriple.getArch() == llvm::Triple::x86) {
+    // We use the existence of '/lib/<triple>' as a directory to detect some
+    // common hurd triples that don't quite match the Clang triple for both
+    // 32-bit and 64-bit targets. Multiarch fixes its install triples to these
+    // regardless of what the actual target triple is.
+    if (D.getVFS().exists(SysRoot + "/lib/i386-gnu"))
+      return "i386-gnu";
+  }
+
+  // For most architectures, just use whatever we have rather than trying to be
+  // clever.
+  return TargetTriple.str();
 }
 
-std::string Hurd::getDynamicLinker(const ArgList &Args) const {
+static StringRef getOSLibDir(const llvm::Triple &Triple, const ArgList &Args) {
+  // It happens that only x86 and PPC use the 'lib32' variant of oslibdir, and
+  // using that variant while targeting other architectures causes problems
+  // because the libraries are laid out in shared system roots that can't cope
+  // with a 'lib32' library search path being considered. So we only enable
+  // them when we know we may need it.
+  //
+  // FIXME: This is a bit of a hack. We should really unify this code for
+  // reasoning about oslibdir spellings with the lib dir spellings in the
+  // GCCInstallationDetector, but that is a more significant refactoring.
+
+  if (Triple.getArch() == llvm::Triple::x86)
+    return "lib32";
+
+  return Triple.isArch32Bit() ? "lib" : "lib64";
+}
+
+std::string getDynamicLinker(const ArgList &Args) const {
   if (getArch() == llvm::Triple::x86)
     return "/lib/ld.so";
 
   llvm_unreachable("unsupported architecture");
 }
 
-void Hurd::AddClangSystemIncludeArgs(const ArgList &DriverArgs,
+void AddClangSystemIncludeArgs(const ArgList &DriverArgs,
                                      ArgStringList &CC1Args) const {
   const Driver &D = getDriver();
   std::string SysRoot = computeSysRoot();
@@ -186,22 +162,4 @@ void Hurd::AddClangSystemIncludeArgs(const ArgList &DriverArgs,
   addExternCSystemInclude(DriverArgs, CC1Args, SysRoot + "/usr/include");
 }
 
-void Hurd::addLibStdCxxIncludePaths(const llvm::opt::ArgList &DriverArgs,
-                                    llvm::opt::ArgStringList &CC1Args) const {
-  // We need a detected GCC installation on Linux to provide libstdc++'s
-  // headers in odd Linuxish places.
-  if (!GCCInstallation.isValid())
-    return;
-
-  StringRef TripleStr = GCCInstallation.getTriple().str();
-  StringRef DebianMultiarch =
-      GCCInstallation.getTriple().getArch() == llvm::Triple::x86 ? "i386-gnu"
-                                                                 : TripleStr;
-
-  addGCCLibStdCxxIncludePaths(DriverArgs, CC1Args, DebianMultiarch);
-}
-
-void Hurd::addExtraOpts(llvm::opt::ArgStringList &CmdArgs) const {
-  for (const auto &Opt : ExtraOpts)
-    CmdArgs.push_back(Opt.c_str());
-}
+};

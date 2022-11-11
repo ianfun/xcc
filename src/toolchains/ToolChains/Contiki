@@ -1,0 +1,14 @@
+// Contiki.cpp - implements Contiki ToolChain class
+
+struct Contiki : public Generic_ELF {
+public:
+  Contiki(const Driver &D, const llvm::Triple &Triple,
+          const llvm::opt::ArgList &Args) : Generic_ELF(D, Triple, Args) {}
+SanitizerMask getSupportedSanitizers() const override {
+  const bool IsX86 = getTriple().getArch() == llvm::Triple::x86;
+  SanitizerMask Res = ToolChain::getSupportedSanitizers();
+  if (IsX86)
+    Res |= SanitizerKind::SafeStack;
+  return Res;
+}
+};

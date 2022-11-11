@@ -1,32 +1,9 @@
-//===--- Ananas.cpp - Ananas ToolChain Implementations ------*- C++ -*-===//
-//
-// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
-// See https://llvm.org/LICENSE.txt for license information.
-// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
-//
-//===----------------------------------------------------------------------===//
-
-#include "Ananas.h"
-#include "CommonArgs.h"
-#include "clang/Driver/Compilation.h"
-#include "clang/Driver/Driver.h"
-#include "clang/Driver/InputInfo.h"
-#include "clang/Driver/Options.h"
-#include "llvm/ADT/SmallString.h"
-#include "llvm/Option/ArgList.h"
-#include "llvm/Support/Path.h"
-
-using namespace clang::driver;
-using namespace clang::driver::tools;
-using namespace clang::driver::toolchains;
-using namespace clang;
-using namespace llvm::opt;
-
-void ananas::Assembler::ConstructJob(Compilation &C, const JobAction &JA,
-                                     const InputInfo &Output,
-                                     const InputInfoList &Inputs,
-                                     const ArgList &Args,
-                                     const char *LinkingOutput) const {
+struct Ananas : public Generic_ELF {
+  Ananas(const Driver &D, const llvm::Triple &Triple, const ArgList &Args)
+    : Generic_ELF(D, Triple, Args) {
+     getFilePaths().push_back(getDriver().SysRoot + "/usr/lib");
+  }
+static void buildAssembler(ToolChain &TC, Command &C)  const {
   claimNoWarnArgs(Args);
   ArgStringList CmdArgs;
 
@@ -44,11 +21,7 @@ void ananas::Assembler::ConstructJob(Compilation &C, const JobAction &JA,
                                          Exec, CmdArgs, Inputs, Output));
 }
 
-void ananas::Linker::ConstructJob(Compilation &C, const JobAction &JA,
-                                  const InputInfo &Output,
-                                  const InputInfoList &Inputs,
-                                  const ArgList &Args,
-                                  const char *LinkingOutput) const {
+static void buildLinker(ToolChain &TC, Command &C)  const {
   const ToolChain &ToolChain = getToolChain();
   const Driver &D = ToolChain.getDriver();
   ArgStringList CmdArgs;
@@ -133,16 +106,4 @@ void ananas::Linker::ConstructJob(Compilation &C, const JobAction &JA,
                                          ResponseFileSupport::AtFileCurCP(),
                                          Exec, CmdArgs, Inputs, Output));
 }
-
-// Ananas - Ananas tool chain which can call as(1) and ld(1) directly.
-
-Ananas::Ananas(const Driver &D, const llvm::Triple &Triple, const ArgList &Args)
-    : Generic_ELF(D, Triple, Args) {
-  getFilePaths().push_back(getDriver().SysRoot + "/usr/lib");
-}
-
-Tool *Ananas::buildAssembler() const {
-  return new tools::ananas::Assembler(*this);
-}
-
-Tool *Ananas::buildLinker() const { return new tools::ananas::Linker(*this); }
+};

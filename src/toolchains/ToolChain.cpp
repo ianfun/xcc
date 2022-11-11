@@ -64,12 +64,13 @@ typedef void (*LinkerBuilder)(ToolChain &TC, Command &C);
 typedef void (*AssemblerBuilder)(ToolChain &TC, Command &C);
 
 struct ToolChain {
-  LinkerBuilder theLinker = nullptr;
-  AssemblerBuilder theAssembler = nullptr;
   llvm::Triple Triple;
   const Driver &D;
   const llvm::opt::ArgList &Args;
-  ToolChain(const Driver &D, const llvm::Triple &T, const llvm::opt::ArgList &Args): D(D), Triple(T), Args(Args) {}
+  AssemblerBuilder theAssembler;
+  LinkerBuilder theLinker;
+  ToolChain(const Driver &D, const llvm::Triple &T, const llvm::opt::ArgList &Args, AssemblerBuilder Assembler =nullptr, LinkerBuilder Linker = nullptr)
+  : D(D), Triple(T), Args(Args), theAssembler{Assembler},  theLinker{Linker} {}
   auto getLinker() const { return theLinker; };
   auto getAssembler() const { return theAssembler; };
   virtual void addSystemIncludes(llvm::SmallVectorImpl<const char*> paths) {};
