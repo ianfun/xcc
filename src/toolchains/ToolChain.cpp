@@ -69,7 +69,7 @@ struct ToolChain {
   const llvm::opt::ArgList &Args;
   AssemblerBuilder theAssembler;
   LinkerBuilder theLinker;
-  ToolChain(const Driver &D, const llvm::Triple &T, const llvm::opt::ArgList &Args, AssemblerBuilder Assembler =nullptr, LinkerBuilder Linker = nullptr)
+  ToolChain(const Driver &D, const llvm::Triple &T, const llvm::opt::ArgList &Args, AssemblerBuilder Assembler = buildAssembler, LinkerBuilder Linker = buildLinker)
   : D(D), Triple(T), Args(Args), theAssembler{Assembler},  theLinker{Linker} {}
   auto getLinker() const { return theLinker; };
   auto getAssembler() const { return theAssembler; };
@@ -77,6 +77,8 @@ struct ToolChain {
   virtual ~ToolChain() {};
   ToolChain &getToolChain() { return *this; }
   const Driver &getDriver() const { return D; }
+  static void buildLinker(ToolChain &TC, Command &C) {}
+  static void buildAssembler(ToolChain &TC, Command &C) {}
   const llvm::Triple &getTriple() const { return Triple; }
   llvm::Triple::ArchType getArch() const { return Triple.getArch(); }
   StringRef getArchName() const { return Triple.getArchName(); }
