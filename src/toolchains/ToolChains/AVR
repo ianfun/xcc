@@ -1,3 +1,5 @@
+// AVR.cpp - implements AVR ToolChain class
+
 namespace {
 
 // NOTE: This list has been synchronized with gcc-avr 7.3.0 and avr-libc 2.0.0.
@@ -335,10 +337,10 @@ const StringRef PossibleAVRLibcLocations[] = {
 
 } // end anonymous namespace
 
-/// AVR Toolchain
-AVRToolChain::AVRToolChain(const Driver &D, const llvm::Triple &Triple,
+struct AVRToolChain : public Generic_ELF {
+AVRToolChain(const Driver &D, const llvm::Triple &Triple,
                            const ArgList &Args)
-    : Generic_ELF(D, Triple, Args) {
+    : Generic_ELF(D, Triple, Args, Generic_ELF::buildAssembler, buildLinker) {
   GCCInstallation.init(Triple, Args);
 
   if (getCPUName(D, Args, Triple).empty())
@@ -353,7 +355,7 @@ AVRToolChain::AVRToolChain(const Driver &D, const llvm::Triple &Triple,
   }
 }
 
-void AVRToolChain::AddClangSystemIncludeArgs(const ArgList &DriverArgs,
+void AddClangSystemIncludeArgs(const ArgList &DriverArgs,
                                              ArgStringList &CC1Args) const {
   if (DriverArgs.hasArg(options::OPT_nostdinc) ||
       DriverArgs.hasArg(options::OPT_nostdlibinc))
@@ -370,7 +372,7 @@ void AVRToolChain::AddClangSystemIncludeArgs(const ArgList &DriverArgs,
     addSystemInclude(DriverArgs, CC1Args, AVRInc);
 }
 
-void AVRToolChain::addClangTargetOptions(
+void addClangTargetOptions(
     const llvm::opt::ArgList &DriverArgs, llvm::opt::ArgStringList &CC1Args,
     Action::OffloadKind DeviceOffloadKind) const {
   // By default, use `.ctors` (not `.init_array`), as required by libgcc, which
@@ -385,12 +387,7 @@ void AVRToolChain::addClangTargetOptions(
     CC1Args.push_back("-fno-use-cxa-atexit");
 }
 
-Tool *AVRToolChain::buildLinker() const {
-  return new tools::AVR::Linker(getTriple(), *this);
-}
-
-std::string
-AVRToolChain::getCompilerRT(const llvm::opt::ArgList &Args, StringRef Component,
+std::string getCompilerRT(const llvm::opt::ArgList &Args, StringRef Component,
                             FileType Type = ToolChain::FT_Static) const {
   assert(Type == ToolChain::FT_Static && "AVR only supports static libraries");
   // Since AVR can never be a host environment, its compiler-rt library files
@@ -405,11 +402,30 @@ AVRToolChain::getCompilerRT(const llvm::opt::ArgList &Args, StringRef Component,
   llvm::sys::path::append(Path, File.str());
   return std::string(Path.str());
 }
+llvm::Optional<std::string> findAVRLibcInstallation() const {
+  // Search avr-libc installation according to avr-gcc installation.
+  std::string GCCParent(GCCInstallation.getParentLibPath());
+  std::string Path(GCCParent + "/avr");
+  if (llvm::sys::fs::is_directory(Path))
+    return Path;
+  Path = GCCParent + "/../avr";
+  if (llvm::sys::fs::is_directory(Path))
+    return Path;
 
-void AVR::Linker::ConstructJob(Compilation &C, const JobAction &JA,
-                               const InputInfo &Output,
-                               const InputInfoList &Inputs, const ArgList &Args,
-                               const char *LinkingOutput) const {
+  // Search avr-libc installation from possible locations, and return the first
+  // one that exists, if there is no avr-gcc installed.
+  for (StringRef PossiblePath : PossibleAVRLibcLocations) {
+    std::string Path = getDriver().SysRoot + PossiblePath.str();
+    if (llvm::sys::fs::is_directory(Path))
+      return Path;
+  }
+
+  return llvm::None;
+}
+
+  StringRef GCCInstallPath;
+
+static void buildLinker(ToolChain &TC, Command &C) {
   const auto &TC = static_cast<const AVRToolChain &>(getToolChain());
   const Driver &D = getDriver();
 
@@ -534,23 +550,4 @@ void AVR::Linker::ConstructJob(Compilation &C, const JobAction &JA,
       CmdArgs, Inputs, Output));
 }
 
-llvm::Optional<std::string> AVRToolChain::findAVRLibcInstallation() const {
-  // Search avr-libc installation according to avr-gcc installation.
-  std::string GCCParent(GCCInstallation.getParentLibPath());
-  std::string Path(GCCParent + "/avr");
-  if (llvm::sys::fs::is_directory(Path))
-    return Path;
-  Path = GCCParent + "/../avr";
-  if (llvm::sys::fs::is_directory(Path))
-    return Path;
-
-  // Search avr-libc installation from possible locations, and return the first
-  // one that exists, if there is no avr-gcc installed.
-  for (StringRef PossiblePath : PossibleAVRLibcLocations) {
-    std::string Path = getDriver().SysRoot + PossiblePath.str();
-    if (llvm::sys::fs::is_directory(Path))
-      return Path;
-  }
-
-  return llvm::None;
-}
+};

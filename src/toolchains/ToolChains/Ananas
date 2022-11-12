@@ -1,3 +1,4 @@
+// Ananas.cpp - implements Ananas ToolChain class
 struct Ananas : public Generic_ELF {
   Ananas(const Driver &D, const llvm::Triple &Triple, const ArgList &Args)
     : Generic_ELF(D, Triple, Args) {

@@ -1,0 +1,81 @@
+// Minix.cpp - implements Minix ToolChain class
+
+struct Minix : public Generic_ELF {
+public:
+  Minix(const Driver &D, const llvm::Triple &Triple,
+        const llvm::opt::ArgList &Args) 
+  : Generic_ELF(D, Triple, Args, buildAssembler, buildLinker) {
+  getFilePaths().push_back(getDriver().Dir + "/../lib");
+  getFilePaths().push_back("/usr/lib");
+}
+static void buildLinker(ToolChain &TC, Command &C) {
+  const Driver &D = getDriver();
+  ArgStringList CmdArgs;
+
+  if (Output.isFilename()) {
+    CmdArgs.push_back("-o");
+    CmdArgs.push_back(Output.getFilename());
+  } else {
+    assert(Output.isNothing() && "Invalid output.");
+  }
+
+  if (!Args.hasArg(options::OPT_nostdlib, options::OPT_nostartfiles,
+                   options::OPT_r)) {
+    CmdArgs.push_back(Args.MakeArgString(GetFilePath("crt1.o")));
+    CmdArgs.push_back(Args.MakeArgString(GetFilePath("crti.o")));
+    CmdArgs.push_back(
+        Args.MakeArgString(GetFilePath("crtbegin.o")));
+    CmdArgs.push_back(Args.MakeArgString(GetFilePath("crtn.o")));
+  }
+
+  Args.AddAllArgs(CmdArgs,
+                  {options::OPT_L, options::OPT_T_Group, options::OPT_e});
+
+  AddLinkerInputs(getToolChain(), Inputs, Args, CmdArgs, JA);
+
+  addProfileRTLibs(Args, CmdArgs);
+
+  if (!Args.hasArg(options::OPT_nostdlib, options::OPT_nodefaultlibs,
+                   options::OPT_r)) {
+    if (D.CCCIsCXX()) {
+      if (ShouldLinkCXXStdlib(Args))
+        AddCXXStdlibLibArgs(Args, CmdArgs);
+      CmdArgs.push_back("-lm");
+    }
+  }
+
+  if (!Args.hasArg(options::OPT_nostdlib, options::OPT_nostartfiles,
+                   options::OPT_r)) {
+    if (Args.hasArg(options::OPT_pthread))
+      CmdArgs.push_back("-lpthread");
+    CmdArgs.push_back("-lc");
+    CmdArgs.push_back("-lCompilerRT-Generic");
+    CmdArgs.push_back("-L/usr/pkg/compiler-rt/lib");
+    CmdArgs.push_back(
+        Args.MakeArgString(GetFilePath("crtend.o")));
+  }
+
+  const char *Exec = Args.MakeArgString(GetLinkerPath());
+  C.addCommand(std::make_unique<Command>(JA, *this,
+                                         ResponseFileSupport::AtFileCurCP(),
+                                         Exec, CmdArgs, Inputs, Output));
+}
+
+static void buildAssembler(ToolChain &TC, Command &C) {
+  claimNoWarnArgs(Args);
+  ArgStringList CmdArgs;
+
+  Args.AddAllArgValues(CmdArgs, options::OPT_Wa_COMMA, options::OPT_Xassembler);
+
+  CmdArgs.push_back("-o");
+  CmdArgs.push_back(Output.getFilename());
+
+  for (const auto &II : Inputs)
+    CmdArgs.push_back(II.getFilename());
+
+  const char *Exec = Args.MakeArgString(GetProgramPath("as"));
+  C.addCommand(std::make_unique<Command>(JA, *this,
+                                         ResponseFileSupport::AtFileCurCP(),
+                                         Exec, CmdArgs, Inputs, Output));
+}
+};

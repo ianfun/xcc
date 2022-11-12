@@ -1,33 +1,23 @@
-//===--- DragonFly.cpp - DragonFly ToolChain Implementations ----*- C++ -*-===//
-//
-// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
-// See https://llvm.org/LICENSE.txt for license information.
-// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
-//
-//===----------------------------------------------------------------------===//
+// DragonFly.cpp - implements DragonFly ToolChain class
+struct DragonFly : public Generic_ELF {
+public:
+  DragonFly(const Driver &D, const llvm::Triple &Triple,
+            const llvm::opt::ArgList &Args)
+  : Generic_ELF(D, Triple, Args, buildAssembler, buildLinker) {
 
-#include "DragonFly.h"
-#include "CommonArgs.h"
-#include "clang/Driver/Compilation.h"
-#include "clang/Driver/Driver.h"
-#include "clang/Driver/Options.h"
-#include "llvm/Option/ArgList.h"
+  // Path mangling to find libexec
+  getProgramPaths().push_back(getDriver().getInstalledDir());
+  if (getDriver().getInstalledDir() != getDriver().Dir)
+    getProgramPaths().push_back(getDriver().Dir);
 
-using namespace clang::driver;
-using namespace clang::driver::tools;
-using namespace clang::driver::toolchains;
-using namespace clang;
-using namespace llvm::opt;
+  getFilePaths().push_back(getDriver().Dir + "/../lib");
+  getFilePaths().push_back("/usr/lib");
+  getFilePaths().push_back("/usr/lib/gcc80");
+}
 
-/// DragonFly Tools
+  bool IsMathErrnoDefault() const override { return false; }
 
-// For now, DragonFly Assemble does just about the same as for
-// FreeBSD, but this may change soon.
-void dragonfly::Assembler::ConstructJob(Compilation &C, const JobAction &JA,
-                                        const InputInfo &Output,
-                                        const InputInfoList &Inputs,
-                                        const ArgList &Args,
-                                        const char *LinkingOutput) const {
+  static void buildAssembler(Command &C, const ArgList &args) {
   claimNoWarnArgs(Args);
   ArgStringList CmdArgs;
 
@@ -49,12 +39,7 @@ void dragonfly::Assembler::ConstructJob(Compilation &C, const JobAction &JA,
                                          ResponseFileSupport::AtFileCurCP(),
                                          Exec, CmdArgs, Inputs, Output));
 }
-
-void dragonfly::Linker::ConstructJob(Compilation &C, const JobAction &JA,
-                                     const InputInfo &Output,
-                                     const InputInfoList &Inputs,
-                                     const ArgList &Args,
-                                     const char *LinkingOutput) const {
+  static void buildLinker(Command &C, const ArgList &args) {
   const Driver &D = getDriver();
   ArgStringList CmdArgs;
 
@@ -178,27 +163,4 @@ void dragonfly::Linker::ConstructJob(Compilation &C, const JobAction &JA,
                                          ResponseFileSupport::AtFileCurCP(),
                                          Exec, CmdArgs, Inputs, Output));
 }
-
-/// DragonFly - DragonFly tool chain which can call as(1) and ld(1) directly.
-
-DragonFly::DragonFly(const Driver &D, const llvm::Triple &Triple,
-                     const ArgList &Args)
-    : Generic_ELF(D, Triple, Args) {
-
-  // Path mangling to find libexec
-  getProgramPaths().push_back(getDriver().getInstalledDir());
-  if (getDriver().getInstalledDir() != getDriver().Dir)
-    getProgramPaths().push_back(getDriver().Dir);
-
-  getFilePaths().push_back(getDriver().Dir + "/../lib");
-  getFilePaths().push_back("/usr/lib");
-  getFilePaths().push_back("/usr/lib/gcc80");
-}
-
-Tool *DragonFly::buildAssembler() const {
-  return new tools::dragonfly::Assembler(*this);
-}
-
-Tool *DragonFly::buildLinker() const {
-  return new tools::dragonfly::Linker(*this);
-}
+};
