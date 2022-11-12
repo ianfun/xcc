@@ -1,6 +1,11 @@
-// TODO:     if (l.tok.tok == K_Static_assert) return consume_static_assert();
-// TODO:     zero extend: getelementptr
-// TODO:     JSON Dumper, Ast Console Dumper, SVG Dumper
+// A recursive descent parser(https://en.wikipedia.org/wiki/Recursive_descent_parser)
+// for C language(https://open-std.org/JTC1/SC22/WG14/www/docs/n3054.pdf, https://en.cppreference.com/w/c/23).
+//
+// Also,
+// static type checking,
+// syntax analysis(https://en.wikipedia.org/wiki/Syntax_(programming_languages), https://en.wikipedia.org/wiki/Parsing),
+// and Semantics(https://en.wikipedia.org/wiki/Semantics_(computer_science)).
+
 struct Type_info {
     CType ty;
     Location loc;
@@ -30,6 +35,7 @@ struct Parser : public DiagnosticHelper {
         Implict_Call
     };
     Lexer l;
+    xcc_context &context;
     struct Sema { // Semantics processor
         CType currentfunctionRet = nullptr, currentInitTy = nullptr;
         Stmt currentswitch = nullptr;
@@ -57,8 +63,8 @@ struct Parser : public DiagnosticHelper {
     Stmt unreachable_reason = nullptr;
     Expr intzero, intone, size_t_one, cfalse;
     StringPool string_pool;
-    Parser(SourceMgr &SM, xcc_context &context, IRGen &irgen)
-        : DiagnosticHelper{context}, l(SM, *this, context), irgen{irgen},
+    Parser(SourceMgr &SM, IRGen &irgen, DiagnosticConsumer &Diag, xcc_context &theContext)
+        : DiagnosticHelper{Diag}, context{theContext}, l(SM, *this, theContext, Diag), irgen{irgen},
           intzero{wrap(context.getInt(), ConstantInt::get(irgen.ctx, APInt::getZero(context.getInt()->getBitWidth())))},
           intone{wrap(context.getInt(), ConstantInt::get(irgen.ctx, APInt(context.getInt()->getBitWidth(), 1)))},
           cfalse{wrap(context.typecache.b, ConstantInt::getFalse(irgen.ctx))}, string_pool{irgen} { }
@@ -497,27 +503,31 @@ PTR_CAST:
     }
     void leaveBlock() {
         const auto &T = sema.typedefs;
-        for (auto it = T.current_block(); it != T.end(); ++it) {
-            if (!(it->info.tags & USED)) {
-                if (it->info.tags & ASSIGNED)
-                    warning(it->info.loc, "%s %I is un-used after assignment",
-                            it->info.ty->tags & TYPARAM ? "parameter" : "variable", it->sym);
-                else
-                    warning(it->info.loc, "variable %I is declared but not used", it->sym);
+        if (!getNumErrors()) { // if we have parse errors, we may emit bad warnings about ununsed variables
+            for (auto it = T.current_block(); it != T.end(); ++it) {
+                if (!(it->info.tags & USED)) {
+                    if (it->info.tags & ASSIGNED)
+                        warning(it->info.loc, "%s %I is un-used after assignment",
+                                it->info.ty->tags & TYPARAM ? "parameter" : "variable", it->sym);
+                    else
+                        warning(it->info.loc, "variable %I is declared but not used", it->sym);
+                }
             }
         }
         sema.typedefs.pop();
         sema.tags.pop();
     }
     void leaveBlock2() {
-        for (const auto &it : sema.typedefs) {
-            if (it.info.ty->tags & TYTYPEDEF)
-                continue;
-            if (it.info.ty->k == TYFUNCTION) {
-                if (it.info.ty->ret->tags & TYSTATIC)
-                    warning(it.info.loc, "static function %I' declared but not used", it.sym);
-            } else if (it.info.ty->tags & TYSTATIC) {
-                warning(it.info.loc, "static variable %I declared but not used", it.sym);
+        if (!getNumErrors()) {
+            for (const auto &it : sema.typedefs) {
+                if (it.info.ty->tags & TYTYPEDEF)
+                    continue;
+                if (it.info.ty->k == TYFUNCTION) {
+                    if (it.info.ty->ret->tags & TYSTATIC)
+                        warning(it.info.loc, "static function %I' declared but not used", it.sym);
+                } else if (it.info.ty->tags & TYSTATIC) {
+                    warning(it.info.loc, "static variable %I declared but not used", it.sym);
+                }
             }
         }
     }
@@ -1953,6 +1963,10 @@ NOT_CONSTANT:
         Stmt result;
         Location loc = getLoc();
         sema.currentAlign = 0;
+        if (l.tok.tok == K_Static_assert) {
+            consume_static_assert();
+            return;
+        }
         if (l.tok.tok == TSemicolon)
             return;
         if (!(base = declaration_specifiers()))
@@ -2151,8 +2165,8 @@ NOT_CONSTANT:
             if (!(e = cast_expression()))
                 return nullptr;
             if (e->ty->k != TYPOINTER)
-                return type_error(getLoc(), "pointer expected"), nullptr;
-            make_deref(e);
+                return type_error(loc, "pointer expected"), nullptr;
+            make_deref(e, loc);
             return e;
         }
         case TBitNot: {
@@ -2161,7 +2175,7 @@ NOT_CONSTANT:
             if (!(e = cast_expression()))
                 return nullptr;
             if (!checkInteger(e->ty))
-                return type_error(getLoc(), "integer type expected"), nullptr;
+                return type_error(loc, "integer type expected"), nullptr;
             integer_promotions(e);
             if (e->k == EConstant) // fold simple bitwise-not, e.g., ~0ULL
                 return wrap(e->ty, llvm::ConstantExpr::getNot(e->C));
@@ -2183,9 +2197,9 @@ NOT_CONSTANT:
             if (e->k == EArrToAddress)
                 return e->ty = context.getPointerType(e->arr3->ty), e;
             if (e->ty->k == TYBITFIELD)
-                return type_error(getLoc(), "cannot take address of bit-field"), e;
+                return type_error(loc, "cannot take address of bit-field"), e;
             if (e->ty->tags & TYREGISTER)
-                return type_error(getLoc(), "take address of register variable"), e;
+                return type_error(loc, "take address of register variable"), e;
             if (e->k == EUnary && e->uop == AddressOf && e->ty->p->k == TYFUNCTION)
                 return e->ty->tags &= ~TYLVALUE, e;
             if (!assignable(e))
@@ -2198,7 +2212,7 @@ NOT_CONSTANT:
             if (!(e = unary_expression()))
                 return nullptr;
             if (!checkArithmetic(e->ty))
-                return type_error(getLoc(), "arithmetic type expected"), nullptr;
+                return type_error(loc, "arithmetic type expected"), nullptr;
             integer_promotions(e);
             if (e->k == EConstant) // fold simple negate numbers, e.g, -10
                 return wrap(e->ty,
@@ -2212,7 +2226,7 @@ NOT_CONSTANT:
             if (!(e = unary_expression()))
                 return nullptr;
             if (!checkArithmetic(e->ty))
-                return type_error(getLoc(), "arithmetic type expected"), nullptr;
+                return type_error(loc, "arithmetic type expected"), nullptr;
             integer_promotions(e);
             return e;
         }
@@ -2820,25 +2834,25 @@ CONTINUE:;
                 consume();
                 if (!(rhs = expression()))
                     return result;
-                if (l.tok.tok != TRSquareBrackets)
-                    warning(getLoc(), "missing ']' after array subscript");
-                else
-                    consume();
                 if (result->ty->k != TYPOINTER && rhs->ty->k != TYPOINTER) {
                     type_error(getLoc(), "subscripted value is not an array, pointer, or vector");
                 } else {
                     result = make_add_pointer(result, rhs);
-                    make_deref(result);
+                    make_deref(result, getLoc());
                 }
+                if (l.tok.tok != TRSquareBrackets)
+                    warning(getLoc(), "missing ']' after array subscript");
+                else
+                    consume();
             } break;
             default: return result;
             }
         }
     }
-    void make_deref(Expr &e) {
+    void make_deref(Expr &e, Location loc) {
         assert(e->ty->k == TYPOINTER && "bad call to make_deref: expect a pointer");
-        if (e->ty->p->k == TYINCOMPLETE || e->ty->tags | TYVOID) {
-            type_error("dereference from incomplete/void type %T", e->ty);
+        if ((e->ty->p->k == TYINCOMPLETE) || (e->ty->p->tags & TYVOID)) {
+            type_error(loc, "dereference from incomplete/void type: %T", e->ty);
             return;
         }
         if (e->k == EConstantArraySubstript) {
@@ -2847,7 +2861,7 @@ CONTINUE:;
             if (auto CS = dyn_cast<llvm::ConstantDataSequential>(C)) {
                 const unsigned numops = CS->getNumElements();
                 if (e->cidx.uge(numops))
-                    warning(getLoc(), "array index %A is past the end of the array (which contains %u elements)",
+                    warning(loc, "array index %A is past the end of the array (which contains %u elements)",
                             &e->cidx, numops);
                 else
                     return (void)(e = wrap(e->ty->p, CS->getElementAsConstant(e->cidx.getZExtValue()), e->loc));
@@ -2856,7 +2870,7 @@ CONTINUE:;
                 auto CA = cast<llvm::ConstantAggregate>(C);
                 const unsigned numops = CA->getNumOperands();
                 if (e->cidx.uge(numops))
-                    warning(getLoc(), "array index %A is past the end of the array (which contains %u elements)",
+                    warning(loc, "array index %A is past the end of the array (which contains %u elements)",
                             &e->cidx, numops);
                 else
                     return (void)(e = wrap(e->ty->p, CA->getOperand(i), e->loc));
@@ -3730,4 +3744,4 @@ NEXT:
         return head;
     }
 
-}; // end Parser
+}; // end class Parser

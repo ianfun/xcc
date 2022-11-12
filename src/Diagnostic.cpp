@@ -17,9 +17,9 @@ struct Diagnostic {
     const char *fmt;
     llvm::SmallVector<storage_type, 5> data;
     Location loc;
+    FullSourceLoc *full_loc;
 
-    Diagnostic(const char *fmt) : fmt{fmt}, data{}, loc{Location::make_invalid()} { }
-    Diagnostic(const char *fmt, Location loc) : fmt{fmt}, data{}, loc{loc} { }
+    Diagnostic(const char *fmt, Location loc = Location::make_invalid(), FullSourceLoc *full_loc = nullptr) : fmt{fmt}, data{}, loc{loc}, full_loc{full_loc} { }
     template <typename T> void write_impl(const T *ptr) { data.push_back(reinterpret_cast<storage_type>(ptr)); }
     void write_impl(const StringRef &str) {
         data.push_back(static_cast<storage_type>(str.size()));
@@ -151,6 +151,7 @@ struct Diagnostic {
     }
 };
 struct DiagnosticConsumer {
+    DiagnosticConsumer(const DiagnosticConsumer&) = delete;
     unsigned NumWarnings = 0;
     unsigned NumErrors = 0;
     unsigned getNumErrors() const { return NumErrors; }
@@ -180,6 +181,10 @@ struct DiagnosticConsumer {
         Diagnostic Diag(msg, loc);
         HandleDiagnostic(level, Diag);
     }
+    void emitDiagnostic(Location loc, FullSourceLoc *full_loc, const char *msg, enum DiagnosticLevel level) {
+        Diagnostic Diag(msg, loc, full_loc);
+        HandleDiagnostic(level, Diag);
+    }
     template <typename... Args> void emitDiagnostic(const char *msg, enum DiagnosticLevel level, const Args &...args) {
         Diagnostic Diag(msg);
         Diag.write(args...);
@@ -188,6 +193,12 @@ struct DiagnosticConsumer {
     template <typename... Args>
     void emitDiagnostic(Location loc, const char *msg, enum DiagnosticLevel level, const Args &...args) {
         Diagnostic Diag(msg, loc);
+        Diag.write(args...);
+        HandleDiagnostic(level, Diag);
+    }
+    template <typename... Args>
+    void emitDiagnostic(Location loc, FullSourceLoc *full_loc, const char *msg, enum DiagnosticLevel level, const Args &...args) {
+        Diagnostic Diag(msg, loc, full_loc);
         Diag.write(args...);
         HandleDiagnostic(level, Diag);
     }
@@ -223,61 +234,36 @@ struct TextDiagnosticPrinter : public DiagnosticConsumer {
     }
     void printSource(Location loc);
 };
+// A helper class to emit Diagnostics
+// such as parse_error(), lex_error(), warning() functions
 struct DiagnosticHelper {
-    xcc_context &context;
+    DiagnosticConsumer &printer;
+    DiagnosticHelper(DiagnosticConsumer &consumer): printer{consumer} {}
     unsigned getNumErrors() {
-        return context.printer->getNumErrors();
+        return printer.getNumErrors();
     }
     unsigned getNumWarnings() {
-        return context.printer->getNumWarnings();
+        return printer.getNumWarnings();
     }
-    DiagnosticHelper(xcc_context &context) : context{context} { }
-    template <typename... Args> void note(const char *msg, const Args &...args) {
-        context.printer->emitDiagnostic(msg, DiagnosticLevel::Note, args...);
+#define DIAGNOSTIC_HANDLER(HANDLER, LEVEL) \
+    template <typename... Args> void HANDLER(const char *msg, const Args &...args) { \
+        printer.emitDiagnostic(msg, DiagnosticLevel::LEVEL, args...); \
+    } \
+    template <typename... Args> void HANDLER(Location loc, const char *msg, const Args &...args) { \
+        printer.emitDiagnostic(loc, msg, DiagnosticLevel::LEVEL, args...); \
+    } \
+    template <typename... Args> void HANDLER(Location loc, FullSourceLoc *full_loc, const char *msg, const Args &...args) { \
+        printer.emitDiagnostic(loc, full_loc, msg, DiagnosticLevel::LEVEL, args...); \
     }
-    template <typename... Args> void remark(const char *msg, const Args &...args) {
-        context.printer->emitDiagnostic(msg, DiagnosticLevel::Remark, args...);
-    }
-    template <typename... Args> void warning(const char *msg, const Args &...args) {
-        context.printer->emitDiagnostic(msg, DiagnosticLevel::Warning, args...);
-    }
-    template <typename... Args> void error(const char *msg, const Args &...args) {
-        context.printer->emitDiagnostic(msg, DiagnosticLevel::Error, args...);
-    }
-    template <typename... Args> void pp_error(const char *msg, const Args &...args) {
-        context.printer->emitDiagnostic(msg, DiagnosticLevel::PPError, args...);
-    }
-    template <typename... Args> void type_error(const char *msg, const Args &...args) {
-        context.printer->emitDiagnostic(msg, DiagnosticLevel::TypeError, args...);
-    }
-    template <typename... Args> void fatal(const char *msg, const Args &...args) {
-        context.printer->emitDiagnostic(msg, DiagnosticLevel::Fatal, args...);
-    }
-    // with location
-    template <typename... Args> void note(Location loc, const char *msg, const Args &...args) {
-        context.printer->emitDiagnostic(loc, msg, DiagnosticLevel::Note, args...);
-    }
-    template <typename... Args> void remark(Location loc, const char *msg, const Args &...args) {
-        context.printer->emitDiagnostic(loc, msg, DiagnosticLevel::Remark, args...);
-    }
-    template <typename... Args> void warning(Location loc, const char *msg, const Args &...args) {
-        context.printer->emitDiagnostic(loc, msg, DiagnosticLevel::Warning, args...);
-    }
-    template <typename... Args> void pp_error(Location loc, const char *msg, const Args &...args) {
-        context.printer->emitDiagnostic(loc, msg, DiagnosticLevel::PPError, args...);
-    }
-    template <typename... Args> void lex_error(Location loc, const char *msg, const Args &...args) {
-        context.printer->emitDiagnostic(loc, msg, DiagnosticLevel::LexError, args...);
-    }
-    template <typename... Args> void parse_error(Location loc, const char *msg, const Args &...args) {
-        context.printer->emitDiagnostic(loc, msg, DiagnosticLevel::ParseError, args...);
-    }
-    template <typename... Args> void type_error(Location loc, const char *msg, const Args &...args) {
-        context.printer->emitDiagnostic(loc, msg, DiagnosticLevel::TypeError, args...);
-    }
-    template <typename... Args> void fatal(Location loc, const char *msg, const Args &...args) {
-        context.printer->emitDiagnostic(loc, msg, DiagnosticLevel::Fatal, args...);
-    }
+    DIAGNOSTIC_HANDLER(note, Note)
+    DIAGNOSTIC_HANDLER(remark, Remark)
+    DIAGNOSTIC_HANDLER(warning, Warning)
+    DIAGNOSTIC_HANDLER(pp_error, PPError)
+    DIAGNOSTIC_HANDLER(lex_error, LexError)
+    DIAGNOSTIC_HANDLER(parse_error, ParseError)
+    DIAGNOSTIC_HANDLER(type_error, TypeError)
+    DIAGNOSTIC_HANDLER(error, Error)
+    DIAGNOSTIC_HANDLER(fatal, Fatal)
     void expect(Location loc, const char *item) { parse_error(loc, "%s expected", item); }
     void expectExpression(Location loc) { parse_error(loc, "%s", "expected expression"); }
     void expectStatement(Location loc) { parse_error(loc, "%s", "expected statement"); }

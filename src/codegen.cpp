@@ -22,8 +22,8 @@ struct IRGen : public DiagnosticHelper {
                           DLLImportStorageClass = llvm::GlobalValue::DLLImportStorageClass,
                           DLLExportStorageClass = llvm::GlobalValue::DLLExportStorageClass;
 
-    IRGen(xcc_context &context, SourceMgr &SM, LLVMContext &ctx, const Options &options)
-        : DiagnosticHelper{context}, SM{SM}, ctx{ctx}, B{ctx}, options{options} {
+    IRGen(xcc_context &context, DiagnosticConsumer &Diag, SourceMgr &SM, LLVMContext &ctx, const Options &options)
+        : context{context}, DiagnosticHelper{Diag}, SM{SM}, ctx{ctx}, B{ctx}, options{options} {
         auto CPU = "generic";
         auto Features = "";
         llvm::TargetOptions opt;
@@ -58,7 +58,7 @@ struct IRGen : public DiagnosticHelper {
         i1_1 = llvm::ConstantInt::getTrue(ctx);
         addModule("main");
     }
-
+    xcc_context &context;
     llvm::Module *module = nullptr;
     SourceMgr &SM;
     LLVMContext &ctx;

@@ -1,10 +1,19 @@
+# C++ cmopiler
 CC=clang++
 
-FLAGS=-I/usr/lib/llvm-15/include -std=c++14   -fno-exceptions -D_GNU_SOURCE -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -L/usr/lib/llvm-15/lib -lLLVM-15
-MOREFLAGS=-g -lz -ldl -lpthread -pthread -ltinfo
+# include files
+CXXINCS=-I/usr/include/c++/9 -I/usr/include/x86_64-linux-gnu/c++/9 -I/usr/lib/gcc/x86_64-linux-gnu/9/include
+
+# LLVM C++ flags
+CXXFLAGS=-I/usr/lib/llvm-15/include -std=c++14   -fno-exceptions -D_GNU_SOURCE -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS
+
+# change this to -c if you want to skip linking
+# Flags to link with LLVM libary
+LDFLAGS=-L/usr/lib/llvm-15/lib -lLLVM-15 -lz -ldl -lpthread -pthread -ltinfo
 # debug, zlib, dlopen/dlsym/dlclose, pthread, Terminfo
 
-# assume you build llvm-projeect/LLD and `make install` in /usr/local directory, you may need to change
+# Flags to link with LLD libary
+# assume you build llvm-project/LLD and `make install` in /usr/local directory
 LLDFLAGS= \
 -L/usr/local/lib \
 -llldCOFF \
@@ -14,30 +23,39 @@ LLDFLAGS= \
 -llldMinGW \
 -llldWasm
 
+# XCC driver with LLD disabled
 mainNoLLD:
-	$(CC) main.cpp $(FLAGS) -o xcc -g
+	$(CC) main.cpp $(CXXINCS) $(CXXFLAGS) -o xcc $(LDFLAGS) $(LLDFLAGS)
 
+# XCC driver with LLD enabled
 main:
-	$(CC) -DCC_HAS_LLD  main.cpp $(FLAGS) -o xcc $(MOREFLAGS) $(LLDFLAGS)
+	$(CC) -DCC_HAS_LLD main.cpp $(CXXINCS) $(CXXFLAGS) -o xcc $(LLDFLAGS)
 
+# test code generation
 testCodeGen:
-	$(CC) testCodeGen.cpp $(FLAGS) -o codegen $(MOREFLAGS)
+	$(CC) $(CXXINCS) testCodeGen.cpp $(CXXFLAGS) -o codegen $(LDFLAGS)
 
+# test C preprocessor
 testCpp:
-	$(CC) testCpp.cpp $(FLAGS) -o cpp $(MOREFLAGS)
+	$(CC) $(CXXINCS) testCpp.cpp $(CXXFLAGS) -o cpp $(LDFLAGS)
 
+# test C lexer
 testLexer:
-	$(CC) testLexer.cpp $(FLAGS) -o lexer $(MOREFLAGS)
+	$(CC) $(CXXINCS) testLexer.cpp $(CXXFLAGS) -o lexer $(LDFLAGS)
 
+# test C parser
 testParser:
-	$(CC) testParser.cpp $(FLAGS) -o parser $(MOREFLAGS)
+	$(CC) $(CXXINCS) testParser.cpp $(CXXFLAGS) -o parser $(LDFLAGS)
 
+# test LLVM's Just-In-Time compilation
 testJit:
-	$(CC) testJit.cpp $(FLAGS) -o jit $(MOREFLAGS)
+	$(CC) $(CXXINCS) testJit.cpp $(CXXFLAGS) -o jit $(LDFLAGS)
 
+# make all, you may run with -j to make it faster
 all: testLexer testCpp testParser testCodeGen testJit
 
+# clean outputs
 clean:
-	rm lexer cpp parser codegen jit xcc
+	rm -f lexer cpp parser codegen jit xcc
 
 

@@ -25,17 +25,17 @@ void TextDiagnosticPrinter::printSource(Location loc) {
     stream_ref.line = 1;
     stream_ref.column = 1;
     {
-        char lastc, c = '\0';
         while (stream_ref.line < loc.line) {
-            lastc = c;
-            c = SM->raw_read_from_id(loc.id);
+            char c = SM->raw_read_from_id(loc.id);
             if (c == '\r') {
                 ++stream_ref.line;
-            } else if (c == '\n') {
-                if (lastc != '\r')
+                c = SM->raw_read_from_id(loc.id);
+                if (c != '\n')
                     ++stream_ref.line;
+            } else if (c == '\n') {
+                ++stream_ref.line;
             } else if (c == '\0') {
-                dbgprint("unexpected EOF!");
+                dbgprint("ERROR: unexpected EOF!");
                 goto EXIT;
             }
         }
@@ -45,37 +45,46 @@ void TextDiagnosticPrinter::printSource(Location loc) {
             OS << StringRef(buf, (unsigned)len) << " | ";
         }
         unsigned line_chars = 0, displayed_chars = 0, real = 0;
-
-        for (;;) {
-            unsigned char c = SM->raw_read_from_id(loc.id);
-            if (c == '\0' || c == '\n' || c == '\r') {
-                if (real == 0)
-                    real = displayed_chars;
-                break;
-            }
-            bool cond = line_chars == loc.col;
-            if (cond) {
-                OS.changeColor(raw_ostream::RED);
-                real = displayed_chars;
-            }
-            if (c == '\t') {
-                displayed_chars += CC_SHOW_TAB_SIZE;
-                for (unsigned i = 0; i < CC_SHOW_TAB_SIZE; ++i)
-                    OS << ' ';
-            } else if (/*std::iscntrl(c)*/ !llvm::isPrint(c)) {
-                OS << "<0x" << (hexed(c) >> 4) << hexed(c) << '>';
-                displayed_chars += 6;
-            } else {
-                displayed_chars++;
-                OS << c;
-            }
-            if (cond)
-                OS.resetColor();
-            ++line_chars;
-        }
-        OS << "\n      | ";
         {
-            const std::string buffer(real, ' ');
+            llvm::SmallString<64> buffer;
+            for (;;) {
+                unsigned char c = SM->raw_read_from_id(loc.id);
+                if (c == '\0' || c == '\n' || c == '\r') {
+                    buffer += "\n      | ";
+                    OS << buffer.str();
+                    if (real == 0)
+                        real = displayed_chars;
+                    break;
+                }
+                bool cond = line_chars == loc.col;
+                if (cond) {
+                    OS << buffer.str();
+                    buffer.clear();
+                    OS.changeColor(raw_ostream::RED);
+                    real = displayed_chars;
+                }
+                if (c == '\t') {
+                    displayed_chars += CC_SHOW_TAB_SIZE;
+                    buffer.assign(CC_SHOW_TAB_SIZE, ' ');
+                } else if (!llvm::isPrint(c)) { /*std::iscntrl(c)*/ 
+                    buffer.push_back('<');
+                    buffer.push_back('0');
+                    buffer.push_back('x');
+                    buffer.push_back(hexed(c) >> 4);
+                    buffer.push_back(hexed(c));
+                    buffer.push_back('>');
+                    displayed_chars += 6;
+                } else {
+                    displayed_chars++;
+                    buffer.push_back(c);
+                }
+                if (cond)
+                    OS.resetColor();
+                ++line_chars;
+            }
+        }
+        {
+            const SmallVector<char> buffer(real, ' ');
             OS << buffer;
         }
         OS.changeColor(raw_ostream::RED);
@@ -94,13 +103,15 @@ EXIT:
     ::lseek(stream_ref.fd, saved_posl, SEEK_SET);
 #endif
 }
+static void write_loc(raw_ostream &OS, const Location &loc, SourceMgr *SM) {
+    OS << SM->getFileName(loc.id) << ':' << loc.line << ':' << loc.col << ": ";
+}
 void TextDiagnosticPrinter::realHandleDiagnostic(enum DiagnosticLevel level, const Diagnostic &Info) {
-    bool locValid = Info.loc.isValid();
-    if (SM && locValid) {
-        OS << SM->getFileName(Info.loc.id) << ':' << Info.loc.line << ':' << Info.loc.col << ": ";
-    } else {
+    if (SM && Info.loc.isValid())
+        write_loc(OS, Info.loc, SM);
+    else 
         OS << "xcc: ";
-    }
+
     if (ShowColors) {
         raw_ostream::Colors color;
         switch (level) {
@@ -131,12 +142,26 @@ void TextDiagnosticPrinter::realHandleDiagnostic(enum DiagnosticLevel level, con
     if (ShowColors)
         OS.resetColor();
     {
-        SmallString<100> OutStr;
+        SmallString<64> OutStr;
         Info.FormatDiagnostic(OutStr);
         OutStr.push_back('\n');
         OS << OutStr.str();
     }
-    if (locValid)
-        printSource(Info.loc);
-    // OS.flush()
+    if (SM) {
+        if (Info.full_loc && Info.full_loc->num_stack > 0) {
+            for (unsigned i = 0;i < Info.full_loc->num_stack;++i)
+                OS << "In file included from " << SM->getFileName(Info.full_loc->include_stack[i]) << ':';
+            printSource(Info.loc);
+            for (unsigned i = 0;i < Info.full_loc->num_macros;++i) {
+                PPMacroDef *def = Info.full_loc->macros[i];
+                write_loc(OS, def->loc, SM);
+                OS << noteColor << "note: ";
+                OS.resetColor();
+                OS << "in expansion of macro " << def->m.Name;
+                printSource(def->loc); // print where the macro is defined
+            }
+        }
+        else if (Info.loc.isValid())
+            printSource(Info.loc);
+    }
 }

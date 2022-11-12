@@ -4,8 +4,8 @@
 
 struct xcc_context {
     xcc_context(const xcc_context &) = delete;
-    xcc_context(struct TextDiagnosticPrinter *printer = nullptr)
-        : table{}, printer{printer},
+    xcc_context()
+        : table{}, 
           constint{reinterpret_cast<CType>((TNEW(PrimType){.align = 0, .tags = TYINT | TYCONST}))}, typecache {
         .b = make(TYBOOL), .v = make(TYVOID), .i8 = make(TYINT8), .u8 = make(TYUINT8), .i16 = make(TYINT16),
         .u16 = make(TYINT16), .i32 = make(TYINT32), .u32 = make(TYUINT32), .i64 = make(TYINT64), .u64 = make(TYUINT64),
@@ -20,10 +20,8 @@ struct xcc_context {
     }
     { }
     IdentifierTable table; // contains allocator!
-    struct TextDiagnosticPrinter *printer;
     Expr intzero;
     CType constint;
-    void setPrinter(struct TextDiagnosticPrinter *thePrinter) { printer = thePrinter; }
     struct TypeCache {
         CType b, v, i8, u8, i16, u16, i32, u32, i64, u64, i128, u128, ffloatty, fdoublety, f128ty, str8ty, str16ty,
             str32ty;
@@ -74,6 +72,21 @@ struct xcc_context {
     CType clone(CType ty) { return reinterpret_cast<CType>(new_memcpy(ctype_size_map[ty->k], ty)); }
     Stmt clone(Stmt s) { return reinterpret_cast<Stmt>(new_memcpy(stmt_size_map[s->k], s)); }
     Expr clone(Expr e) { return reinterpret_cast<Expr>(new_memcpy(expr_size_map[e->k], e)); }
+    PPMacroDef *newMacro() {
+        return new (getAllocator()) PPMacroDef();
+    }
+    FullSourceLoc *getFullLoc(SourceMgr &SM, std::vector<PPMacroDef*> &macros) {
+        unsigned inc_size = SM.includeStack.size();
+        unsigned macro_size = macros.size();
+        FullSourceLoc *res = reinterpret_cast<FullSourceLoc*>(getAllocator().Allocate(sizeof(FullSourceLoc) + inc_size + macro_size, 1));
+        res->num_stack = SM.includeStack.size();
+        res->num_macros = macro_size;
+        for (unsigned i = 0; i < inc_size;++i)
+            res->include_stack[i] = SM.includeStack[i];
+        for (unsigned i = 0; i < macro_size;++i) 
+            res->macros[i] = macros[i];
+        return res;
+    }
 };
 #undef TNEW
 #undef SNEW

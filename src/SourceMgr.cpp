@@ -59,17 +59,21 @@ struct SourceMgr : public DiagnosticHelper {
     SmallVector<Stream> streams;
     SmallVector<fileid_t> includeStack;
     bool hasStdinAdded = false;
-    uint32_t getLine() { return streams[includeStack.back()].line; }
+    uint32_t getLine() const { return streams[includeStack.back()].line; }
     void setLine(uint32_t line) { streams[includeStack.back()].line = line; }
-    const char *getFileName(unsigned i) { return streams[i].name; }
-    const char *getFileName() { return streams[includeStack.back()].name; }
+    const char *getFileName(unsigned i) const { return streams[i].name; }
+    const char *getFileName() const { return streams[includeStack.back()].name; }
     void setFileName(const char *name) { streams[includeStack.back()].name = name; }
-    Location getLoc() {
+    Location getLoc() const {
         const Stream &f = streams[includeStack.back()];
         return Location{.line = (line_t)f.line, .col = (column_t)f.column, .id = (fileid_t)includeStack.back()};
     }
+    Location getLoc(unsigned i) const {
+        const Stream &f = streams[includeStack[i]];
+        return Location{.line = (line_t)f.line, .col = (column_t)f.column, .id = (fileid_t)includeStack[i]};
+    }
     bool is_tty;
-    SourceMgr(xcc_context &context) : DiagnosticHelper{context}, buf{} {
+    SourceMgr(DiagnosticConsumer &Diag) : DiagnosticHelper{Diag}, buf{} {
         buf.resize_for_overwrite(STREAM_BUFFER_SIZE);
 #if WINDOWS
         DWORD dummy;

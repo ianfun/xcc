@@ -6,5 +6,5 @@
 
     printer.finalize();
 
-    return (int)(bool)ctx.printer->NumErrors;
+    return (int)(bool)printer.NumErrors;
 }

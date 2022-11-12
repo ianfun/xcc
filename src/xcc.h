@@ -344,26 +344,30 @@ typedef unsigned label_t;
 typedef uint16_t fileid_t;
 typedef uint16_t column_t;
 typedef uint32_t line_t;
+typedef uint32_t Codepoint;
+typedef struct OpaqueStmt *Stmt;
+typedef struct OpaqueExpr *Expr;
+typedef struct OpaqueCType *CType;
+
 struct Location {
     line_t line;
-    column_t col; // at most 65535 are supported
-    // xxx: use bitfields? for example: line: 40 bits, col: 24 bits
+    column_t col; // at most 65535 columns are supported
     fileid_t id;
     // construct an invalid Location
-    static Location make_invalid() { return Location{.line = 0, .col = 0, .id = 0}; }
+    static constexpr Location make_invalid() { return Location{.line = 0, .col = 0, .id = 0}; }
     bool isValid() const { return line != 0; }
 };
-
+struct FullSourceLoc
+{
+    unsigned num_stack;
+    unsigned num_macros;
+    unsigned include_stack[0];
+    struct PPMacroDef *macros[];
+};
 enum Linker {
     LLD,
     GCCLD
 };
-
-typedef uint32_t Codepoint;
-
-typedef struct OpaqueStmt *Stmt;
-typedef struct OpaqueExpr *Expr;
-typedef struct OpaqueCType *CType;
 
 struct Declator {
     IdentRef name;
@@ -663,15 +667,19 @@ struct PPMacro {
         }
         return true;
     }
+    IdentRef Name;
     enum PPMacroKind k = MOBJ; // 1 byte
     bool ivarargs = false;     // 1 byte
     llvm::SmallVector<TokenV, 20> tokens{};
-    llvm::SmallVector<IdentRef, 0> params;
+    llvm::SmallVector<IdentRef, 0> params{};
     bool equals(PPMacro &other) {
         return ((k == other.k) && (k == MFUNC ? (ivarargs == other.ivarargs) : true) && tokensEq(tokens, other.tokens));
     }
 };
-
+struct PPMacroDef {
+    PPMacro m;
+    Location loc;
+};
 static unsigned intRank(uint32_t a) {
     if (a & TYBOOL)
         return 1;
@@ -686,20 +694,19 @@ static unsigned intRank(uint32_t a) {
     return 6;
 }
 #include "console.cpp"
-#include "State.cpp"
 #include "Diagnostic.cpp"
 #include "JIT.cpp"
 #include "LLVMDiagnosticHandler.cpp"
 #include "Scope.cpp"
 #include "SourceMgr.cpp"
 #include "TextDiagnosticPrinter.cpp"
+#include "State.cpp"
 #include "codegen.cpp"
 #include "lexer.h"
-#include "linker.cpp"
 #include "output.cpp"
 #include "StringPool.cpp"
 #include "parser.cpp"
 #include "lexer.cpp"
-#include "Target/TargetInfo.h"
-#include "toolchains/ToolChain.cpp"
+//#include "Target/TargetInfo.h"
+//#include "toolchains/ToolChain.cpp"
 } // namespace xcc

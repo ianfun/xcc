@@ -10,10 +10,10 @@ int main(int argc_, const char **argv_)
     xcc::TextDiagnosticPrinter printer(llvm::errs()); 
 
     // create xcc_context
-    xcc::xcc_context ctx {&printer};
+    xcc::xcc_context ctx;
 
     // create a crash report info
-    XInitLLVM crashReport(ctx, argc_, argv_);
+    XInitLLVM crashReport(printer, argc_, argv_);
 
     // init args
     llvm::SmallVector<const char *, 8> argv(argv_, argv_ + argc_);
@@ -22,20 +22,21 @@ int main(int argc_, const char **argv_)
     llvm::InitializeAllTargets();
 
     // create the Driver
-    xcc::driver::Driver theDriver(ctx);
+    xcc::driver::Driver theDriver(printer);
 
     // XCC options
     xcc::Options options;
 
     // create SourceMgr for mangement source files
-    xcc::SourceMgr SM(ctx);
+    xcc::SourceMgr SM(printer);
 
     // set SourceMgr to the printer for printing source lines
-    ctx.printer->setSourceMgr(&SM);
+    printer.setSourceMgr(&SM);
 
+    int ret = 0;
     // parse options ...
-    if (theDriver.BuildCompilation(argv, options, SM))
-        return 1;
+    if (theDriver.BuildCompilation(argv, options, SM, ret))
+        return ret;
 
     llvm::InitializeAllAsmParsers();
     llvm::InitializeAllAsmPrinters();
@@ -50,9 +51,9 @@ int main(int argc_, const char **argv_)
     llvmcontext.setDiagnosticHandler(std::make_unique<xcc::XCCDiagnosticHandler>()); 
 
     // preparing target information and ready for code generation to LLVM IR
-    xcc::IRGen ig(ctx, SM, llvmcontext, options);
+    xcc::IRGen ig(ctx, printer, SM, llvmcontext, options);
 
     // create parser
-    xcc::Parser parser(SM, ctx, ig);
+    xcc::Parser parser(SM, ig, printer, ctx);
 
     // now, parsing source files ...
