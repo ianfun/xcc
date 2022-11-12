@@ -75,15 +75,30 @@ struct xcc_context {
     PPMacroDef *newMacro() {
         return new (getAllocator()) PPMacroDef();
     }
-    FullSourceLoc *getFullLoc(SourceMgr &SM, std::vector<PPMacroDef*> &macros) {
+    FullSourceLoc *getFullLoc(Location loc) {
+        FullSourceLoc *res = new (getAllocator().Allocate(sizeof(FullSourceLoc), 1)) FullSourceLoc;
+        res->loc = loc;
+        res->num_macros = 0;
+        res->num_stack = 0;
+        return res;
+    }
+    FullSourceLoc *getFullLoc(Location loc, SourceMgr &SM, std::vector<PPMacroDef*> &macros) {
         unsigned inc_size = SM.includeStack.size();
         unsigned macro_size = macros.size();
-        FullSourceLoc *res = reinterpret_cast<FullSourceLoc*>(getAllocator().Allocate(sizeof(FullSourceLoc) + inc_size + macro_size, 1));
-        res->num_stack = SM.includeStack.size();
+        printf("macro_size = %u\n", macro_size);
+        if (inc_size == 0)
+            inc_size = 1;
+        --inc_size;
+        FullSourceLoc *res = new (getAllocator().Allocate(sizeof(FullSourceLoc) + inc_size * sizeof(Include_Info) + macro_size * sizeof(struct PPMacroDef *), 1)) FullSourceLoc;
+        res->loc = loc;
+        res->num_stack = inc_size;
         res->num_macros = macro_size;
-        for (unsigned i = 0; i < inc_size;++i)
-            res->include_stack[i] = SM.includeStack[i];
-        for (unsigned i = 0; i < macro_size;++i) 
+        for (unsigned i = 0; i < inc_size;++i) {
+            fileid_t it = SM.includeStack[i];
+            Stream &f = SM.streams[it];
+            res->include_stack[i] = Include_Info{.line = f.line, .fd = it };
+        }
+        for (unsigned i = 0; i < macro_size;++i)
             res->macros[i] = macros[i];
         return res;
     }

@@ -19,7 +19,8 @@ struct Diagnostic {
     Location loc;
     FullSourceLoc *full_loc;
 
-    Diagnostic(const char *fmt, Location loc = Location::make_invalid(), FullSourceLoc *full_loc = nullptr) : fmt{fmt}, data{}, loc{loc}, full_loc{full_loc} { }
+    Diagnostic(const char *fmt, Location loc = Location::make_invalid()) : fmt{fmt}, data{}, loc{loc}, full_loc{nullptr} { }
+    Diagnostic(const char *fmt, FullSourceLoc *full_loc) : fmt{fmt}, data{}, loc{full_loc->loc}, full_loc{full_loc} { }
     template <typename T> void write_impl(const T *ptr) { data.push_back(reinterpret_cast<storage_type>(ptr)); }
     void write_impl(const StringRef &str) {
         data.push_back(static_cast<storage_type>(str.size()));
@@ -181,8 +182,8 @@ struct DiagnosticConsumer {
         Diagnostic Diag(msg, loc);
         HandleDiagnostic(level, Diag);
     }
-    void emitDiagnostic(Location loc, FullSourceLoc *full_loc, const char *msg, enum DiagnosticLevel level) {
-        Diagnostic Diag(msg, loc, full_loc);
+    void emitDiagnostic(FullSourceLoc *full_loc, const char *msg, enum DiagnosticLevel level) {
+        Diagnostic Diag(msg, full_loc);
         HandleDiagnostic(level, Diag);
     }
     template <typename... Args> void emitDiagnostic(const char *msg, enum DiagnosticLevel level, const Args &...args) {
@@ -197,8 +198,8 @@ struct DiagnosticConsumer {
         HandleDiagnostic(level, Diag);
     }
     template <typename... Args>
-    void emitDiagnostic(Location loc, FullSourceLoc *full_loc, const char *msg, enum DiagnosticLevel level, const Args &...args) {
-        Diagnostic Diag(msg, loc, full_loc);
+    void emitDiagnostic(FullSourceLoc *full_loc, const char *msg, enum DiagnosticLevel level, const Args &...args) {
+        Diagnostic Diag(msg, full_loc);
         Diag.write(args...);
         HandleDiagnostic(level, Diag);
     }
@@ -252,8 +253,8 @@ struct DiagnosticHelper {
     template <typename... Args> void HANDLER(Location loc, const char *msg, const Args &...args) { \
         printer.emitDiagnostic(loc, msg, DiagnosticLevel::LEVEL, args...); \
     } \
-    template <typename... Args> void HANDLER(Location loc, FullSourceLoc *full_loc, const char *msg, const Args &...args) { \
-        printer.emitDiagnostic(loc, full_loc, msg, DiagnosticLevel::LEVEL, args...); \
+    template <typename... Args> void HANDLER(FullSourceLoc *full_loc, const char *msg, const Args &...args) { \
+        printer.emitDiagnostic(full_loc, msg, DiagnosticLevel::LEVEL, args...); \
     }
     DIAGNOSTIC_HANDLER(note, Note)
     DIAGNOSTIC_HANDLER(remark, Remark)
@@ -269,4 +270,10 @@ struct DiagnosticHelper {
     void expectStatement(Location loc) { parse_error(loc, "%s", "expected statement"); }
     void expectLB(Location loc) { parse_error(loc, "%s", "missing " lquote "(" rquote); }
     void expectRB(Location loc) { parse_error(loc, "%s", "missing " lquote ")" rquote); }
+
+    void expect(FullSourceLoc *loc, const char *item) { parse_error(loc, "%s expected", item); }
+    void expectExpression(FullSourceLoc *loc) { parse_error(loc, "%s", "expected expression"); }
+    void expectStatement(FullSourceLoc *loc) { parse_error(loc, "%s", "expected statement"); }
+    void expectLB(FullSourceLoc *loc) { parse_error(loc, "%s", "missing " lquote "(" rquote); }
+    void expectRB(FullSourceLoc *loc) { parse_error(loc, "%s", "missing " lquote ")" rquote); }
 };

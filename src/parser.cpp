@@ -7,23 +7,22 @@
 // and Semantics(https://en.wikipedia.org/wiki/Semantics_(computer_science)).
 
 struct Type_info {
-    CType ty;
-    Location loc;
+    CType ty = nullptr;
+    FullSourceLoc *loc = nullptr;
 };
 struct Label_Info {
-    label_t idx;
-    uint8_t flags;
-    Location loc;
-    Label_Info() : idx{0}, flags{LBL_UNDEFINED}, loc{Location()} { }
+    label_t idx = 0;
+    uint8_t flags = LBL_UNDEFINED;
+    FullSourceLoc *loc = nullptr;
 };
 // bit enums for Variable_Info::tags
 constexpr uint8_t GARBAGE = 0, // just declared
     USED = 0x1,                // true if variable is used
     ASSIGNED = 0x2;            // true if assigned or initialized
 struct Variable_Info {
-    CType ty;
-    Location loc;
-    llvm::Constant *val;
+    CType ty = nullptr;
+    FullSourceLoc *loc = nullptr;
+    llvm::Constant *val = nullptr;
     unsigned tags : 2;
 };
 struct Parser : public DiagnosticHelper {
@@ -102,7 +101,7 @@ struct Parser : public DiagnosticHelper {
         }
         return ref.idx;
     }
-    label_t putLable(IdentRef Name, Location loc) {
+    label_t putLable(IdentRef Name, FullSourceLoc *loc) {
         Label_Info &ref = jumper.lookupLabel(Name);
         switch (ref.flags) {
         case LBL_UNDEFINED: // not used, declared
@@ -121,23 +120,22 @@ struct Parser : public DiagnosticHelper {
         }
         return ref.idx;
     }
-
-    CType gettagByName(IdentRef Name, enum CTypeKind expected, Location loc) {
+    CType gettagByName(IdentRef Name, enum CTypeKind expected, FullSourceLoc *full_loc) {
         CType result;
         size_t idx;
         auto r = sema.tags.getSym(Name, idx);
         if (r) {
             if (r->ty->k != expected)
-                type_error(getLoc(), "%s %I is not a %s", expected, Name, get_type_name_str(expected));
+                type_error(full_loc, "%s %I is not a %s", expected, Name, get_type_name_str(expected));
             result = r->ty;
         } else {
             result = TNEW(IncompleteType){.align = 0, .tag = expected, .name = Name};
-            Type_info info = Type_info{.ty = result, .loc = loc};
-            insertStmt(SNEW(DeclStmt){.loc = loc, .decl_idx = sema.tags.putSym(Name, info), .decl_ty = result});
+            Type_info info = Type_info{.ty = result, .loc = full_loc};
+            insertStmt(SNEW(DeclStmt){.loc = full_loc->loc, .decl_idx = sema.tags.putSym(Name, info), .decl_ty = result});
         }
         return result;
     }
-    size_t puttag(IdentRef Name, CType ty, Location loc, enum CTypeKind k) {
+    size_t puttag(IdentRef Name, CType ty, FullSourceLoc *loc, enum CTypeKind k) {
         bool found = false;
         if (Name) {
             size_t prev;
@@ -145,13 +143,16 @@ struct Parser : public DiagnosticHelper {
             if (old) {
                 if (old->ty->k != TYINCOMPLETE) {
                     type_error("%s %I redefined", get_type_name_str(k), Name);
-                } else if (old->ty->tag != k)
+                    note(old->loc, "previous declaration is here");
+                } else if (old->ty->tag != k) {
                     type_error("%s %I redeclared with different as different kind: %s", get_type_name_str(k), Name,
                                get_type_name_str(old->ty->tag));
+                    note(old->loc, "previous declaration is here");
+                }
                 old->ty = ty;
                 old->loc = loc;
                 insertStmt(SNEW(UpdateForwardDeclStmt){
-                    .loc = loc,
+                    .loc = loc->loc,
                     .prev_idx = prev,
                     .now = ty,
                 });
@@ -160,54 +161,56 @@ struct Parser : public DiagnosticHelper {
         }
         size_t Idx = sema.tags.putSym(Name, Type_info{.ty = ty, .loc = loc});
         if (!found) {
-            insertStmt(SNEW(DeclStmt){.loc = loc, .decl_idx = Idx, .decl_ty = ty});
+            insertStmt(SNEW(DeclStmt){.loc = loc->loc, .decl_idx = Idx, .decl_ty = ty});
         }
         return Idx;
     }
-    void putenum(IdentRef Name, uint64_t val, Location loc) {
-        if (sema.typedefs.containsInCurrentScope(Name))
-            type_error(getLoc(), "%I redeclared", Name);
+    void putenum(IdentRef Name, uint64_t val, FullSourceLoc *full_loc) {
+        auto old = sema.typedefs.getSymInCurrentScope(Name);
+        if (old) {
+            type_error(full_loc, "%I redefined", Name);
+            note(old->loc, "previous declaration is here");
+        }
         sema.typedefs.putSym(Name, Variable_Info{
                                        .ty = context.getConstInt(),
-                                       .loc = loc,
+                                       .loc = full_loc,
                                        .val = ConstantInt::get(cast<llvm::IntegerType>(irgen.types[x32]), val),
                                        .tags = ASSIGNED | USED, // enums are used by default ignore warnings
                                    });
     }
     // function
-    size_t putsymtype2(IdentRef Name, CType yt) {
+    size_t putsymtype2(IdentRef Name, CType yt, FullSourceLoc *full_loc) {
         Location loc = getLoc();
         CType base = yt->ret;
         if (base->k == TYARRAY)
-            type_error(loc, "function cannot return array");
+            type_error(full_loc, "function cannot return array");
         if (base->tags & TYREGISTER)
-            warning(loc, "'register' in function has no effect");
+            warning(full_loc, "'register' in function return type");
         if (base->tags & TYTHREAD_LOCAL)
-            warning(loc, "'_Thread_local' in function has no effect");
-        if (base->tags & (TYCONST | TYRESTRICT | TYVOLATILE))
-            warning(loc, "type qualifiers ignored in function");
+            warning(full_loc, "'_Thread_local' in function return type");
+        if (base->tags & (TYCONST | TYRESTRICT | TYVOLATILE | TYATOMIC))
+            warning(full_loc, "type qualifiers ignored in function");
         size_t idx;
         auto it = sema.typedefs.getSymInCurrentScope(Name, idx);
         if (it) {
             if (!compatible(yt, it->ty)) {
-                type_error(loc, "conflicting types for function declaration %I", Name);
+                type_error(full_loc, "conflicting types for function declaration %I", Name);
             } else if (!(it->ty->ret->tags & TYSTATIC) && base->tags & TYSTATIC) {
-                type_error(loc, "static declaration of %I follows non-static declaration", Name);
+                type_error(full_loc, "static declaration of %I follows non-static declaration", Name);
                 note(it->loc, "previous declaration of %I was here", Name);
             } else {
                 it->ty->tags |= it->ty->ret->tags & (TYSTATIC);
             }
         } else {
             idx = sema.typedefs.putSym(
-                Name, Variable_Info{.ty = yt, .loc = loc, .tags = ASSIGNED}); // function never undefined
+                Name, Variable_Info{.ty = yt, .loc = full_loc, .tags = ASSIGNED}); // function never undefined
         }
         return idx;
     }
     // typedef, variable
-    size_t putsymtype(IdentRef Name, CType yt) {
-        Location loc = getLoc();
+    size_t putsymtype(IdentRef Name, CType yt, FullSourceLoc *full_loc) {
         if (yt->k == TYFUNCTION)
-            return putsymtype2(Name, yt);
+            return putsymtype2(Name, yt, full_loc);
         size_t idx;
         auto it = sema.typedefs.getSymInCurrentScope(Name, idx);
         if (it) {
@@ -215,27 +218,27 @@ struct Parser : public DiagnosticHelper {
                 CType old = it->ty;
                 bool err = true;
                 if ((yt->tags & TYSTATIC) && !(old->tags & TYSTATIC))
-                    type_error(loc, "static declaration case %I follows non-static declaration", Name);
+                    type_error(full_loc, "static declaration case %I follows non-static declaration", Name);
                 else if ((old->tags & TYSTATIC) && !(yt->tags & TYSTATIC))
-                    type_error(loc, "non-static declaration case %I follows static declaration", Name);
+                    type_error(full_loc, "non-static declaration case %I follows static declaration", Name);
                 else if ((yt->tags & TYTHREAD_LOCAL) && !(old->tags & TYTHREAD_LOCAL))
-                    type_error(loc, "thread-local declaration case %I follows non-thread-local declaration", Name);
+                    type_error(full_loc, "thread-local declaration case %I follows non-thread-local declaration", Name);
                 else if ((old->tags & TYTHREAD_LOCAL) && !(yt->tags & TYTHREAD_LOCAL))
-                    type_error(loc, "non-thread-local declaration case %I follows thread-local declaration", Name);
+                    type_error(full_loc, "non-thread-local declaration case %I follows thread-local declaration", Name);
                 else if ((yt->tags & type_qualifiers) != (old->tags & type_qualifiers))
-                    type_error(loc, "conflicting type qualifiers for %I", Name);
+                    type_error(full_loc, "conflicting type qualifiers for %I", Name);
                 else if (!compatible(old, yt))
-                    type_error(loc, "conflicting types for %I", Name);
+                    type_error(full_loc, "conflicting types for %I", Name);
                 else
                     err = false;
                 if (err)
                     note("previous declaration case %I with type %T", Name, old);
             } else {
-                type_error(loc, "%I redeclared", Name);
+                type_error(full_loc, "%I redeclared", Name);
             }
             it->ty = yt;
         } else {
-            idx = sema.typedefs.putSym(Name, Variable_Info{.ty = yt, .loc = loc, .tags = GARBAGE});
+            idx = sema.typedefs.putSym(Name, Variable_Info{.ty = yt, .loc = full_loc, .tags = GARBAGE});
         }
         return idx;
     }
@@ -1152,6 +1155,7 @@ NOT_CONSTANT:
             // make preprocessor identfiers to normal identfier
             l.tok.tok = TIdentifier;
     }
+    SourceMgr &SM() { return l.SM; }
     Location getLoc() { return l.getLoc(); }
     Expr constant_expression() { return conditional_expression(); }
     bool addTag(CType &ty, Token theTok) {
@@ -1650,6 +1654,9 @@ NOT_CONSTANT:
         }
         return Declator(d.name, d.ty);
     }
+    FullSourceLoc *getFullLoc(Location loc) {
+        return context.getFullLoc(loc, SM(), l.expansion_list);
+    }
     CType struct_union(Token tok) {
         // parse a struct or union, return it
         // for example:  `struct Foo`
@@ -1657,15 +1664,14 @@ NOT_CONSTANT:
         //               `struct { ... }`
         //
         //               `struct Foo { ... }`
-        Location loc = getLoc();
+        FullSourceLoc *full_loc = getFullLoc(getLoc());
         consume(); // eat struct/union
         IdentRef Name = nullptr;
         if (l.tok.tok == TIdentifier) {
-            Location loc2 = getLoc();
             Name = l.tok.s;
             consume();
             if (l.tok.tok != TLcurlyBracket) // struct Foo
-                return gettagByName(Name, tok == Kstruct ? TYSTRUCT : TYUNION, loc2);
+                return gettagByName(Name, tok == Kstruct ? TYSTRUCT : TYUNION, full_loc);
         } else if (l.tok.tok != TLcurlyBracket) {
             return parse_error(getLoc(), "expect '{' for start anonymous struct/union"), nullptr;
         }
@@ -1715,7 +1721,7 @@ NOT_CONSTANT:
             }
         } else
             consume();
-        result->sidx = puttag(Name, result, loc, tok == Kstruct ? TYSTRUCT : TYUNION);
+        result->sidx = puttag(Name, result, full_loc, tok == Kstruct ? TYSTRUCT : TYUNION);
         return result;
     }
     CType enum_decl() {
@@ -1727,17 +1733,16 @@ NOT_CONSTANT:
         //      `enum { ... }`
         //
         //      `enum State { ... }`
-        Location loc = getLoc();
         IdentRef Name = nullptr;
+        FullSourceLoc *full_loc = getFullLoc(getLoc());
         consume(); // eat enum
         if (l.tok.tok == TIdentifier) {
-            Location loc2 = getLoc();
             Name = l.tok.s;
             consume();
             if (l.tok.tok != TLcurlyBracket) // struct Foo
-                return gettagByName(Name, TYENUM, loc2);
+                return gettagByName(Name, TYENUM, full_loc);
         } else if (l.tok.tok != TLcurlyBracket)
-            return parse_error(loc, "expect '{' for start anonymous enum"), nullptr;
+            return parse_error(full_loc, "expect '{' for start anonymous enum"), nullptr;
         CType result = TNEW(EnumType){.ename = Name};
         if (!irgen.options.g)
             result->eelems = xvector<EnumPair>::get();
@@ -1745,6 +1750,7 @@ NOT_CONSTANT:
         for (uint64_t c = 0;; c++) {
             if (l.tok.tok != TIdentifier)
                 break;
+            FullSourceLoc *full_loc = getFullLoc(getLoc());
             IdentRef s = l.tok.s;
             consume();
             if (l.tok.tok == TAssign) {
@@ -1755,12 +1761,12 @@ NOT_CONSTANT:
                 if (e->k == EConstant) {
                     const APInt &I = cast<ConstantInt>(e->C)->getValue();
                     if (I.getActiveBits() > 32) {
-                        warning("enum constant exceeds 32 bit");
+                        warning(full_loc, "enum constant exceeds 32 bit");
                     }
                     c = I.getLimitedValue();
                 }
             }
-            putenum(s, c, loc);
+            putenum(s, c, full_loc);
             if (irgen.options.g)
                 result->eelems.push_back(EnumPair{.name = s, .val = c});
             if (l.tok.tok == TComma)
@@ -1771,7 +1777,7 @@ NOT_CONSTANT:
         if (l.tok.tok != TRcurlyBracket)
             parse_error(getLoc(), "expect '}'");
         consume();
-        result->eidx = puttag(Name, result, loc, TYENUM);
+        result->eidx = puttag(Name, result, full_loc, TYENUM);
         return result;
     }
     bool parameter_type_list(xvector<Param> &params, bool &isVararg) {
@@ -1791,17 +1797,18 @@ NOT_CONSTANT:
             CType base = declaration_specifiers();
             if (!base)
                 return expect(getLoc(), "declaration-specifiers"), false;
+            FullSourceLoc *full_loc = getFullLoc(getLoc());
             Declator nt = abstract_decorator(base, Function);
             if (!nt.ty)
-                return expect(getLoc(), "abstract-decorator"), false;
+                return expect(full_loc, "abstract-decorator"), false;
             params.push_back(nt);
             if (nt.ty->k == TYINCOMPLETE)
-                type_error(getLoc(), "parameter %u has imcomplete type %T", i, nt.ty), ok = false;
+                type_error(full_loc, "parameter %u has imcomplete type %T", i, nt.ty), ok = false;
             nt.ty->tags |= TYPARAM;
             if (nt.name) {
                 if (sema.typedefs.getSymInCurrentScope(nt.name))
-                    type_error("duplicate parameter %I", nt.name);
-                sema.typedefs.putSym(nt.name, Variable_Info{.ty = nt.ty, .loc = getLoc(), .tags = ASSIGNED | USED});
+                    type_error(full_loc, "duplicate parameter %I", nt.name);
+                sema.typedefs.putSym(nt.name, Variable_Info{.ty = nt.ty, .loc = full_loc, .tags = ASSIGNED | USED});
             }
             if (l.tok.tok == TComma)
                 consume();
@@ -1987,31 +1994,31 @@ NOT_CONSTANT:
         }
         result = SNEW(VarDeclStmt){.loc = loc, .vars = xvector<VarDecl>::get()};
         for (;;) {
-            Location loc2 = getLoc();
+            FullSourceLoc *full_loc = getFullLoc(getLoc());
             Declator st = declarator(base, Direct);
             if (!st.ty)
                 return;
             if (l.tok.tok == TLcurlyBracket) {
                 if (st.ty->k != TYFUNCTION)
-                    return type_error(loc2, "unexpected function definition");
+                    return type_error(full_loc, "unexpected function definition");
                 // function definition
                 if (st.name->second.getToken() == PP_main) {
                     if (st.ty->params.size()) {
                         if (!(st.ty->params.front().ty->tags & TYINT)) {
-                            type_error("first parameter of main is not 'int'");
+                            type_error(full_loc, "first parameter of main is not 'int'");
                         }
                         if (st.ty->params.size() >= 2) {
                             if (!(st.ty->params[1].ty->k == TYPOINTER && st.ty->params[1].ty->p->k == TYPOINTER &&
                                   st.ty->params[1].ty->p->p->tags & (TYCHAR | TYUCHAR))) {
-                                type_error("second parameter of main is not 'char**'");
+                                type_error(full_loc, "second parameter of main is not 'char**'");
                             }
                         }
                     }
                 }
-                size_t idx = putsymtype2(st.name, st.ty);
+                size_t idx = putsymtype2(st.name, st.ty, full_loc);
                 sema.pfunc = st.name;
                 if (!isTopLevel())
-                    return parse_error(loc2, "function definition is not allowed here"),
+                    return parse_error(full_loc, "function definition is not allowed here"),
                            note("function can only declared in global scope");
                 Stmt res = SNEW(FunctionStmt){.loc = loc,
                                               .func_idx = idx,
@@ -2031,30 +2038,29 @@ NOT_CONSTANT:
             }
             st.ty->noralize();
 #if 0
-      logtime();
-      print_cdecl(st.name->getKey(), st.ty, llvm::errs(), true);
+            print_cdecl(st.name->getKey(), st.ty, llvm::errs(), true);
 #endif
-            size_t idx = putsymtype(st.name, st.ty);
+            size_t idx = putsymtype(st.name, st.ty, full_loc);
 
             result->vars.push_back(VarDecl{.name = st.name, .ty = st.ty, .init = nullptr, .idx = idx});
             if (st.ty->tags & TYINLINE)
-                warning(loc2, "inline can only used in function declaration");
+                warning(full_loc, "inline can only used in function declaration");
             if (!(st.ty->tags & TYEXTERN)) {
                 if ((st.ty->tags & TYVOID) && !(st.ty->tags & TYTYPEDEF))
-                    return type_error(loc2, "variable %I declared void", st.name);
+                    return type_error(full_loc, "variable %I declared void", st.name);
                 if (st.ty->k == TYINCOMPLETE)
-                    return type_error(loc2, "variable %I has imcomplete type %T", st.name);
+                    return type_error(full_loc, "variable %I has imcomplete type %T", st.name);
             }
             if (l.tok.tok == TAssign) {
                 Expr init;
                 auto &var_info = sema.typedefs.getSym(idx);
                 var_info.tags |= ASSIGNED;
                 if (st.ty->k == TYARRAY && st.ty->vla) {
-                    return type_error(loc2, "variable length array may not be initialized");
+                    return type_error(full_loc, "variable length array may not be initialized");
                 } else if (st.ty->k == TYFUNCTION)
-                    return type_error(loc2, "function may not be initialized");
+                    return type_error(full_loc, "function may not be initialized");
                 if (st.ty->tags & TYTYPEDEF)
-                    return type_error(loc2, "'typedef' may not be initialized");
+                    return type_error(full_loc, "'typedef' may not be initialized");
                 consume();
                 sema.want_var = true;
                 {
@@ -2062,7 +2068,7 @@ NOT_CONSTANT:
                     init = initializer_list();
                 }
                 if (!init)
-                    return expect(loc2, "initializer-list");
+                    return expect(full_loc, "initializer-list");
                 result->vars.back().init = init;
                 if (st.ty->k == TYARRAY && !st.ty->hassize && !st.ty->vla) 
                     result->vars.back().ty = init->ty;
@@ -2079,19 +2085,19 @@ NOT_CONSTANT:
                             )
                         )
                         ) {
-                        type_error(loc2, "global initializer is not constant");
+                        type_error(full_loc, "global initializer is not constant");
                     }
                 }
             } else {
                 if (st.ty->k == TYARRAY) {
                     if (st.ty->vla && isTopLevel())
-                        type_error(loc2, "variable length array declaration not allowed at file scope");
+                        type_error(full_loc, "variable length array declaration not allowed at file scope");
                     else if (st.ty->hassize == false && !st.ty->vla && (st.ty->tag & TYEXTERN)) {
                         if (isTopLevel()) {
-                            warning(loc2, "array %I assumed to have one element", st.name);
+                            warning(full_loc, "array %I assumed to have one element", st.name);
                             st.ty->hassize = true, st.ty->arrsize = 1;
                         } else {
-                            type_error(loc2, "array size missing in %I", st.name);
+                            type_error(full_loc, "array size missing in %I", st.name);
                         }
                     }
                 }
@@ -3279,14 +3285,15 @@ NEXT:
         }
         case Kelse: return parse_error(loc, "'else' without a previous 'if'"), consume();
         case TIdentifier: {
+            FullSourceLoc *full_loc = getFullLoc(loc);
             TokenV tok = l.tok;
             consume();
             if (l.tok.tok == TColon) { // labeled-statement
                 consume();
-                label_t L = putLable(tok.s, loc);
+                label_t L = putLable(tok.s, full_loc);
                 insertLabel(L, tok.s);
                 if (l.tok.tok == TRcurlyBracket) {
-                    warning(loc, "missing statement after label, add ';' for you");
+                    warning(full_loc, "missing statement after label, add ';' for you");
                     return;
                 }
                 return statement();
@@ -3704,7 +3711,7 @@ NEXT:
         assert(jumper.cur == 0 && "labels scope should be empty in start of function");
         for (size_t i = 0; i < params.size(); ++i)
             args[i] =
-                sema.typedefs.putSym(params[i].name, Variable_Info{.ty = params[i].ty, .loc = loc, .tags = ASSIGNED});
+                sema.typedefs.putSym(params[i].name, Variable_Info{.ty = params[i].ty, .loc = context.getFullLoc(loc), .tags = ASSIGNED});
         {
             llvm::SaveAndRestore<Stmt> saved_ip(InsertPt, head);
             eat_compound_statement();

@@ -107,11 +107,20 @@ static void write_loc(raw_ostream &OS, const Location &loc, SourceMgr *SM) {
     OS << SM->getFileName(loc.id) << ':' << loc.line << ':' << loc.col << ": ";
 }
 void TextDiagnosticPrinter::realHandleDiagnostic(enum DiagnosticLevel level, const Diagnostic &Info) {
-    if (SM && Info.loc.isValid())
-        write_loc(OS, Info.loc, SM);
-    else 
-        OS << "xcc: ";
-
+    if (SM) {
+        if (Info.full_loc) {
+            for (unsigned i = 0;i < Info.full_loc->num_stack;++i) {
+                const auto &it = Info.full_loc->include_stack[i];
+                OS << "In file included from " << SM->getFileName(it.fd) << ':' << it.line << ":\n";
+            }
+        }
+        if (Info.loc.isValid()) {
+            write_loc(OS, Info.loc, SM);
+            goto OK;
+        }
+    }
+    OS << "xcc: ";
+    OK:
     if (ShowColors) {
         raw_ostream::Colors color;
         switch (level) {
@@ -148,13 +157,11 @@ void TextDiagnosticPrinter::realHandleDiagnostic(enum DiagnosticLevel level, con
         OS << OutStr.str();
     }
     if (SM) {
-        if (Info.full_loc && Info.full_loc->num_stack > 0) {
-            for (unsigned i = 0;i < Info.full_loc->num_stack;++i)
-                OS << "In file included from " << SM->getFileName(Info.full_loc->include_stack[i]) << ':';
-            printSource(Info.loc);
+        if (Info.full_loc) {
+            printSource(Info.full_loc->loc);
             for (unsigned i = 0;i < Info.full_loc->num_macros;++i) {
                 PPMacroDef *def = Info.full_loc->macros[i];
-                write_loc(OS, def->loc, SM);
+                write_loc(OS, Info.loc, SM);
                 OS << noteColor << "note: ";
                 OS.resetColor();
                 OS << "in expansion of macro " << def->m.Name;

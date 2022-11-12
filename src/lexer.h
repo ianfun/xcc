@@ -333,10 +333,11 @@ END:
         return theTok;
     }
     void beginExpandMacro(PPMacroDef *M) {
+        puts("push");
         expansion_list.push_back(M);
         tokenq.push_back(TokenV(PPMacroPop));
     }
-    void endExpandMacro() { expansion_list.pop_back(); }
+    void endExpandMacro() { expansion_list.pop_back();puts("pop"); }
     bool isMacroInUse(IdentRef Name) const { 
         for (const auto &it: expansion_list)
             if (it->m.Name == Name)
@@ -448,6 +449,7 @@ RUN:
                         goto BAD_RET;
                     }
                     name = tok.s;
+                    theMacro->m.Name = name;
                     if (tok.tok >= PP__LINE__ && tok.tok <= PP_Pragma)
                         warning(loc, "redefining builtin macro %I", name);
                     tok = lex();
@@ -625,7 +627,6 @@ STD_INCLUDE:
                             path.push_back(c);
                         }
                         path.make_eos();
-                        dbgprint("#including file %s\n", path.data());
                         if (!SM.addIncludeFile(path.str(), is_std == '>'))
                             pp_error("#include file not found: %R", StringRef(path.data(), path.length() - 1));
                         path.free();

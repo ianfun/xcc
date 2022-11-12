@@ -357,12 +357,17 @@ struct Location {
     static constexpr Location make_invalid() { return Location{.line = 0, .col = 0, .id = 0}; }
     bool isValid() const { return line != 0; }
 };
+struct Include_Info {
+    unsigned line; // the line where #include occurs
+    fileid_t fd; // the file ID in SourceMgr's streams
+};
 struct FullSourceLoc
 {
+    Location loc;
     unsigned num_stack;
     unsigned num_macros;
-    unsigned include_stack[0];
-    struct PPMacroDef *macros[];
+    Include_Info include_stack [0];
+    struct PPMacroDef *macros [];
 };
 enum Linker {
     LLD,
