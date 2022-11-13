@@ -335,11 +335,8 @@ END:
     void beginExpandMacro(PPMacroDef *M) {
         SM.beginExpandMacro(M, context);
         expansion_list.push_back(M);
+        tokenq.push_back(SM.getLocTree());
         tokenq.push_back(TokenV(PPMacroPop));
-    }
-    void endExpandMacro() { 
-        SM.endTree();
-        expansion_list.pop_back();
     }
     bool isMacroInUse(IdentRef Name) const { 
         for (const auto &it: expansion_list)
@@ -351,15 +348,21 @@ END:
         if (tokenq.empty())
             tok = lex();
         else
-            tok = tokenq.front(), tokenq.pop_front();
+            tok = tokenq.back(), tokenq.pop_back();
         if (tok.tok >= kw_start && tok.tok != TIdentifier) {
             isPPMode = true;
             checkMacro();
             isPPMode = false;
             if (tok.tok == TNewLine)
                 return cpp();
-        } else if (tok.tok == PPMacroPop)
-            return endExpandMacro(), cpp();
+        } else if (tok.tok == PPMacroPop) {
+            SM.endTree();
+            expansion_list.pop_back();
+            return cpp();
+        } else if (tok.tok == PPMacroTraceLoc) {
+            loc.setParent(tok.tree);
+            return cpp();
+        }
     }
 #define TOK2(tc, ac, at, bt)                                                                                           \
     case tc:                                                                                                           \
@@ -445,7 +448,7 @@ RUN:
                 switch (saved_tok) {
                 case PPdefine: {
                     PPMacroDef *theMacro = context.newMacro();
-                    theMacro->loc = loc;
+                    theMacro->loc = SM.getLoc();
                     IdentRef name;
                     if (tok.tok < kw_start) {
                         pp_error(loc, "%s", "expect identifier");
@@ -917,18 +920,21 @@ STD_INCLUDE:
             case MOBJ: {
                 if (m.tokens.size()) {
                     beginExpandMacro(it->second);
-                    for (size_t i = 0; i < m.tokens.size(); i++) {
+                    for (size_t i = m.tokens.size();i--; ) {
                         TokenV theTok = m.tokens[i]; // copy ctor
                         if (theTok.tok != TSpace) {
-                            if (tok.tok >= kw_start && isMacroInUse(theTok.s)) {
-                                // https://gcc.gnu.org/onlinedocs/cpp/Self-Referential-Macros.html
-                                dbgprint("skipping self-referential macro %s\n", theTok.s->getKey().data());
-                                if (theTok.tok == PPIdent)
-                                    theTok.tok = TIdentifier;
+                            if (tok.tok >= kw_start) {
+                                if (isMacroInUse(theTok.s)) {
+                                    // https://gcc.gnu.org/onlinedocs/cpp/Self-Referential-Macros.html
+                                    dbgprint("skipping self-referential macro %s\n", theTok.s->getKey().data());
+                                    if (theTok.tok == PPIdent)
+                                        theTok.tok = TIdentifier;
+                                }
                             }
                             tokenq.push_back(theTok);
                         }
                     }
+                    tokenq.push_back(SM.getLocTree());
                 }
                 return cpp();
             }

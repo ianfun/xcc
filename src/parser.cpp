@@ -2019,7 +2019,7 @@ NOT_CONSTANT:
                 if (!isTopLevel())
                     return parse_error(full_loc, "function definition is not allowed here"),
                            note("function can only declared in global scope");
-                Stmt res = SNEW(FunctionStmt){.loc = loc,
+                Stmt res = SNEW(FunctionStmt){.loc = full_loc,
                                               .func_idx = idx,
                                               .funcname = st.name,
                                               .functy = st.ty,

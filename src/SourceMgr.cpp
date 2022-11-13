@@ -69,16 +69,8 @@ struct SourceMgr : public DiagnosticHelper {
         const Stream &f = streams[includeStack.back()];
         return Location(LocationBase(f.line, f.column, includeStack.back()), getLocTree());
     }
-    /*
-    LocationBase getLoc(unsigned i) const {
-        const Stream &f = streams[includeStack[i]];
-        return LocationBase (f.line, f.column, includeStack[i]);
-    }*/
     LocTree *getLocTree() const {
         return tree;
-    }
-    Location getFullLoc() const {
-        return Location(getLoc(), getLocTree());
     }
     void beginExpandMacro(PPMacroDef *M, xcc_context &context) {
         tree = new (context.getAllocator()) LocTree(tree, M);

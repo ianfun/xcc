@@ -221,7 +221,8 @@ struct TextDiagnosticPrinter : public DiagnosticConsumer {
             OS << " generated.\n";
         }
     }
-    void printSource(LocationBase loc);
+    void printSource(const LocationBase &loc);
+    void write_loc(const LocationBase &loc);
 };
 // A helper class to emit Diagnostics
 // such as parse_error(), lex_error(), warning() functions

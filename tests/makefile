@@ -56,6 +56,6 @@ all: testLexer testCpp testParser testCodeGen testJit
 
 # clean outputs
 clean:
-	rm -f lexer cpp parser codegen jit xcc
+	rm -f lexer cpp parser codegen jit xcc *.out *.o *.ll
 
 

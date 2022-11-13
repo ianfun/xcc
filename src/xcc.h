@@ -609,7 +609,8 @@ enum TokenVKind : uint8_t {
     ATokenIdent,
     ATokenVNumLit,
     ATokenVStrLit,
-    ATokenVChar
+    ATokenVChar,
+    ATokenVLoc
 };
 
 struct TokenV {
@@ -626,10 +627,12 @@ struct TokenV {
             unsigned char i; // 8 bits
             enum ITag itag;  // 8 bits
         };
+        struct LocTree *tree;
     };
     TokenV() : k{ATokenVBase}, tok{TNul} {};
     TokenV(enum TokenVKind k, Token tok) : k{k}, tok{tok} { }
     TokenV(Token tok) : k{ATokenVBase}, tok{tok} { }
+    TokenV(struct LocTree *tree) : k{ATokenVLoc}, tok{PPMacroTraceLoc} { this->tree = tree; } 
     void dump(raw_ostream &OS) {
         switch (k) {
         case ATokenVBase: OS << show(tok); break;

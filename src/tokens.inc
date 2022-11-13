@@ -65,6 +65,7 @@ enum Token: unsigned char {
   PPNumber,
   PPSharpSharp,
   PPMacroPop,
+  PPMacroTraceLoc,
   TEOF,
   Kextern,
   Kshort,
@@ -277,7 +278,8 @@ static const char *show(Token o){
     case PPSharp: return "#";
     case PPNumber: return "<pp-number>";
     case PPSharpSharp: return "##";
-    case PPMacroPop: return "<PPMacroPop>";
+    case PPMacroPop: return "<macro-pop>";
+    case PPMacroTraceLoc: return "<macro-trace-loc>";
     case TEOF: return "<EOF>";
     default: return "(unknown token)";
   }

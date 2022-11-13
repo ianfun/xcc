@@ -242,7 +242,8 @@ def gen_tokens():
 	T("PPSharp", "#")
 	T("PPNumber", "<pp-number>")
 	T("PPSharpSharp", "##")
-	T("PPMacroPop", "<PPMacroPop>")
+	T("PPMacroPop", "<macro-pop>")
+	T("PPMacroTraceLoc", "<macro-trace-loc>")
 	T("TEOF", "<EOF>")
 	
 	P("TIdentifier", "<TIdentifier>") # name(identifier), after macro processing
