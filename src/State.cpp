@@ -31,6 +31,12 @@ struct xcc_context {
     CType getFixArrayType(CType elementType, unsigned size) {
         return TNEW(ArrayType){.align = 0, .tags = 0, .arrtype = elementType, .hassize = true, .arrsize = size};
     }
+    CType getFloat() {
+        return typecache.ffloatty;
+    }
+    CType getDobule() {
+        return typecache.fdoublety;
+    }
     CType getConstInt() { return constint; }
     CType getInt() { return typecache.i32; }
     CType getUInt() { return typecache.u32; }
@@ -38,6 +44,9 @@ struct xcc_context {
         if (TYLONG == TYINT64)
             return typecache.i64;
         return typecache.i32;
+    }
+    CType getVoid() {
+        return typecache.v;
     }
     CType getULong() {
         if (TYLONG == TYINT64)
@@ -47,12 +56,21 @@ struct xcc_context {
     CType getChar() {
         return typecache.i8;
     }
+    CType getUChar() {
+        return typecache.u8;
+    }
     CType getWchar() {
 #if CC_WCHAR32
         return typecache.i32;
 #else
         return typecache.i16;
 #endif
+    }
+    CType getShort() {
+        return typecache.i16;
+    }
+    CType getUShort() {
+        return typecache.u16;
     }
     size_t getsizeof(CType ty) { return 0; }
     size_t getsizeof(Expr e) { return getsizeof(e->ty); }

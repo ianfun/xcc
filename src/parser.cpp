@@ -214,28 +214,30 @@ struct Parser : public DiagnosticHelper {
         size_t idx;
         auto it = sema.typedefs.getSymInCurrentScope(Name, idx);
         if (it) {
+            if (yt->tags & TYTYPEDEF) {
+                if (!compatible(it->ty, yt)) {
+                    type_error("%I redeclared as different kind of symbol", Name);
+                    note(it->loc, "previous declaration of %I is here", Name);
+                }
+                goto PUT;
+            }
             if (isTopLevel() || (yt->tags & (TYEXTERN | TYSTATIC))) {
+                auto M = type_qualifiers | TYSTATIC | TYTHREAD_LOCAL | TYREGISTER | TYTYPEDEF | TYATOMIC;
                 CType old = it->ty;
                 bool err = true;
-                if ((yt->tags & TYSTATIC) && !(old->tags & TYSTATIC))
-                    type_error(full_loc, "static declaration case %I follows non-static declaration", Name);
-                else if ((old->tags & TYSTATIC) && !(yt->tags & TYSTATIC))
-                    type_error(full_loc, "non-static declaration case %I follows static declaration", Name);
-                else if ((yt->tags & TYTHREAD_LOCAL) && !(old->tags & TYTHREAD_LOCAL))
-                    type_error(full_loc, "thread-local declaration case %I follows non-thread-local declaration", Name);
-                else if ((old->tags & TYTHREAD_LOCAL) && !(yt->tags & TYTHREAD_LOCAL))
-                    type_error(full_loc, "non-thread-local declaration case %I follows thread-local declaration", Name);
-                else if ((yt->tags & type_qualifiers) != (old->tags & type_qualifiers))
-                    type_error(full_loc, "conflicting type qualifiers for %I", Name);
+                uint32_t t1 = yt->tags, t2 = old->tags;
+                if ((t1 & M) != (t2 & M))
+                    type_error(it->loc, "conflicting type qualifiers for %I", Name);
                 else if (!compatible(old, yt))
-                    type_error(full_loc, "conflicting types for %I", Name);
+                    type_error(full_loc, "conflicting types for %I: (%T v.s. %T)", Name, yt, old);
                 else
                     err = false;
                 if (err)
-                    note("previous declaration case %I with type %T", Name, old);
+                    note(it->loc, "previous declaration is here", Name);
             } else {
                 type_error(full_loc, "%I redeclared", Name);
             }
+            PUT:
             it->ty = yt;
         } else {
             idx = sema.typedefs.putSym(Name, Variable_Info{.ty = yt, .loc = full_loc, .tags = GARBAGE});
@@ -1158,133 +1160,6 @@ NOT_CONSTANT:
     SourceMgr &SM() { return l.SM; }
     Location getLoc() { return l.getLoc(); }
     Expr constant_expression() { return conditional_expression(); }
-    bool addTag(CType &ty, Token theTok) {
-        // add a tag to type
-        switch (theTok) {
-        case Kinline: ty->tags |= TYINLINE; break;
-        case K_Noreturn: ty->tags |= TYNORETURN; break;
-        case Kextern: ty->tags |= TYEXTERN; break;
-        case Kstatic: ty->tags |= TYSTATIC; break;
-        case K_Thread_local: ty->tags |= TYTHREAD_LOCAL; break;
-        case Kregister: ty->tags |= TYREGISTER; break;
-        case Krestrict: ty->tags |= TYRESTRICT; break;
-        case Kvolatile: ty->tags |= TYVOLATILE; break;
-        case Ktypedef: ty->tags |= TYTYPEDEF; break;
-        case Kconst: ty->tags |= TYCONST; break;
-        case K_Atomic: ty->tags |= TYATOMIC; break;
-        default: return false;
-        }
-        return true;
-    }
-    CType merge_types(ArrayRef<Token> ts, Location loc) {
-        // merge many token to a type
-        //
-        // for example:
-        //
-        //   `long long int const` => const long long
-        unsigned l = 0, s = 0, f = 0, d = 0, i = 0, c = 0, v = 0, numsigned = 0, numunsigned = 0, su;
-        CType result;
-
-        result = TNEW(PrimType){.align = 0, .tags = 0};
-        SmallVector<Token, 5> b;
-        for (const auto t : ts) {
-            if (!addTag(result, t))
-                b.push_back(t);
-        }
-        if (b.empty()) { // no type
-            warning(loc, "default type to `int`");
-            result->tags |= TYINT;
-            return result;
-        }
-        if (b.size() == 1) { // one type
-            result->tags |= ([](Token theTok) {
-                switch (theTok) {
-                case Kchar: return TYCHAR;
-                case Kint: return TYINT;
-                case Kvoid: return TYVOID;
-                case Klong: return TYLONG;
-                case Ksigned: return TYINT;
-                case Kunsigned: return TYUINT;
-                case Kshort: return TYSHORT;
-                case Kdouble: return TYDOUBLE;
-                case Kfloat: return TYFLOAT;
-                case K_Bool: return TYBOOL;
-                default: llvm_unreachable("");
-                }
-            })(b.front());
-            return result;
-        }
-        for (const auto tok : b) {
-            switch (tok) {
-            case Ksigned: numsigned++; break;
-            case Kunsigned: numunsigned++; break;
-            case Klong: l++; break;
-            case Kshort: s++; break;
-            case Kint: i++; break;
-            case Kdouble: d++; break;
-            case Kfloat: f++; break;
-            case Kvoid: v++; break;
-            case Kchar: c++; break;
-            default: break;
-            }
-        }
-        su = numsigned + numunsigned;
-        if (su >= 2)
-            return type_error(loc, "duplicate signed/unsigned"), nullptr;
-        if (c > 1)
-            return type_error(loc, "too many `char`s"), nullptr;
-        if (i > 1)
-            return type_error(loc, "too many `int`s"), nullptr;
-        if (f > 0)
-            return type_error(loc, "`float` cannot combine with other types"), nullptr;
-        if (v > 0)
-            return type_error(loc, "`void` cannot combine with other types"), nullptr;
-        if (l >= 3)
-            return type_error(loc, "too many `long`s, max is `long long`"), nullptr;
-        if (s >= 2)
-            return s == 2 ? type_error(loc, "duplicate 'short' declaration specifier")
-                          : type_error(loc, "too many `short`s, max is `short`"),
-                   nullptr;
-        if (d > 1)
-            return type_error(loc, "too many `double`s"), nullptr;
-        if (d) {
-            if (d != 1)
-                return type_error(loc, "too many `long` for `double`"), nullptr;
-            if (b.size() != (1 + l))
-                return type_error(loc, "extra `double` declaration specifier"), nullptr;
-            result->tags |= (d == 1 ? TYLONGDOUBLE : TYDOUBLE);
-            return result;
-        }
-        if (s) { // short+int
-            if ((s + i + su) != b.size())
-                return type_error(loc, "extra `short` declaration specifier"), nullptr;
-            result->tags |= (numunsigned ? TYUSHORT : TYSHORT);
-            return result;
-        }
-        if (l) { // long+int
-            if ((l + i + su) != b.size())
-                return type_error(loc, "extra `long` declaration specifier"), nullptr;
-            switch (l) {
-            case 1: result->tags |= numunsigned ? TYULONG : TYLONG; break;
-            case 2: result->tags |= numunsigned ? TYULONGLONG : TYLONGLONG; break;
-            default: llvm_unreachable("too many longs");
-            }
-            return result;
-        }
-        if (c) {
-            if ((c + su) != b.size())
-                return type_error(loc, "extra `char` declaration specifier"), nullptr;
-            result->tags |= numunsigned ? TYUCHAR : TYCHAR;
-            return result;
-        }
-        if (i) {
-            if ((i + su) != b.size())
-                return type_error(loc, "extra `int` declaration specifier"), nullptr;
-            result->tags |= numsigned ? TYUINT : TYINT;
-            return result;
-        }
-        return type_error(loc, "bad type specifier"), nullptr;
-    }
     void checkSemicolon() {
         if (l.tok.tok != TSemicolon)
             return warning(getLoc(), "missing ';'");
@@ -1301,95 +1176,136 @@ NOT_CONSTANT:
             default: return;
             }
     }
-    void more() {
-        while (is_declaration_specifier(l.tok.tok))
-            sema.tokens_cache.push_back(l.tok.tok), consume();
-    }
-    void read_enum_sepcs(CType &c, Token sepc) {
-        // TODO: ...
-    }
-    void read_struct_union_sepcs(CType &c, Token sepc) {
-        // TODO: ...
-    }
-
-    CType handle_typedef(CType ty) {
-        bool is_redefine = false;
-        CType result = context.clone(ty);
-        consume();
-        while (is_declaration_specifier(l.tok.tok))
-            sema.tokens_cache.push_back(l.tok.tok), consume();
-        if (sema.tokens_cache.size()) {
-            for (size_t i = 0; i < sema.tokens_cache.size(); ++i) {
-                switch (i) {
-                case Ktypedef: break;
-                default:
-                    if (!addTag(result, sema.tokens_cache[i]))
-                        is_redefine = true;
-                }
-            }
-        }
-        if (is_redefine) {
-            if (!compatible(result, ty))
-                type_error("typedef redefinition with different types: %T vs %T", result, ty);
-        } else {
-            result->tags &= (~TYTYPEDEF);
-        }
-        return result;
-    }
     CType specifier_qualifier_list() {
         Location loc = getLoc();
-        // specfier-qualifier-list: parse many type specfiers and type qualifiers
-        CType result;
-        sema.tokens_cache.clear();
-        while (is_declaration_specifier(l.tok.tok)) {
+        CType eat_typedef = nullptr;
+        bool stop = false;
+        uint32_t tags = 0;
+        unsigned L = 0, s = 0, f = 0, d = 0, i = 0, c = 0, v = 0, numsigned = 0, numunsigned = 0, su;
+        unsigned count = 0;
+        uint32_t old_tag;
+        for (;;++count) {
+            old_tag = tags;
             switch (l.tok.tok) {
-            case Kenum:
-                result = enum_decl();
-                more();
-                for (const auto tok : sema.tokens_cache) {
-                    if (tok == Ktypedef) {
-                        result->tags |= TYTYPEDEF;
-                        continue;
-                    }
-                    read_enum_sepcs(result, tok);
-                }
-                return result;
+            case Kinline: tags |= TYINLINE; goto NO_REPEAT;
+            case K_Noreturn: tags |= TYNORETURN; goto NO_REPEAT;
+            case Kextern: tags |= TYEXTERN; goto NO_REPEAT;
+            case Kstatic: tags |= TYSTATIC; goto NO_REPEAT;
+            case K_Thread_local: tags |= TYTHREAD_LOCAL; goto NO_REPEAT;
+            case Kregister: tags |= TYREGISTER; goto NO_REPEAT;
+            case Krestrict: tags |= TYRESTRICT; goto NO_REPEAT;
+            case Kvolatile: tags |= TYVOLATILE; goto NO_REPEAT;
+            case Ktypedef: tags |= TYTYPEDEF; goto NO_REPEAT;
+            case Kconst: tags |= TYCONST; goto NO_REPEAT;
+            case K_Atomic: tags |= TYATOMIC; goto NO_REPEAT;
+NO_REPEAT:
+            if (old_tag == tags) {
+                warning(loc, "duplicate '%s' ignored", show(l.tok.tok));
+                --count;
+            }
+            break;
+            case Ksigned: numsigned++; break;
+            case Kunsigned: numunsigned++; break;
+            case Klong: L++; break;
+            case Kshort: s++; break;
+            case Kint: i++; break;
+            case Kdouble: d++; break;
+            case Kfloat: f++; break;
+            case Kvoid: v++; break;
+            case Kchar: c++; break;
+
+            case TIdentifier:
+                if (eat_typedef) // we cannot eat double typedef
+                    goto BREAK;
+                eat_typedef = gettypedef(l.tok.s);
+                if (!eat_typedef)
+                    goto BREAK;
+                eat_typedef = context.clone(eat_typedef);
+                eat_typedef->tags &= ~TYTYPEDEF;
+                break;
             case Kunion:
             case Kstruct:
-                result = struct_union(l.tok.tok);
-                more();
-                for (const auto tok : sema.tokens_cache) {
-                    if (tok == Ktypedef) {
-                        result->tags |= TYTYPEDEF;
-                        continue;
-                    }
-                    read_struct_union_sepcs(result, tok);
-                }
-                return result;
-            case K_Atomic:
-                consume();
-                if (l.tok.tok == TLbracket) {
-                    consume();
-                    if (!(result = type_name()))
-                        return expect(getLoc(), "type-name"), nullptr;
-                    if (l.tok.tok != TRbracket)
-                        return expectRB(getLoc()), nullptr;
-                    consume();
-                    more();
-                    if (sema.tokens_cache.size())
-                        warning(getLoc(), "atomic-type-specifier cannot combine with other types");
-                    return result;
-                }
-                LLVM_FALLTHROUGH;
-            default: sema.tokens_cache.push_back(l.tok.tok), consume();
+                if (eat_typedef)
+                    goto BREAK;
+                eat_typedef = struct_union(l.tok.tok);
+                if (!eat_typedef)
+                    goto BREAK;
+                continue;
+            case Kenum:
+                if (eat_typedef)
+                    goto BREAK;
+                eat_typedef = enum_decl();
+                if (!eat_typedef)
+                    goto BREAK;
+                continue;
+            default: goto BREAK;
+            }
+            consume();
+        }
+        BREAK:
+        if (count == 0) {
+            warning(loc, "type specifier missing, defaults to 'int'");
+            return context.getInt();
+        }
+        if (count == 1) {
+            if (eat_typedef) return eat_typedef;
+            if (tags) {
+                warning(loc, "type specifier missing, defaults to 'int'");
+                CType intTy = context.clone(context.getInt());
+                intTy->tags |= tags;
+                return intTy;
+            }
+            if (i || numsigned) return context.getInt();
+            if (numunsigned) return context.getUInt();
+            if (L) return context.getLong();
+            if (s) return context.getShort();
+            if (c) return context.getChar();
+            if (d) return context.getDobule();
+            if (f) return context.getFloat();
+            if (v) return context.getVoid();
+            llvm_unreachable("unhandled type in specifier_qualifier_list!");
+        }
+        su = numsigned + numunsigned;
+        if (su >= 2)
+            return type_error(loc, "both 'signed/unsigned'"), context.getInt();
+        if (c > 1)
+            return type_error(loc, "too many 'char'"), context.getInt();
+        if (i > 1)
+            return type_error(loc, "too many 'int'"), context.getInt();
+        if (f > 0)
+            return type_error(loc, "'float' cannot combine with other types"), context.getInt();
+        if (L >= 3)
+            return type_error(loc, "too many 'long'"), context.getInt();
+        if (s >= 2)
+            return type_error(loc, "too many 'short'"), context.getInt();
+        if (d > 1)
+            return type_error(loc, "too many 'double's"), context.getInt();
+        if (d) {
+            tags |= (L ? TYLONGDOUBLE : TYDOUBLE);
+        } else if (s) {
+            tags |= (numunsigned ? TYUSHORT : TYSHORT);
+        } else if (L) {
+            tags |= (L == 2) ? (numunsigned ? TYULONGLONG : TYLONGLONG) : (numunsigned ? TYULONG : TYLONG);
+        } else if (c) {
+            tags |= numunsigned ? TYUCHAR : TYCHAR;
+        } else if (i) {
+            tags |= numsigned ? TYUINT : TYINT;
+        } else if (v) {
+            tags |= TYVOID; 
+        } else {
+            if (eat_typedef == nullptr) {
+                type_error("bad declaration specifier");
+                eat_typedef = context.clone(context.getInt());
             }
         }
-        if (l.tok.tok == TIdentifier) {
-            result = gettypedef(l.tok.s);
-            if (result)
-                return more(), handle_typedef(result);
+        if (!eat_typedef)
+            return context.make(tags);
+        auto k = eat_typedef->k;
+        if ((tags & ty_prim) && (eat_typedef->tags & ty_prim || k != TYPRIM)) {
+            type_error(loc, "bad declaration specifier");
         }
-        return merge_types(sema.tokens_cache, loc);
+        eat_typedef->tags |= tags;
+        return eat_typedef;
     }
     Declator declarator(CType base, enum DeclaratorFlags flags = Direct) {
         // take a base type, return the final type and name
@@ -2036,7 +1952,7 @@ NOT_CONSTANT:
                 return insertStmt(res);
             }
             st.ty->noralize();
-#if 0
+#if 1
             print_cdecl(st.name->getKey(), st.ty, llvm::errs(), true);
 #endif
             size_t idx = putsymtype(st.name, st.ty, full_loc);
