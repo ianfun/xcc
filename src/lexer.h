@@ -333,11 +333,14 @@ END:
         return theTok;
     }
     void beginExpandMacro(PPMacroDef *M) {
-        puts("push");
+        SM.beginExpandMacro(M, context);
         expansion_list.push_back(M);
         tokenq.push_back(TokenV(PPMacroPop));
     }
-    void endExpandMacro() { expansion_list.pop_back();puts("pop"); }
+    void endExpandMacro() { 
+        SM.endTree();
+        expansion_list.pop_back();
+    }
     bool isMacroInUse(IdentRef Name) const { 
         for (const auto &it: expansion_list)
             if (it->m.Name == Name)
@@ -608,6 +611,12 @@ RUN:
                 case PPinclude: {
                     while (c == ' ')
                         eat();
+                    if (SM.includeStack.empty()) {
+                        pp_error("unexpected EOF");
+                        goto BAD_RET;
+                    }
+                    auto theFD = SM.includeStack.back();
+                    auto &f = SM.streams[theFD];
                     char is_std = '\"';
                     xstring path = xstring::get();
 
@@ -617,20 +626,35 @@ STD_INCLUDE:
                         for (;;) {
                             eat();
                             if (c == is_std) {
-                                eat();
+                                auto size = SM.includeStack.size();
+                                for (;;) {
+                                    char c = SM.raw_read(f);
+                                    if (c == '\0') {
+                                        break;
+                                    }
+                                    if (c == '\n' || c == '\r')
+                                        break;
+                                }
+                                path.make_eos();
+                                size = SM.includeStack.size();
+                                SM.addIncludeFile(path.str(), is_std == '>');
+                                if (SM.includeStack.size() == size) {
+                                    pp_error(loc, "#include file not found: %R", StringRef(path.data(), path.length() - 1));
+                                    path.free(); // we no longer use it, so collect it
+                                }
+                                else 
+                                    SM.beginInclude(loc.line, context, theFD);
                                 break;
                             }
                             if (c == '\0' || c == '\n') {
-                                pp_error(loc, "%s", "unexpected EOF, expect path or '\"'");
+                                pp_error(loc, "%s", "expect \"FILENAME\" or <FILENAME>");
                                 goto BAD_RET;
                             }
                             path.push_back(c);
                         }
-                        path.make_eos();
-                        if (!SM.addIncludeFile(path.str(), is_std == '>'))
-                            pp_error("#include file not found: %R", StringRef(path.data(), path.length() - 1));
-                        path.free();
-                        break;
+                        eat();
+                        isPPMode = false;
+                        continue;
                     case '<': is_std = '>'; goto STD_INCLUDE;
                     default: pp_error(loc, "%s", "expect \"FILENAME\" or <FILENAME>"); goto BAD_RET;
                     }

@@ -1,4 +1,4 @@
-void TextDiagnosticPrinter::printSource(Location loc) {
+void TextDiagnosticPrinter::printSource(LocationBase loc) {
 #if WINDOWS
     LARGE_INTEGER saved_posl;
 #else
@@ -103,17 +103,26 @@ EXIT:
     ::lseek(stream_ref.fd, saved_posl, SEEK_SET);
 #endif
 }
-static void write_loc(raw_ostream &OS, const Location &loc, SourceMgr *SM) {
+static void write_loc(raw_ostream &OS, const LocationBase &loc, SourceMgr *SM) {
+    OS.changeColor(llvm::raw_ostream::Colors::SAVEDCOLOR, true);
     OS << SM->getFileName(loc.id) << ':' << loc.line << ':' << loc.col << ": ";
+    OS.changeColor(llvm::raw_ostream::Colors::SAVEDCOLOR, false);
 }
 void TextDiagnosticPrinter::realHandleDiagnostic(enum DiagnosticLevel level, const Diagnostic &Info) {
-    if (SM) {
-        if (Info.full_loc) {
-            for (unsigned i = 0;i < Info.full_loc->num_stack;++i) {
-                const auto &it = Info.full_loc->include_stack[i];
-                OS << "In file included from " << SM->getFileName(it.fd) << ':' << it.line << ":\n";
+    LocTree *begin_macro = Info.loc.getParent();
+    if (SM) { 
+        LocTree *ptr = begin_macro;
+        if (ptr && ptr->isAInclude) {
+            for (;ptr && ptr->isAInclude;ptr = ptr->getParent()) {
+                auto it = ptr->include;
+                OS << StringRef(ptr == begin_macro ? "In file included from " : "                      ", 22);
+                OS.changeColor(llvm::raw_ostream::Colors::SAVEDCOLOR, true);
+                OS << SM->getFileName(it->fd) << ':' << it->line;
+                OS.changeColor(llvm::raw_ostream::Colors::SAVEDCOLOR, false);
+                OS << ":\n";
             }
         }
+        begin_macro = ptr;
         if (Info.loc.isValid()) {
             write_loc(OS, Info.loc, SM);
             goto OK;
@@ -121,7 +130,7 @@ void TextDiagnosticPrinter::realHandleDiagnostic(enum DiagnosticLevel level, con
     }
     OS << "xcc: ";
     OK:
-    if (ShowColors) {
+    {
         raw_ostream::Colors color;
         switch (level) {
         case Note: color = noteColor; break;
@@ -129,7 +138,7 @@ void TextDiagnosticPrinter::realHandleDiagnostic(enum DiagnosticLevel level, con
         case Warning: color = warningColor; break;
         default: color = errorColor; break;
         }
-        OS.changeColor(color);
+        OS.changeColor(color, true);
     }
     {
         StringRef msgtype;
@@ -148,8 +157,7 @@ void TextDiagnosticPrinter::realHandleDiagnostic(enum DiagnosticLevel level, con
         }
         OS << msgtype;
     }
-    if (ShowColors)
-        OS.resetColor();
+    OS.resetColor();
     {
         SmallString<64> OutStr;
         Info.FormatDiagnostic(OutStr);
@@ -157,18 +165,20 @@ void TextDiagnosticPrinter::realHandleDiagnostic(enum DiagnosticLevel level, con
         OS << OutStr.str();
     }
     if (SM) {
-        if (Info.full_loc) {
-            printSource(Info.full_loc->loc);
-            for (unsigned i = 0;i < Info.full_loc->num_macros;++i) {
-                PPMacroDef *def = Info.full_loc->macros[i];
-                write_loc(OS, Info.loc, SM);
-                OS << noteColor << "note: ";
+        if (Info.loc.isValid()) {
+            printSource(Info.loc);
+            for (LocTree *ptr = begin_macro;ptr;ptr = ptr->getParent()) {
+                PPMacroDef *def = ptr->macro;
+                OS.changeColor(noteColor); 
+                OS << "note: ";
                 OS.resetColor();
-                OS << "in expansion of macro " << def->m.Name;
+                OS << "in expansion of macro ";
+                OS.changeColor(llvm::raw_ostream::Colors::SAVEDCOLOR, true);
+                OS << def->m.Name->getKey();
+                OS.changeColor(llvm::raw_ostream::Colors::SAVEDCOLOR, false);
+                OS << '\n';
                 printSource(def->loc); // print where the macro is defined
             }
         }
-        else if (Info.loc.isValid())
-            printSource(Info.loc);
     }
 }

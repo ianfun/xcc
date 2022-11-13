@@ -349,31 +349,42 @@ typedef struct OpaqueStmt *Stmt;
 typedef struct OpaqueExpr *Expr;
 typedef struct OpaqueCType *CType;
 
-struct Location {
+struct LocationBase {
     line_t line;
     column_t col; // at most 65535 columns are supported
     fileid_t id;
-    // construct an invalid Location
-    static constexpr Location make_invalid() { return Location{.line = 0, .col = 0, .id = 0}; }
     bool isValid() const { return line != 0; }
+    LocationBase(line_t line = 0, column_t col = 0, fileid_t fd = 0): line{line}, col{col}, id{fd} {}
 };
 struct Include_Info {
     unsigned line; // the line where #include occurs
     fileid_t fd; // the file ID in SourceMgr's streams
 };
-struct FullSourceLoc
+struct LocTree {
+    struct LocTree *parent;
+    union {
+        Include_Info *include;
+        struct PPMacroDef *macro;
+    };
+    bool isAInclude;
+    LocTree(struct LocTree *parent, Include_Info *include = nullptr): parent{parent}, isAInclude{true} {
+        this->include = include;
+    }
+    LocTree(struct LocTree *parent, struct PPMacroDef *def = nullptr): parent{parent}, isAInclude{false} {
+        this->macro = def;
+    }
+    void setParent(LocTree *theParent) { this->parent = theParent; }
+    LocTree *getParent() const { return parent; }
+};
+struct Location: public LocationBase
 {
-    Location loc;
-    unsigned num_stack;
-    unsigned num_macros;
-    Include_Info include_stack [0];
-    struct PPMacroDef *macros [];
+    LocTree *tree;
+    // construct an invalid Location
+    void setParent(LocTree *parent) { this->tree = parent; }
+    LocTree *getParent() const { return tree; }
+    Location(): LocationBase(), tree{nullptr} { }
+    Location(LocationBase loc, LocTree *parent = nullptr): LocationBase(loc), tree{parent} {}
 };
-enum Linker {
-    LLD,
-    GCCLD
-};
-
 struct Declator {
     IdentRef name;
     CType ty;
@@ -683,7 +694,7 @@ struct PPMacro {
 };
 struct PPMacroDef {
     PPMacro m;
-    Location loc;
+    LocationBase loc;
 };
 static unsigned intRank(uint32_t a) {
     if (a & TYBOOL)
@@ -703,9 +714,9 @@ static unsigned intRank(uint32_t a) {
 #include "JIT.cpp"
 #include "LLVMDiagnosticHandler.cpp"
 #include "Scope.cpp"
+#include "State.cpp"
 #include "SourceMgr.cpp"
 #include "TextDiagnosticPrinter.cpp"
-#include "State.cpp"
 #include "codegen.cpp"
 #include "lexer.h"
 #include "output.cpp"

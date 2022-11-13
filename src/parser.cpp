@@ -8,12 +8,12 @@
 
 struct Type_info {
     CType ty = nullptr;
-    FullSourceLoc *loc = nullptr;
+    Location loc = Location();
 };
 struct Label_Info {
     label_t idx = 0;
     uint8_t flags = LBL_UNDEFINED;
-    FullSourceLoc *loc = nullptr;
+    Location loc = Location();
 };
 // bit enums for Variable_Info::tags
 constexpr uint8_t GARBAGE = 0, // just declared
@@ -21,7 +21,7 @@ constexpr uint8_t GARBAGE = 0, // just declared
     ASSIGNED = 0x2;            // true if assigned or initialized
 struct Variable_Info {
     CType ty = nullptr;
-    FullSourceLoc *loc = nullptr;
+    Location loc = Location();
     llvm::Constant *val = nullptr;
     unsigned tags : 2;
 };
@@ -101,7 +101,7 @@ struct Parser : public DiagnosticHelper {
         }
         return ref.idx;
     }
-    label_t putLable(IdentRef Name, FullSourceLoc *loc) {
+    label_t putLable(IdentRef Name, Location loc) {
         Label_Info &ref = jumper.lookupLabel(Name);
         switch (ref.flags) {
         case LBL_UNDEFINED: // not used, declared
@@ -120,7 +120,7 @@ struct Parser : public DiagnosticHelper {
         }
         return ref.idx;
     }
-    CType gettagByName(IdentRef Name, enum CTypeKind expected, FullSourceLoc *full_loc) {
+    CType gettagByName(IdentRef Name, enum CTypeKind expected, Location full_loc) {
         CType result;
         size_t idx;
         auto r = sema.tags.getSym(Name, idx);
@@ -131,11 +131,11 @@ struct Parser : public DiagnosticHelper {
         } else {
             result = TNEW(IncompleteType){.align = 0, .tag = expected, .name = Name};
             Type_info info = Type_info{.ty = result, .loc = full_loc};
-            insertStmt(SNEW(DeclStmt){.loc = full_loc->loc, .decl_idx = sema.tags.putSym(Name, info), .decl_ty = result});
+            insertStmt(SNEW(DeclStmt){.loc = full_loc, .decl_idx = sema.tags.putSym(Name, info), .decl_ty = result});
         }
         return result;
     }
-    size_t puttag(IdentRef Name, CType ty, FullSourceLoc *loc, enum CTypeKind k) {
+    size_t puttag(IdentRef Name, CType ty, Location loc, enum CTypeKind k) {
         bool found = false;
         if (Name) {
             size_t prev;
@@ -152,7 +152,7 @@ struct Parser : public DiagnosticHelper {
                 old->ty = ty;
                 old->loc = loc;
                 insertStmt(SNEW(UpdateForwardDeclStmt){
-                    .loc = loc->loc,
+                    .loc = loc,
                     .prev_idx = prev,
                     .now = ty,
                 });
@@ -161,11 +161,11 @@ struct Parser : public DiagnosticHelper {
         }
         size_t Idx = sema.tags.putSym(Name, Type_info{.ty = ty, .loc = loc});
         if (!found) {
-            insertStmt(SNEW(DeclStmt){.loc = loc->loc, .decl_idx = Idx, .decl_ty = ty});
+            insertStmt(SNEW(DeclStmt){.loc = loc, .decl_idx = Idx, .decl_ty = ty});
         }
         return Idx;
     }
-    void putenum(IdentRef Name, uint64_t val, FullSourceLoc *full_loc) {
+    void putenum(IdentRef Name, uint64_t val, Location full_loc) {
         auto old = sema.typedefs.getSymInCurrentScope(Name);
         if (old) {
             type_error(full_loc, "%I redefined", Name);
@@ -179,7 +179,7 @@ struct Parser : public DiagnosticHelper {
                                    });
     }
     // function
-    size_t putsymtype2(IdentRef Name, CType yt, FullSourceLoc *full_loc) {
+    size_t putsymtype2(IdentRef Name, CType yt, Location full_loc) {
         Location loc = getLoc();
         CType base = yt->ret;
         if (base->k == TYARRAY)
@@ -208,7 +208,7 @@ struct Parser : public DiagnosticHelper {
         return idx;
     }
     // typedef, variable
-    size_t putsymtype(IdentRef Name, CType yt, FullSourceLoc *full_loc) {
+    size_t putsymtype(IdentRef Name, CType yt, Location full_loc) {
         if (yt->k == TYFUNCTION)
             return putsymtype2(Name, yt, full_loc);
         size_t idx;
@@ -1654,9 +1654,6 @@ NOT_CONSTANT:
         }
         return Declator(d.name, d.ty);
     }
-    FullSourceLoc *getFullLoc(Location loc) {
-        return context.getFullLoc(loc, SM(), l.expansion_list);
-    }
     CType struct_union(Token tok) {
         // parse a struct or union, return it
         // for example:  `struct Foo`
@@ -1664,7 +1661,7 @@ NOT_CONSTANT:
         //               `struct { ... }`
         //
         //               `struct Foo { ... }`
-        FullSourceLoc *full_loc = getFullLoc(getLoc());
+        Location full_loc = getLoc();
         consume(); // eat struct/union
         IdentRef Name = nullptr;
         if (l.tok.tok == TIdentifier) {
@@ -1734,7 +1731,7 @@ NOT_CONSTANT:
         //
         //      `enum State { ... }`
         IdentRef Name = nullptr;
-        FullSourceLoc *full_loc = getFullLoc(getLoc());
+        Location full_loc = getLoc();
         consume(); // eat enum
         if (l.tok.tok == TIdentifier) {
             Name = l.tok.s;
@@ -1750,7 +1747,7 @@ NOT_CONSTANT:
         for (uint64_t c = 0;; c++) {
             if (l.tok.tok != TIdentifier)
                 break;
-            FullSourceLoc *full_loc = getFullLoc(getLoc());
+            Location full_loc = getLoc();
             IdentRef s = l.tok.s;
             consume();
             if (l.tok.tok == TAssign) {
@@ -1797,7 +1794,7 @@ NOT_CONSTANT:
             CType base = declaration_specifiers();
             if (!base)
                 return expect(getLoc(), "declaration-specifiers"), false;
-            FullSourceLoc *full_loc = getFullLoc(getLoc());
+            Location full_loc = getLoc();
             Declator nt = abstract_decorator(base, Function);
             if (!nt.ty)
                 return expect(full_loc, "abstract-decorator"), false;
@@ -1974,8 +1971,10 @@ NOT_CONSTANT:
             consume_static_assert();
             return;
         }
-        if (l.tok.tok == TSemicolon)
+        if (l.tok.tok == TSemicolon) {
+            consume();
             return;
+        }
         if (!(base = declaration_specifiers()))
             return expect(loc, "declaration-specifiers");
         if (sema.currentAlign) {
@@ -1994,7 +1993,7 @@ NOT_CONSTANT:
         }
         result = SNEW(VarDeclStmt){.loc = loc, .vars = xvector<VarDecl>::get()};
         for (;;) {
-            FullSourceLoc *full_loc = getFullLoc(getLoc());
+            Location full_loc = getLoc();
             Declator st = declarator(base, Direct);
             if (!st.ty)
                 return;
@@ -2974,7 +2973,7 @@ CONTINUE:;
                 goto NEXT;
             }
         }
-        insertStmt(SNEW(CondJumpStmt){.loc = Location::make_invalid(), .test = test, .T = dst, .F = thenBB});
+        insertStmt(SNEW(CondJumpStmt){.loc = Location(), .test = test, .T = dst, .F = thenBB});
 NEXT:
         return insertLabel(thenBB);
     }
@@ -2986,19 +2985,19 @@ NEXT:
                 goto NEXT;
             }
         }
-        insertStmt(SNEW(CondJumpStmt){.loc = Location::make_invalid(), .test = test, .T = thenBB, .F = dst});
+        insertStmt(SNEW(CondJumpStmt){.loc = Location(), .test = test, .T = thenBB, .F = dst});
 NEXT:
         return insertLabel(thenBB);
     }
     void condJump(Expr test, label_t T, label_t F) {
-        return insertStmt(SNEW(CondJumpStmt){.loc = Location::make_invalid(), .test = test, .T = T, .F = F});
+        return insertStmt(SNEW(CondJumpStmt){.loc = Location(), .test = test, .T = T, .F = F});
     }
-    void insertBr(label_t L, Location loc = Location::make_invalid()) {
+    void insertBr(label_t L, Location loc = Location()) {
         return insertStmt(SNEW(GotoStmt){.loc = loc, .location = L});
     }
     void insertLabel(label_t L, IdentRef Name = nullptr) {
         sreachable = true;
-        return insertStmtInternal(SNEW(LabelStmt){.loc = Location::make_invalid(), .label = L, .labelName = Name});
+        return insertStmtInternal(SNEW(LabelStmt){.loc = Location(), .label = L, .labelName = Name});
     }
     void insertStmtInternal(Stmt s) {
         InsertPt->next = s;
@@ -3156,7 +3155,7 @@ NEXT:
                                            .switchs = xvector<SwitchCase>::get(),
                                            .gnu_switchs = xvector<GNUSwitchCase>::get_with_capacity(0),
                                            .sw_default = jumper.createLabel(),
-                                           .sw_default_loc = Location::make_invalid()};
+                                           .sw_default_loc = Location()};
                 llvm::SaveAndRestore<Stmt> saved_sw(sema.currentswitch, sw);
                 llvm::SaveAndRestore<label_t> saved_b(jumper.topBreak, LEAVE);
                 insertStmt(sw); // insert switch instruction
@@ -3180,7 +3179,7 @@ NEXT:
             insertLabel(BODY);
             statement();
             insertLabel(CMP);
-            insertStmt(SNEW(CondJumpStmt){.loc = Location::make_invalid(), .test = test, .T = BODY, .F = LEAVE});
+            insertStmt(SNEW(CondJumpStmt){.loc = Location(), .test = test, .T = BODY, .F = LEAVE});
             insertLabel(LEAVE);
             return;
         }
@@ -3285,7 +3284,7 @@ NEXT:
         }
         case Kelse: return parse_error(loc, "'else' without a previous 'if'"), consume();
         case TIdentifier: {
-            FullSourceLoc *full_loc = getFullLoc(loc);
+            Location full_loc = getLoc();
             TokenV tok = l.tok;
             consume();
             if (l.tok.tok == TColon) { // labeled-statement
@@ -3709,9 +3708,10 @@ NEXT:
         sema.typedefs.push_function();
         enterBlock();
         assert(jumper.cur == 0 && "labels scope should be empty in start of function");
+        Location loc4 = getLoc();
         for (size_t i = 0; i < params.size(); ++i)
             args[i] =
-                sema.typedefs.putSym(params[i].name, Variable_Info{.ty = params[i].ty, .loc = context.getFullLoc(loc), .tags = ASSIGNED});
+                sema.typedefs.putSym(params[i].name, Variable_Info{.ty = params[i].ty, .loc = loc4, .tags = ASSIGNED});
         {
             llvm::SaveAndRestore<Stmt> saved_ip(InsertPt, head);
             eat_compound_statement();
@@ -3723,7 +3723,7 @@ NEXT:
                 } else {
                     if (!(sema.currentfunctionRet->tags & TYVOID)) {
                         // if this label never reaches (never break to it)
-                        if (s->k != SLabel || (!s->labelName && !jumper.used_breaks.contains(s->label))) {
+                        if (s->k != SLabel || (s->labelName == nullptr && !jumper.used_breaks.contains(s->label))) {
                             warning(loc2, "control reaches end of non-void function");
                             note(loc, "in the definition of function %I", sema.pfunc);
                         }

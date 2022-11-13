@@ -59,6 +59,7 @@ struct SourceMgr : public DiagnosticHelper {
     SmallVector<Stream> streams;
     SmallVector<fileid_t> includeStack;
     bool hasStdinAdded = false;
+    LocTree *tree;
     uint32_t getLine() const { return streams[includeStack.back()].line; }
     void setLine(uint32_t line) { streams[includeStack.back()].line = line; }
     const char *getFileName(unsigned i) const { return streams[i].name; }
@@ -66,14 +67,32 @@ struct SourceMgr : public DiagnosticHelper {
     void setFileName(const char *name) { streams[includeStack.back()].name = name; }
     Location getLoc() const {
         const Stream &f = streams[includeStack.back()];
-        return Location{.line = (line_t)f.line, .col = (column_t)f.column, .id = (fileid_t)includeStack.back()};
+        return Location(LocationBase(f.line, f.column, includeStack.back()), getLocTree());
     }
-    Location getLoc(unsigned i) const {
+    /*
+    LocationBase getLoc(unsigned i) const {
         const Stream &f = streams[includeStack[i]];
-        return Location{.line = (line_t)f.line, .col = (column_t)f.column, .id = (fileid_t)includeStack[i]};
+        return LocationBase (f.line, f.column, includeStack[i]);
+    }*/
+    LocTree *getLocTree() const {
+        return tree;
+    }
+    Location getFullLoc() const {
+        return Location(getLoc(), getLocTree());
+    }
+    void beginExpandMacro(PPMacroDef *M, xcc_context &context) {
+        tree = new (context.getAllocator()) LocTree(tree, M);
+    }
+    void beginInclude(unsigned line, xcc_context &context, fileid_t theFD) {
+        assert(includeStack.size() >= 2 && "call beginInclude() without previous include position!");
+        Include_Info *info = new (context.getAllocator()) Include_Info{.line = line, .fd = theFD};
+        tree = new (context.getAllocator()) LocTree(tree, info);
+    }
+    void endTree() {
+        tree = tree->getParent();
     }
     bool is_tty;
-    SourceMgr(DiagnosticConsumer &Diag) : DiagnosticHelper{Diag}, buf{} {
+    SourceMgr(DiagnosticConsumer &Diag) : DiagnosticHelper{Diag}, buf{}, tree{nullptr} {
         buf.resize_for_overwrite(STREAM_BUFFER_SIZE);
 #if WINDOWS
         DWORD dummy;
@@ -324,19 +343,19 @@ REPEAT:
         }
         return false;
     }
-    bool addIncludeFile(StringRef path, bool isAngled) {
+    void addIncludeFile(StringRef path, bool isAngled) {
         // https://stackoverflow.com/q/21593/15886008
         // path must be null terminated
         if (!isAngled && addFile(path.data())) {
-            return resetBuffer(), true;
+            return resetBuffer();
         }
         xstring result = xstring::get_with_capacity(256);
         if (searchFileInDir(result, path, userPaths.data(), userPaths.size()))
-            return true;
+            return;
         if (searchFileInDir(result, path, sysPaths.data(), sysPaths.size()))
-            return true;
+            return;
         result.free();
-        return false;
+        return;
     }
     void closeAllFiles() {
         for (const auto &f : streams) {
@@ -390,7 +409,12 @@ REPEAT:
             addCol();
             switch (c) {
             default: return c;
-            case '\0': includeStack.pop_back(); return stream_read();
+            case '\0':
+                includeStack.pop_back();
+                if (includeStack.empty())
+                    return '\0';
+                endTree();
+                return stream_read();
             case '\n': resetLine(); return '\n';
             case '\r': {
                 char c2;
@@ -455,5 +479,33 @@ RET:
             return c;
         }
         return c;
+    }
+    void dump(raw_ostream &OS = llvm::errs()) const {
+        OS <<
+        "Dumping class SourceMgr:\n" << 
+        "Number of Streams:" << streams.size() << '\n';
+        if (streams.empty())
+            OS << "  (empty)\n";
+        for (unsigned i = 0;i < streams.size();++i) {
+            const Stream &f = streams[i];
+            OS << "  stream[" << i << "]: Name = " << f.name << ", kind = ";
+            switch (f.k) {
+            case AFileStream:
+                OS << "(file stream, fd = " << f.fd << ")\n";
+                break;
+            case AStdinStream:
+                OS << "(stdin stream)\n";
+                break;
+            case AStringStream:
+                OS << "(string stream)\n";
+                break;
+            }
+        }
+        OS << "\nInclude stack:\n";
+        if (includeStack.empty())
+            OS << "  (empty)\n";
+        for (unsigned i = 0;i < includeStack.size();++i)
+            OS << "include_stack[" << i << "] => fd " << includeStack[i] << '\n';
+        OS << "\n";
     }
 };
