@@ -15,7 +15,6 @@ struct Label_Info {
     uint8_t flags = LBL_UNDEFINED;
     Location loc = Location();
 };
-// bit enums for Variable_Info::tags
 constexpr uint8_t GARBAGE = 0, // just declared
     USED = 0x1,                // true if variable is used
     ASSIGNED = 0x2;            // true if assigned or initialized
@@ -62,11 +61,12 @@ struct Parser : public DiagnosticHelper {
     Stmt unreachable_reason = nullptr;
     Expr intzero, intone, size_t_one, cfalse;
     StringPool string_pool;
+    uint32_t TYLONGDOUBLE, TYLONG, TYULONG;
     Parser(SourceMgr &SM, IRGen &irgen, DiagnosticConsumer &Diag, xcc_context &theContext)
-        : DiagnosticHelper{Diag}, context{theContext}, l(SM, *this, theContext, Diag), irgen{irgen},
+        : DiagnosticHelper{Diag},l(SM, *this, theContext, Diag), context{theContext}, irgen{irgen},
           intzero{wrap(context.getInt(), ConstantInt::get(irgen.ctx, APInt::getZero(context.getInt()->getBitWidth())))},
           intone{wrap(context.getInt(), ConstantInt::get(irgen.ctx, APInt(context.getInt()->getBitWidth(), 1)))},
-          cfalse{wrap(context.typecache.b, ConstantInt::getFalse(irgen.ctx))}, string_pool{irgen} { }
+          cfalse{wrap(context.getBool(), ConstantInt::getFalse(irgen.ctx))}, string_pool{irgen}, TYLONGDOUBLE{context.getLongDoubleTag()}, TYLONG{context.getLongTag()}, TYULONG{context.getULongTag()} { }
     template <typename T> auto getsizeof(T a) { return irgen.getsizeof(a); }
     template <typename T> auto getAlignof(T a) { return irgen.getAlignof(a); }
     Expr binop(Expr a, BinOp op, Expr b, CType ty) {
@@ -180,7 +180,6 @@ struct Parser : public DiagnosticHelper {
     }
     // function
     size_t putsymtype2(IdentRef Name, CType yt, Location full_loc) {
-        Location loc = getLoc();
         CType base = yt->ret;
         if (base->k == TYARRAY)
             type_error(full_loc, "function cannot return array");
@@ -385,7 +384,7 @@ struct Parser : public DiagnosticHelper {
                 return e->castval;
             }
             Expr zero = wrap(e->ty, ConstantInt::get(irgen.ctx, APInt::getZero(e->ty->getBitWidth())));
-            return binop(e, NE, zero, context.typecache.b);
+            return binop(e, NE, zero, context.getBool());
         }
         if ((to->tags & (TYFLOAT | TYDOUBLE)) && e->ty->k == TYPOINTER)
             return type_error(loc, "A floating type shall not be converted to any pointer type"), e;
@@ -510,12 +509,14 @@ PTR_CAST:
         const auto &T = sema.typedefs;
         if (!getNumErrors()) { // if we have parse errors, we may emit bad warnings about ununsed variables
             for (auto it = T.current_block(); it != T.end(); ++it) {
-                if (!(it->info.tags & USED)) {
-                    if (it->info.tags & ASSIGNED)
-                        warning(it->info.loc, "%s %I is un-used after assignment",
-                                it->info.ty->tags & TYPARAM ? "parameter" : "variable", it->sym);
-                    else
-                        warning(it->info.loc, "variable %I is declared but not used", it->sym);
+                if (!(it->info.tags & USED) && !(it->info.ty->tags & TYTYPEDEF)) {
+                    if (it->info.tags & ASSIGNED) {
+                        (it->info.ty->tags & TYPARAM) ? 
+                            warning(it->info.loc, "unused parameter %I", it->sym) :
+                            warning(it->info.loc, "variable %I is unused after assignment", it->sym);
+                    } else {
+                        warning(it->info.loc, "unused variable %I", it->sym);
+                    }
                 }
             }
         }
@@ -586,7 +587,7 @@ PTR_CAST:
         if (e->ty->k == TYENUM || e->ty->k == TYUNION || e->ty->k == TYSTRUCT || e->ty->k == TYPOINTER)
             return;
         if (e->ty->tags & TYFLOAT)
-            e = castto(e, context.typecache.fdoublety);
+            e = castto(e, context.getDobule());
         integer_promotions(e);
     }
     bool checkInteger(CType ty) { return ty->tags & intergers_or_bool; }
@@ -678,7 +679,7 @@ PTR_CAST:
         assert(e->ty->k == TYPOINTER && "expect a pointer");
         if ((e->ty->p->tags & TYVOID) || (e->k == EUnary && e->uop == AddressOf && e->ty->p->k == TYFUNCTION)) {
             e = context.clone(e);
-            e->ty = context.typecache.u8;
+            e->ty = context.getChar();
         }
     }
     Expr make_add_pointer(Expr rhs, Expr lhs) {
@@ -1133,23 +1134,17 @@ NOT_CONSTANT:
         }
         result =
             boolToInt(binop(result, get_relational_expression_op(tok, result->ty->isFloating(), result->ty->isSigned()),
-                            r, context.typecache.b));
+                            r, context.getBool()));
     }
     Expr boolToInt(Expr e) {
         return ENEW(CastExpr){.loc = e->loc, .ty = context.getInt(), .castop = ZExt, .castval = e};
     }
     enum DeclaratorFlags {
-        Direct = 0,   // declarator with name
-        Abstract = 1, // declarator without name
-        Function = 2  // function parameter-type-list = Direct or Abstract
+        Direct = 0,  
+        Abstract = 1,
+        Function = 2 
     };
     CType declaration_specifiers() { return specifier_qualifier_list(); }
-    Declator abstract_decorator(CType base, enum DeclaratorFlags flags) {
-        // abstract decorator has no name
-        // for example: `static int        ()(int, char)`
-        //               base-type      abstact-decorator
-        return declarator(base, flags);
-    }
     void consume() {
         // eat token from preprocessor
         l.cpp();
@@ -1166,7 +1161,6 @@ NOT_CONSTANT:
         consume();
     }
     void type_qualifier_list(CType &ty) {
-        // parse many type qualifiers, add to type
         for (;;)
             switch (l.tok.tok) {
             case Kconst: ty->tags |= TYCONST, consume(); continue;
@@ -1176,14 +1170,32 @@ NOT_CONSTANT:
             default: return;
             }
     }
+// At most, one storage-class specifier may be given in the declaration specifiers in a declaration, except
+// that:
+// — thread_local may appear with static or extern,
+// — auto may appear with all the others except typedef, and
+// — constexpr may appear with auto, register, or static
+    void verify_one_storage_class(uint32_t tags) {
+        // no storage-class specifiers founded, exit now
+        if (!(tags & storage_class_specifiers))
+            return;
+        if (tags & TYTHREAD_LOCAL)
+            tags &= ~(TYSTATIC | TYEXTERN);
+        if (tags & TYAUTO) 
+            tags &= ~TYTYPEDEF;
+        if (tags & TYCONSTEXPR)
+            tags &= ~(TYAUTO | TYSTATIC | TYREGISTER);
+        if (llvm::countPopulation(tags & storage_class_specifiers) > 1)
+            type_error("at most one storage-class specifier may be given in the declaration specifiers in a declaration");
+    }
     CType specifier_qualifier_list() {
         Location loc = getLoc();
         CType eat_typedef = nullptr;
-        bool stop = false;
         uint32_t tags = 0;
-        unsigned L = 0, s = 0, f = 0, d = 0, i = 0, c = 0, v = 0, numsigned = 0, numunsigned = 0, su;
-        unsigned count = 0;
+        unsigned b = 0, L = 0, s = 0, f = 0, d = 0, i = 0, c = 0, v = 0, numsigned = 0, numunsigned = 0, numcomplex = 0;
         uint32_t old_tag;
+        const Token firstTok = l.tok.tok;
+        unsigned count = 0;
         for (;;++count) {
             old_tag = tags;
             switch (l.tok.tok) {
@@ -1197,22 +1209,26 @@ NOT_CONSTANT:
             case Kvolatile: tags |= TYVOLATILE; goto NO_REPEAT;
             case Ktypedef: tags |= TYTYPEDEF; goto NO_REPEAT;
             case Kconst: tags |= TYCONST; goto NO_REPEAT;
+            case Kconstexpr: tags |= TYCONSTEXPR; goto NO_REPEAT;
+            case Kauto: tags |= TYAUTO; goto NO_REPEAT;
             case K_Atomic: tags |= TYATOMIC; goto NO_REPEAT;
 NO_REPEAT:
             if (old_tag == tags) {
-                warning(loc, "duplicate '%s' ignored", show(l.tok.tok));
+                warning(loc, "duplicate '%s' storage-class-specifier/type-qualifier", show(l.tok.tok));
                 --count;
             }
             break;
-            case Ksigned: numsigned++; break;
-            case Kunsigned: numunsigned++; break;
-            case Klong: L++; break;
-            case Kshort: s++; break;
-            case Kint: i++; break;
-            case Kdouble: d++; break;
-            case Kfloat: f++; break;
-            case Kvoid: v++; break;
-            case Kchar: c++; break;
+            case Ksigned: ++numsigned; break;
+            case Kunsigned: ++numunsigned; break;
+            case Klong: ++L; break;
+            case Kshort: ++s; break;
+            case Kint: ++i; break;
+            case Kdouble: ++d; break;
+            case Kfloat: ++f; break;
+            case Kvoid: ++v; break;
+            case Kchar: ++c; break;
+            case K_Complex: ++numcomplex; break;
+            case K_Bool: ++b; break;
 
             case TIdentifier:
                 if (eat_typedef) // we cannot eat double typedef
@@ -1244,75 +1260,110 @@ NO_REPEAT:
         }
         BREAK:
         if (count == 0) {
-            warning(loc, "type specifier missing, defaults to 'int'");
+            warning(loc, "type-specifier missing, defaults to 'int'");
             return context.getInt();
         }
         if (count == 1) {
             if (eat_typedef) return eat_typedef;
             if (tags) {
-                warning(loc, "type specifier missing, defaults to 'int'");
+                warning(loc, "type-specifier missing(has type-qualifiers), defaults to 'int'");
                 CType intTy = context.clone(context.getInt());
                 intTy->tags |= tags;
                 return intTy;
             }
-            if (i || numsigned) return context.getInt();
-            if (numunsigned) return context.getUInt();
-            if (L) return context.getLong();
-            if (s) return context.getShort();
-            if (c) return context.getChar();
-            if (d) return context.getDobule();
-            if (f) return context.getFloat();
-            if (v) return context.getVoid();
-            llvm_unreachable("unhandled type in specifier_qualifier_list!");
+            switch (firstTok) {
+            case K_Bool: return context.getBool();
+            case Kvoid: return context.getVoid();
+            case Kdouble: return context.getDobule();
+            case Kfloat: return context.getFloat();
+            case Kchar: return context.getChar();
+            case Kint:
+            case Ksigned: return context.getInt();
+            case Kunsigned: return context.getUInt();
+            case Kshort: return context.getShort();
+            case K_Complex:
+                warning("%s", "plain '_Complex' requires a type specifier; assuming '_Complex double'");
+                return context.getComplexDouble();
+            default: llvm_unreachable("unhandled type in specifier_qualifier_list!");
+            }
         }
-        su = numsigned + numunsigned;
-        if (su >= 2)
-            return type_error(loc, "both 'signed/unsigned'"), context.getInt();
-        if (c > 1)
-            return type_error(loc, "too many 'char'"), context.getInt();
-        if (i > 1)
-            return type_error(loc, "too many 'int'"), context.getInt();
-        if (f > 0)
-            return type_error(loc, "'float' cannot combine with other types"), context.getInt();
-        if (L >= 3)
-            return type_error(loc, "too many 'long'"), context.getInt();
-        if (s >= 2)
-            return type_error(loc, "too many 'short'"), context.getInt();
-        if (d > 1)
-            return type_error(loc, "too many 'double's"), context.getInt();
-        if (d) {
+        verify_one_storage_class(tags);
+        bool isa_integer = i || numunsigned || numsigned || c || b;
+        bool ias_float = d || f;
+        if (isa_integer && ias_float)
+            type_error("both integer and float type specifiers");
+        else if (v && (isa_integer || ias_float))
+            type_error("'void' never combine with other type specifiers");
+        else if ((numunsigned && numsigned) || numsigned > 1 || numunsigned > 1) {
+            type_error("duplicate 'signed/unsigned'");
+            return context.getInt();
+        }
+        if (numcomplex) {
+            if (numcomplex > 1)
+                type_error("duplicate '_Complex'");
+            if (v) {
+                type_error("'_Complex void' is invalid");
+                return context.getComplexDouble();
+            }
+            tags |= TYCOMPLEX;
+        }
+        if (f) {
+            if (f > 0)
+                type_error(loc, "duplicate 'float'");
+            tags |= TYFLOAT;
+        } else if (d) {
+            if (d > 1)
+                type_error(loc, "duplicate 'double'");
+            if (L > 1)
+                type_error(loc, "too many 'long's for 'double'");
             tags |= (L ? TYLONGDOUBLE : TYDOUBLE);
         } else if (s) {
+            if (s > 1)
+                type_error(loc, "duplicate 'short'");
             tags |= (numunsigned ? TYUSHORT : TYSHORT);
         } else if (L) {
-            tags |= (L == 2) ? (numunsigned ? TYULONGLONG : TYLONGLONG) : (numunsigned ? TYULONG : TYLONG);
+            switch (L) {
+            case 1: tags |= (numunsigned ? TYULONG : TYLONG); break;
+            case 2: tags |= (numunsigned ? TYULONGLONG : TYLONGLONG); break;
+            case 3: type_error("'long long long' is too long for XCC"); break;
+            default: type_error(loc, "too many 'long'");
+            }
         } else if (c) {
+            if (c > 1)
+                type_error(loc, "duplicate 'char'");
             tags |= numunsigned ? TYUCHAR : TYCHAR;
         } else if (i) {
+            if (i > 1)
+                type_error(loc, "duplicate 'int'");
             tags |= numsigned ? TYUINT : TYINT;
         } else if (v) {
-            tags |= TYVOID; 
+            if (v > 1)
+                type_error(loc, "duplicate 'void'");
+            tags |= TYVOID;
+        } else if (numunsigned) {
+            tags |= TYUINT;
+        } else if (numsigned) {
+            tags |= TYINT;
+        } else if (b) { 
+            tags |= TYBOOL;
         } else {
-            if (eat_typedef == nullptr) {
-                type_error("bad declaration specifier");
+            if (!eat_typedef) {
+                warning(loc, "type-specifier missing, defaults to 'int'");
                 eat_typedef = context.clone(context.getInt());
+                goto MERGE;
             }
         }
         if (!eat_typedef)
             return context.make(tags);
+MERGE:
         auto k = eat_typedef->k;
         if ((tags & ty_prim) && (eat_typedef->tags & ty_prim || k != TYPRIM)) {
-            type_error(loc, "bad declaration specifier");
+            type_error(loc, "bad declaration specifier: cannot merge %T with %T", eat_typedef, context.make(tags));
         }
         eat_typedef->tags |= tags;
         return eat_typedef;
     }
     Declator declarator(CType base, enum DeclaratorFlags flags = Direct) {
-        // take a base type, return the final type and name
-        //
-        // for example: `static   int     foo`
-        //
-        //                base-type    decorator
         CType ty = base;
         while (l.tok.tok == TMul)
             consume(), ty = context.getPointerType(ty), type_qualifier_list(ty);
@@ -1324,8 +1375,6 @@ NO_REPEAT:
         if (l.tok.tok != TLcurlyBracket) {
             auto ty = sema.currentInitTy;
             if (!ty)
-                // when 'excess elements in initializer-list', 'sema.currentInitTy' is
-                // nullptr
                 return assignment_expression();
             auto k = ty->k;
             if (k == TYARRAY && l.tok.tok == TStringLit) {
@@ -1347,30 +1396,41 @@ NO_REPEAT:
                         return wrap(context.getFixArrayType(context.getChar(), s.size() + 1), llvm::ConstantDataArray::getString(irgen.ctx, s.str(), false), loc1);
                     case 16:
                     {
-#if CC_WCHAR32
-                        SmallVector<uint16_t> data;
-#else
-                        SmallVector<uint32_t> data;
-#endif
-                        uint32_t state = 0, codepoint;
-                        for (auto c : s) {
-                            if (decode(&state, &codepoint, (uint32_t)(unsigned char)c))
-                                continue;
-                            if (codepoint <= 0xFFFF) {
-                                data.push_back(codepoint);
-                                continue;
+                        if (context.getWcharTag() & (TYINT32 | TYUINT32)) {
+                            SmallVector<uint32_t> data;
+                            uint32_t state = 0, codepoint;
+                            for (auto c : s) {
+                                if (decode(&state, &codepoint, (uint32_t)(unsigned char)c))
+                                    continue;
+                                if (codepoint <= 0xFFFF) {
+                                    data.push_back(codepoint);
+                                    continue;
+                                }
+                                data.push_back(0xD7C0 + (codepoint >> 10));
+                                data.push_back(0xDC00 + (codepoint & 0x3FF));
                             }
-                            data.push_back(0xD7C0 + (codepoint >> 10));
-                            data.push_back(0xDC00 + (codepoint & 0x3FF));
+                            data.push_back(0);
+                            if (!(ty->arrtype->tags & TYINT32))
+                                type_error(loc1, "initializing %T array with wide string literal", ty->arrtype);
+                            return wrap(context.getFixArrayType(context.getWchar(), s.size()), llvm::ConstantDataArray::get(irgen.ctx, data), loc1);
+                        } else {
+                            SmallVector<uint16_t> data;
+                            uint32_t state = 0, codepoint;
+                            for (auto c : s) {
+                                if (decode(&state, &codepoint, (uint32_t)(unsigned char)c))
+                                    continue;
+                                if (codepoint <= 0xFFFF) {
+                                    data.push_back(codepoint);
+                                    continue;
+                                }
+                                data.push_back(0xD7C0 + (codepoint >> 10));
+                                data.push_back(0xDC00 + (codepoint & 0x3FF));
+                            }
+                            data.push_back(0);
+                            if (!(ty->arrtype->tags & TYINT16))
+                                type_error(loc1, "initializing %T array with wide string literal", ty->arrtype);
+                            return wrap(context.getFixArrayType(context.getWchar(), s.size()), llvm::ConstantDataArray::get(irgen.ctx, data), loc1);
                         }
-                        data.push_back(0);
-#if CC_WCHAR32
-                        if (!(ty->arrtype->tags & TYINT32))
-#else
-                        if (!(ty->arrtype->tags & TYINT16))
-#endif
-                            type_error(loc1, "initializing %T array with wide string literal", ty->arrtype);
-                        return wrap(context.getFixArrayType(context.getWchar(), s.size()), llvm::ConstantDataArray::get(irgen.ctx, data), loc1);
                     }
                     case 32:
                     {
@@ -1382,7 +1442,7 @@ NO_REPEAT:
                         data.push_back(0);
                         if (!(ty->arrtype->tags & TYUINT32))
                             type_error(loc1, "initializing %T array with wide string literal", ty->arrtype);
-                        return wrap(context.getFixArrayType(context.typecache.u32, s.size()), llvm::ConstantDataArray::get(irgen.ctx, data), loc1);
+                        return wrap(context.getFixArrayType(context.getUChar(), s.size()), llvm::ConstantDataArray::get(irgen.ctx, data), loc1);
                     }
                     default: llvm_unreachable("bad string encoding");
                 }
@@ -1711,9 +1771,9 @@ NO_REPEAT:
             if (!base)
                 return expect(getLoc(), "declaration-specifiers"), false;
             Location full_loc = getLoc();
-            Declator nt = abstract_decorator(base, Function);
+            Declator nt = declarator(base, Function);
             if (!nt.ty)
-                return expect(full_loc, "abstract-decorator"), false;
+                return expect(full_loc, "abstract-declarator"), false;
             params.push_back(nt);
             if (nt.ty->k == TYINCOMPLETE)
                 type_error(full_loc, "parameter %u has imcomplete type %T", i, nt.ty), ok = false;
@@ -1989,7 +2049,7 @@ NO_REPEAT:
                     result->vars.back().ty = init->ty;
                 if (init->k == EConstant && st.ty->tags & TYCONST)
                     var_info.val = init->C; // for const and constexpr, their value can be fold to constant
-                if ((isTopLevel() || (st.ty->tags & TYSTATIC | TYEXTERN)) && init->k != EConstant && init->k != EConstantArray &&
+                if ((isTopLevel() || (st.ty->tags & (TYSTATIC | TYEXTERN))) && init->k != EConstant && init->k != EConstantArray &&
                     init->k != EConstantArraySubstript) {
                     // take address of globals is constant!
                     if (!
@@ -2048,7 +2108,7 @@ NO_REPEAT:
                 if (!(e = cast_expression()))
                     return nullptr;
                 if (ty->tags & TYVOID)
-                    return ENEW(VoidExpr){.loc = e->loc, .ty = context.typecache.v, .voidexpr = e};
+                    return ENEW(VoidExpr){.loc = e->loc, .ty = context.getVoid(), .voidexpr = e};
                 return castto(e, ty);
             }
             l.tokenq.push_back(l.tok);
@@ -2065,7 +2125,7 @@ NO_REPEAT:
         CType base;
         if (!(base = declaration_specifiers()) || l.tok.tok == TRbracket)
             return base;
-        return abstract_decorator(base, Abstract).ty;
+        return declarator(base, Abstract).ty;
     }
     Expr unary_expression() {
         Location loc = getLoc();
@@ -2081,7 +2141,6 @@ NO_REPEAT:
         }
         case TMul: {
             Expr e;
-            CType ty;
             consume();
             if (!(e = cast_expression()))
                 return nullptr;
@@ -2376,14 +2435,14 @@ NEXT:
         if (isFPConstant) {
             StringRef fstr(str.data(),
                            std::min((uintptr_t)str.size() - 1, (uintptr_t)SuffixBegin - (uintptr_t)str.data()));
-            CType ty = context.typecache.fdoublety;
+            CType ty = context.getDobule();
             const llvm::fltSemantics *Format = &llvm::APFloat::IEEEdouble();
             if (su.isFloat128) {
-                ty = context.typecache.f128ty;
+                ty = context.getFloat128();
                 Format = &APFloat::IEEEquad();
             } else if (su.isFloat) {
                 Format = &APFloat::IEEEsingle();
-                ty = context.typecache.ffloatty;
+                ty = context.getFloat();
             }
             APFloat F(*Format);
             auto it = F.convertFromString(fstr, APFloat::rmNearestTiesToEven);
@@ -2436,21 +2495,21 @@ NEXT:
             if (H) {
                 /* 128 bits */
                 if ((int64_t)H < 0)
-                    ty = context.typecache.u128;
+                    ty = context.u128;
                 else
-                    ty = context.typecache.i128;
+                    ty = context.i128;
             } else {
                 /* 64 bits */
                 if ((int64_t)L < 0) /* test MSB */
-                    ty = context.typecache.u64;
+                    ty = context.u64;
                 else {
                     if (L >> 32) { /* more than 32 bits ? */
-                        ty = context.typecache.i64;
+                        ty = context.i64;
                     } else {                /* 32 bits */
                         if ((int32_t)L < 0) /* test MSB */
-                            ty = context.typecache.u32;
+                            ty = context.u32;
                         else
-                            ty = context.typecache.i32;
+                            ty = context.i32;
                     }
                 }
             }
@@ -2479,10 +2538,10 @@ NEXT:
                 ty = context.getInt();
                 break;
             case Ilong: // Ilong: u'c'
-                ty = context.typecache.u16;
+                ty = context.getWchar();
                 break;
             case Iulong: // Iulong: U'c'
-                ty = context.typecache.u32;
+                ty = context.getChar16_t();
                 break;
             case Ilonglong: // Ilonglong: L'c'
                 ty = context.getWchar();
@@ -2507,15 +2566,15 @@ NEXT:
             switch (enc) {
             case 8:
                 result = ENEW(ConstantArrayExpr){
-                    .loc = loc, .ty = context.typecache.str8ty, .array = string_pool.getAsUTF8(s)};
+                    .loc = loc, .ty = context.str8ty, .array = string_pool.getAsUTF8(s)};
                 break;
             case 16:
                 result = ENEW(ConstantArrayExpr){
-                    .loc = loc, .ty = context.typecache.str16ty, .array = string_pool.getAsUTF16(s)};
+                    .loc = loc, .ty = context.str16ty, .array = string_pool.getAsUTF16(s, context.getWcharTag() & (TYINT32 | TYUINT32))};
                 break;
             case 32:
                 result = ENEW(ConstantArrayExpr){
-                    .loc = loc, .ty = context.typecache.str32ty, .array = string_pool.getAsUTF32(s)};
+                    .loc = loc, .ty = context.str32ty, .array = string_pool.getAsUTF32(s)};
                 break;
             default: llvm_unreachable("bad encoding");
             }
@@ -2534,7 +2593,7 @@ NEXT:
             else if (l.tok.s->second.getToken() == PP__func__) {
                 xstring s = xstring::get(sema.pfunc->getKey());
                 result = ENEW(ConstantArrayExpr){
-                    .loc = loc, .ty = context.typecache.str8ty, .array = string_pool.getAsUTF8(s)};
+                    .loc = loc, .ty = context.str8ty, .array = string_pool.getAsUTF8(s)};
             } else {
                 IdentRef sym = l.tok.s;
                 size_t idx;
@@ -2547,8 +2606,7 @@ NEXT:
                 it->tags |= USED;
                 CType ty = context.clone(it->ty);
                 // lvalue conversions
-                ty->tags &= ~(type_qualifiers | TYREGISTER | TYTHREAD_LOCAL | TYEXTERN | TYSTATIC | TYNORETURN |
-                              TYINLINE | TYPARAM);
+                ty->tags &= ~(type_qualifiers | storage_class_specifiers | TYNORETURN | TYINLINE | TYPARAM);
                 ty->tags |= TYLVALUE;
                 bool want_lvalue =
                     sema.want_var || is_assigment_op(l.tok.tok) || l.tok.tok == TAddAdd || l.tok.tok == TSubSub;

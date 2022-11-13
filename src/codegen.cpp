@@ -23,7 +23,7 @@ struct IRGen : public DiagnosticHelper {
                           DLLExportStorageClass = llvm::GlobalValue::DLLExportStorageClass;
 
     IRGen(xcc_context &context, DiagnosticConsumer &Diag, SourceMgr &SM, LLVMContext &ctx, const Options &options)
-        : context{context}, DiagnosticHelper{Diag}, SM{SM}, ctx{ctx}, B{ctx}, options{options} {
+        : DiagnosticHelper{Diag}, context{context}, SM{SM}, ctx{ctx}, B{ctx}, options{options} {
         auto CPU = "generic";
         auto Features = "";
         llvm::TargetOptions opt;

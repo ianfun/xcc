@@ -7,11 +7,7 @@ struct StringPool {
     using GV = llvm::GlobalVariable *;
     const IRGen &irgen;
     DenseMap<StringRef, GV> interns;
-#if CC_WCHAR32
     DenseMap<ArrayRef<uint16_t>, GV> interns16;
-#else
-    DenseMap<ArrayRef<uint32_t>, GV> interns16;
-#endif
     DenseMap<ArrayRef<uint32_t>, GV> interns32;
     StringPool(const IRGen &ig) : irgen{ig} { }
     GV getAsUTF8(xstring &s) {
@@ -28,12 +24,35 @@ struct StringPool {
         }
         return it.first->second;
     }
-    GV getAsUTF16(xstring s) {
-#if CC_WCHAR32
+    GV getAsUTF16(xstring s, bool is32Bit) {
+        if (is32Bit) {
+            SmallVector<uint32_t> data;
+            uint32_t state = 0, codepoint;
+            for (auto c : s) {
+                if (decode(&state, &codepoint, (uint32_t)(unsigned char)c))
+                    continue;
+                if (codepoint <= 0xFFFF) {
+                    data.push_back(codepoint);
+                    continue;
+                }
+                data.push_back(0xD7C0 + (codepoint >> 10));
+                data.push_back(0xDC00 + (codepoint & 0x3FF));
+            }
+            data.push_back(0);
+            auto array = makeArrayRef(data);
+            auto it = interns32.insert(std::make_pair(array, nullptr));
+            if (it.second) {
+                auto str = llvm::ConstantDataArray::get(irgen.ctx, array);
+                auto GV =
+                    new llvm::GlobalVariable(*irgen.module, str->getType(), true, IRGen::PrivateLinkage, str, ".cstr");
+                GV->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
+                GV->setAlignment(irgen.layout->getPrefTypeAlign(irgen.types[x32]));
+                GV->setConstant(true);
+                it.first->second = GV;
+            }
+            return it.first->second;
+        }
         SmallVector<uint16_t> data;
-#else
-        SmallVector<uint32_t> data;
-#endif
         uint32_t state = 0, codepoint;
         for (auto c : s) {
             if (decode(&state, &codepoint, (uint32_t)(unsigned char)c))
@@ -46,7 +65,7 @@ struct StringPool {
             data.push_back(0xDC00 + (codepoint & 0x3FF));
         }
         data.push_back(0);
-        auto array = makeArrayRef(data);
+        auto array = makeArrayRef(data); 
         auto it = interns16.insert(std::make_pair(array, nullptr));
         if (it.second) {
             auto str = llvm::ConstantDataArray::get(irgen.ctx, array);
@@ -57,7 +76,7 @@ struct StringPool {
             GV->setConstant(true);
             it.first->second = GV;
         }
-        return it.first->second;
+        return it.first->second;  
     }
     GV getAsUTF32(xstring s) {
         SmallVector<uint32_t> data;

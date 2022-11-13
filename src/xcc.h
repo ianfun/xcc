@@ -335,6 +335,17 @@ static const char *show(enum PostFixOp o) {
 #include "xstring.h"
 #include "xvector.h"
 
+// hard writtened type tags
+static constexpr uint32_t
+  TYINT = TYINT32,
+  TYUINT = TYUINT32,
+  TYCHAR = TYINT8,
+  TYUCHAR = TYUINT8,
+  TYLONGLONG = TYINT64,
+  TYULONGLONG = TYUINT64,
+  TYSHORT = TYINT16,
+  TYUSHORT = TYUINT16;
+
 constexpr auto type_qualifiers = TYCONST | TYRESTRICT | TYVOLATILE | TYATOMIC;
 
 #define kw_start Kextern
@@ -346,8 +357,11 @@ typedef uint16_t column_t;
 typedef uint32_t line_t;
 typedef uint32_t Codepoint;
 typedef struct OpaqueStmt *Stmt;
+typedef const struct OpaqueStmt *const_Stmt;
 typedef struct OpaqueExpr *Expr;
+typedef const struct OpaqueExpr *const_Expr;
 typedef struct OpaqueCType *CType;
+typedef const struct OpaqueCType *const_CType;
 
 struct LocationBase {
     line_t line;
@@ -527,6 +541,8 @@ static enum BinOp getAtomicrmwOp(Token tok) {
 #include "statements.inc"
 #include "utf8.cpp"
 
+constexpr uint32_t storage_class_specifiers = 
+ TYSTATIC | TYEXTERN | TYREGISTER | TYTHREAD_LOCAL | TYTYPEDEF | TYAUTO;
 static const char hexs[] = "0123456789ABCDEF";
 
 static char hexed(unsigned a) { return hexs[a & 0b1111]; }

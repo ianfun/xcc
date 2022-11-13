@@ -73,6 +73,7 @@ enum Token: unsigned char {
   K_Thread_local,
   Kstatic,
   Kauto,
+  Kconstexpr,
   Kinline,
   Ktypedef,
   K_Noreturn,
@@ -148,6 +149,7 @@ static const char *show(Token o){
     case K_Thread_local: return "_Thread_local";
     case Kstatic: return "static";
     case Kauto: return "auto";
+    case Kconstexpr: return "constexpr";
     case Kinline: return "inline";
     case Ktypedef: return "typedef";
     case K_Noreturn: return "_Noreturn";

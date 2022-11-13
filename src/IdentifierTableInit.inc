@@ -4,6 +4,7 @@
 {"_Thread_local", K_Thread_local},
 {"static", Kstatic},
 {"auto", Kauto},
+{"constexpr", Kconstexpr},
 {"inline", Kinline},
 {"typedef", Ktypedef},
 {"_Noreturn", K_Noreturn},

@@ -664,6 +664,91 @@ Token getKeyword(const char *s){
 			}
 			default: return TNul;
 		}
+		case 'c':
+		switch(*s++){
+			case 'o':
+			switch(*s++){
+				case 'n':
+				switch(*s++){
+					case 's':
+					switch(*s++){
+						case 't':
+						switch(*s++){
+							case 'e':
+							switch(*s++){
+								case 'x':
+								switch(*s++){
+									case 'p':
+									switch(*s++){
+										case 'r':
+										switch(*s++){
+											case '\0': return Kconstexpr;
+											default: return TNul;
+										}
+										default: return TNul;
+									}
+									default: return TNul;
+								}
+								default: return TNul;
+							}
+							case '\0': return Kconst;
+							default: return TNul;
+						}
+						default: return TNul;
+					}
+					case 't':
+					switch(*s++){
+						case 'i':
+						switch(*s++){
+							case 'n':
+							switch(*s++){
+								case 'u':
+								switch(*s++){
+									case 'e':
+									switch(*s++){
+										case '\0': return Kcontinue;
+										default: return TNul;
+									}
+									default: return TNul;
+								}
+								default: return TNul;
+							}
+							default: return TNul;
+						}
+						default: return TNul;
+					}
+					default: return TNul;
+				}
+				default: return TNul;
+			}
+			case 'h':
+			switch(*s++){
+				case 'a':
+				switch(*s++){
+					case 'r':
+					switch(*s++){
+						case '\0': return Kchar;
+						default: return TNul;
+					}
+					default: return TNul;
+				}
+				default: return TNul;
+			}
+			case 'a':
+			switch(*s++){
+				case 's':
+				switch(*s++){
+					case 'e':
+					switch(*s++){
+						case '\0': return Kcase;
+						default: return TNul;
+					}
+					default: return TNul;
+				}
+				default: return TNul;
+			}
+			default: return TNul;
+		}
 		case 'i':
 		switch(*s++){
 			case 'n':
@@ -808,74 +893,6 @@ Token getKeyword(const char *s){
 							}
 							default: return TNul;
 						}
-						default: return TNul;
-					}
-					default: return TNul;
-				}
-				default: return TNul;
-			}
-			default: return TNul;
-		}
-		case 'c':
-		switch(*s++){
-			case 'h':
-			switch(*s++){
-				case 'a':
-				switch(*s++){
-					case 'r':
-					switch(*s++){
-						case '\0': return Kchar;
-						default: return TNul;
-					}
-					default: return TNul;
-				}
-				default: return TNul;
-			}
-			case 'o':
-			switch(*s++){
-				case 'n':
-				switch(*s++){
-					case 's':
-					switch(*s++){
-						case 't':
-						switch(*s++){
-							case '\0': return Kconst;
-							default: return TNul;
-						}
-						default: return TNul;
-					}
-					case 't':
-					switch(*s++){
-						case 'i':
-						switch(*s++){
-							case 'n':
-							switch(*s++){
-								case 'u':
-								switch(*s++){
-									case 'e':
-									switch(*s++){
-										case '\0': return Kcontinue;
-										default: return TNul;
-									}
-									default: return TNul;
-								}
-								default: return TNul;
-							}
-							default: return TNul;
-						}
-						default: return TNul;
-					}
-					default: return TNul;
-				}
-				default: return TNul;
-			}
-			case 'a':
-			switch(*s++){
-				case 's':
-				switch(*s++){
-					case 'e':
-					switch(*s++){
-						case '\0': return Kcase;
 						default: return TNul;
 					}
 					default: return TNul;

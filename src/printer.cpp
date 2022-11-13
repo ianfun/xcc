@@ -56,8 +56,6 @@ static StringRef get_prim_str(uint32_t tags) {
         return "void";
     if (tags & TYBOOL)
         return "_Bool";
-    if (tags & TYCOMPLEX)
-        return "_Complex";
     if (tags & TYINT8)
         return "char";
     if (tags & TYINT16)
@@ -120,6 +118,8 @@ raw_ostream &operator<<(llvm::raw_ostream &OS, const CType ty) {
         auto str = get_storage_str(tags);
         if (str.size())
             OS << str << ' ';
+        if (ty->tags & TYCOMPLEX)
+            OS << "_Complex ";
         return OS << get_prim_str(tags);
     }
     case TYPOINTER: {
@@ -185,6 +185,8 @@ raw_ostream &operator>>(llvm::raw_ostream &OS, const CType ty) {
         auto str = get_storage_str(tags);
         if (str.size())
             OS << str << ' ';
+        if (ty->tags & TYCOMPLEX)
+            OS << "_Complex ";
         return OS << get_prim_str(ty->tags);
     }
     case TYPOINTER: {
@@ -247,6 +249,8 @@ void print_cdecl(const CType ty, raw_ostream &OS) {
         auto str = get_storage_str(tags);
         if (str.size())
             OS << str << ' ';
+        if (ty->tags & TYCOMPLEX)
+            OS << "_Complex ";
         OS << get_prim_str(ty->tags);
         break;
     }

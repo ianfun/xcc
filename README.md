@@ -1,6 +1,6 @@
-## The XCC Compiler
+## The XCC C Compiler
 
-XCC is a Clang-like C compiler.
+A clang-like C compiler.
 
 ![](screenshots.png)
 
@@ -85,3 +85,16 @@ $ make testCodeGen
 $ make all
 $ make all -j
 ```
+
+## Features
+
+![](cdecl.png)
+
+![](diagnostic.png)
+
+## Author
+
+ianfun
+
+* 015006@mst.hlis.hlc.edu.tw
+* ianfun.github.io@gmail.com
