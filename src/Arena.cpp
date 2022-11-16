@@ -47,9 +47,10 @@ struct ArenaAllocator : public llvm::AllocatorBase<ArenaAllocator> {
 
     ~ArenaAllocator() {
 #if CC_DEBUG
-        // dbgprint("Release ArenaAllocator\n");
-        // dbgprint("* number of blocks: %zu\n", num_blocks);
-        // dbgprint("* bytes allocated: %zu\n", allocated_bytes);
+        statics("ArenaAllocator statics\n");
+        statics("  - Number of blocks: %zu\n", num_blocks);
+        statics("  - Total bytes allocated: %zu\n", allocated_bytes);
+        endStatics();
 #endif
         struct arena_block *p = head;
         do {
@@ -61,7 +62,6 @@ struct ArenaAllocator : public llvm::AllocatorBase<ArenaAllocator> {
     }
     ArenaAllocator() {
         head = cur = new_arena_block();
-        // dbgprint("Start ArenaAllocator\n");
     }
 };
 

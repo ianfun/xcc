@@ -557,7 +557,12 @@ RUN:
                     ok = macros.find(tok.s) != macros.end();
                     if (saved_tok == PPundef)
                         ok = !ok;
-                    dbgprint(saved_tok == PPundef ? "#ifdef: %s\n" : "#ifndef: %s\n", ok ? "true" : "false");
+#if CC_DEBUG
+                    if (saved_tok == PPundef)
+                        dbgprint("#ifndef: %s\n", ok ? "true" : "false");
+                    else
+                        dbgprint("#ifdef: %s\n", ok ? "true" : "false");
+#endif
                     ppstack.push_back(ok ? 1 : 0);
                 } break;
                 case Kelse: {

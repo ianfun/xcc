@@ -30,15 +30,15 @@ struct xcc_context {
     CType constint, b, v, i8, u8, i16, u16, i32, u32, i64, u64, i128, u128, 
     ffloatty, fdoublety, fhalfty, f128ty, f80ty, str8ty, str16ty, str32ty, _complex_float, _complex_double, 
     _complex_longdouble, _complex_f128, _wchar, _long, _ulong, _longlong, _ulonglong, _longdouble, _uchar;
-    CType make(uint32_t tag) { return TNEW(PrimType){.align = 0, .tags = tag}; }
-    CType getPointerType(CType base) { return TNEW(PointerType){.align = 0, .tags = 0, .p = base}; }
+    CType make(uint64_t tag) { return TNEW(PrimType){.tags = tag, .align = 0}; }
+    CType getPointerType(CType base) { return TNEW(PointerType){.tags = 0, .align = 0, .p = base}; }
     CType getFixArrayType(CType elementType, unsigned size) {
-        return TNEW(ArrayType){.align = 0, .tags = 0, .arrtype = elementType, .hassize = true, .arrsize = size};
+        return TNEW(ArrayType){.tags = 0, .align = 0, .arrtype = elementType, .hassize = true, .arrsize = size};
     }
     CType getComplexType(const_CType ty) {
         return make(ty->tags | TYCOMPLEX);
     }
-    CType getComplexType(uint32_t tags) {
+    CType getComplexType(type_tag_t tags) {
         return make(tags | TYCOMPLEX);
     }
     CType getComplexFloat() {
@@ -83,19 +83,19 @@ struct xcc_context {
     CType getChar() {
         return i8;
     }
-    uint32_t getLongDoubleTag() {
+    type_tag_t getLongDoubleTag() {
         return _longdouble->tags;
     }
-    uint32_t getLongTag() {
+    type_tag_t getLongTag() {
         return _long->tags;
     }
-    uint32_t getULongTag() {
+    type_tag_t getULongTag() {
         return _ulong->tags;
     }
-    uint32_t getUCharTag() {
+    type_tag_t getUCharTag() {
         return _uchar->tags;
     }
-    uint32_t getWcharTag() {
+    type_tag_t getWcharTag() {
         return _uchar->tags;
     }
     CType getChar8_t() {

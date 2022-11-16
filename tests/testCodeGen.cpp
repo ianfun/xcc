@@ -12,10 +12,13 @@
     xcc::IRModuleOutputFileHelper output(printer, ig.module, "example.ll");
 
     output.verify();
-    //output.dump();
+
+    // output.dump();
 
     output.IR();
     output.finalize();
+
+    // system("vim example.ll");
 
     return 0;
 }

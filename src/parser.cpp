@@ -43,7 +43,7 @@ struct Parser : public DiagnosticHelper {
         FunctionAndBlockScope<Variable_Info, 50> typedefs;
         BlockScope<Type_info, 20> tags;
         SmallVector<Token, 5> tokens_cache;
-        uint32_t currentAlign = 0; // current align(bytes)
+        uint8_t currentAlign = 0; // current align(bytes)
         bool type_error = false;   // type error
     } sema;
     struct JumpBuilder {
@@ -62,7 +62,7 @@ struct Parser : public DiagnosticHelper {
     Stmt unreachable_reason = nullptr;
     Expr intzero, intone, size_t_one, cfalse, ctrue;
     StringPool string_pool;
-    uint32_t TYLONGDOUBLE, TYLONG, TYULONG;
+    type_tag_t TYLONGDOUBLE, TYLONG, TYULONG;
     Parser(SourceMgr &SM, IRGen &irgen, DiagnosticConsumer &Diag, xcc_context &theContext)
         : DiagnosticHelper{Diag},l(SM, *this, theContext, Diag), context{theContext}, irgen{irgen},
           intzero{wrap(context.getInt(), ConstantInt::get(irgen.ctx, APInt::getZero(context.getInt()->getBitWidth())))},
@@ -117,7 +117,7 @@ struct Parser : public DiagnosticHelper {
         }
         llvm_unreachable("");
     }
-    CType tryGetComplexType(uint32_t tags) {
+    CType tryGetComplexType(type_tag_t tags) {
         if (tags & TYDOUBLE)
             return context.getComplexDouble();
         else if (tags & TYFLOAT)
@@ -126,7 +126,7 @@ struct Parser : public DiagnosticHelper {
             return context.getComplexFloat128();
         return context.make(tags);
     }
-    CType tryGetComplexTypeFromNonComplex(uint32_t tags) {
+    CType tryGetComplexTypeFromNonComplex(type_tag_t tags) {
         if (tags & TYDOUBLE)
             return context.getComplexDouble();
         else if (tags & TYFLOAT)
@@ -190,7 +190,7 @@ struct Parser : public DiagnosticHelper {
         }
         return ref.idx;
     }
-    CType gettagByName(IdentRef Name, enum CTypeKind expected, Location full_loc) {
+    CType gettagByName(IdentRef Name, uint8_t expected, Location full_loc) {
         assert(Name && "gettagByName: Name is nullptr");
         CType result;
         size_t idx;
@@ -206,7 +206,7 @@ struct Parser : public DiagnosticHelper {
         }
         return result;
     }
-    size_t puttag(IdentRef Name, CType ty, Location loc, enum CTypeKind k) {
+    size_t puttag(IdentRef Name, CType ty, Location loc, uint8_t k) {
         assert(ty && "no type provided");
         bool found = false;
         if (Name) {
@@ -299,7 +299,7 @@ struct Parser : public DiagnosticHelper {
                 auto M = type_qualifiers | TYSTATIC | TYTHREAD_LOCAL | TYREGISTER | TYTYPEDEF | TYATOMIC;
                 CType old = it->ty;
                 bool err = true;
-                uint32_t t1 = yt->tags, t2 = old->tags;
+                type_tag_t t1 = yt->tags, t2 = old->tags;
                 if ((t1 & M) != (t2 & M))
                     type_error(it->loc, "conflicting type qualifiers for %I", Name);
                 else if (!compatible(old, yt))
@@ -328,7 +328,7 @@ struct Parser : public DiagnosticHelper {
         case K_Alignas: return true;
         default: break;
         }
-        if (a.tok == TIdentifier)
+        if (a.tok == TIdentifier) 
             return gettypedef(a.s) != nullptr;
         return false;
     }
@@ -525,7 +525,6 @@ PTR_CAST:
         return bit_cast(e, to);
     }
     Expr castto(Expr e, CType to, enum Implict_Conversion_Kind implict = Implict_Cast) {
-        llvm::errs() << "cast " << e << " to " << to << '\n';
         assert(e && "cast object is nullptr");
         assert(e->ty && "cannot cast from expression with no type");
         assert(to && "cast type is nullptr");
@@ -637,8 +636,10 @@ PTR_CAST:
                 }
             }
         }
+        sema.typedefs.finalizeGlobalScope();
+        sema.tags.finalizeGlobalScope();
     }
-    void to2(Expr &e, uint32_t tag) {
+    void to2(Expr &e, type_tag_t tag) {
         if ((e->ty->tags & ty_prim) != tag)
             e = castto(e, context.make(tag));
     }
@@ -646,7 +647,7 @@ PTR_CAST:
         if (e->ty->k == TYBITFIELD || (e->ty->tags & (TYBOOL | TYINT8 | TYUINT8 | TYINT16 | TYUINT16) && !(e->ty->tags & TYCOMPLEX)))
             to2(e, TYINT);
     }
-    void complex_conv(Expr &a, Expr &b, const uint32_t at, const uint32_t bt) {
+    void complex_conv(Expr &a, Expr &b, const type_tag_t at, const type_tag_t bt) {
         if ((at & (ty_prim | TYCOMPLEX)) == (bt & (ty_prim | TYCOMPLEX)))
             return;
         // C A Reference Manual Fifth Edition
@@ -679,12 +680,11 @@ PTR_CAST:
         CType resultTy = tryGetComplexTypeFromNonComplex(intRank(at) > intRank(bt) ? at : bt);
         a = castto(a, resultTy);
         b = castto(b, resultTy);
-        llvm::errs() << a << "\n" << b << "\n" << getchar();
         return;
     }
     void conv(Expr &a, Expr &b) {
-        const uint32_t at = a->ty->tags;
-        const uint32_t bt = b->ty->tags;
+        const type_tag_t at = a->ty->tags;
+        const type_tag_t bt = b->ty->tags;
         if (a->ty->k != TYPRIM || b->ty->k != TYPRIM)
             return;
         if (at & TYCOMPLEX)
@@ -1541,7 +1541,7 @@ NOT_CONSTANT:
 // — thread_local may appear with static or extern,
 // — auto may appear with all the others except typedef, and
 // — constexpr may appear with auto, register, or static
-    void verify_one_storage_class(uint32_t tags) {
+    void verify_one_storage_class(type_tag_t tags) {
         // no storage-class specifiers founded, exit now
         if (!(tags & storage_class_specifiers))
             return;
@@ -1557,9 +1557,9 @@ NOT_CONSTANT:
     CType specifier_qualifier_list() {
         Location loc = getLoc();
         CType eat_typedef = nullptr;
-        uint32_t tags = 0;
+        type_tag_t tags = 0;
         unsigned b = 0, L = 0, s = 0, f = 0, d = 0, i = 0, c = 0, v = 0, numsigned = 0, numunsigned = 0, numcomplex = 0;
-        uint32_t old_tag;
+        type_tag_t old_tag;
         const Token firstTok = l.tok.tok;
         unsigned count = 0;
         for (;;++count) {
@@ -2166,8 +2166,10 @@ MERGE:
         leaveBlock();
         return ok;
     }
-    void checkAlign(uint32_t a) {
-        if (a & (a - 1))
+    void checkAlign(uint64_t &a) {
+        if (isPowerOf2_64(a))
+            a = llvm::Log2_64(a);
+        else
             type_error(getLoc(), "requested alignment is not a power of 2");
     }
     uint64_t force_eval(Expr e, Location cloc) {
@@ -2208,7 +2210,7 @@ MERGE:
             return expectLB(getLoc()), false;
         consume();
         if (istype(l.tok.tok)) {
-            uint32_t a;
+            uint64_t a;
             CType ty = type_name();
             if (!ty)
                 return false;
@@ -2220,7 +2222,7 @@ MERGE:
                 sema.currentAlign = a;
             }
         } else {
-            uint32_t a;
+            uint64_t a;
             Location cloc = getLoc();
             Expr e = expression();
             if (!e)
@@ -2254,7 +2256,7 @@ MERGE:
         return result;
     }
     bool consume_static_assert() {
-        uint32_t ok;
+        uint64_t ok;
         Location loc = getLoc();
         consume();
         if (l.tok.tok != TLbracket)
@@ -2319,7 +2321,7 @@ MERGE:
         if (!(base = declaration_specifiers()))
             return expect(loc, "declaration-specifiers");
         if (sema.currentAlign) {
-            size_t m = getAlignof(base);
+            size_t m = getAlignof(base) * 8;
             if (sema.currentAlign < m) {
                 type_error(loc, "requested alignment is less than minimum alignment of %Z for type %T", m, base);
             } else {
@@ -2377,7 +2379,7 @@ MERGE:
                 return insertStmt(res);
             }
             st.ty->noralize();
-#if 1
+#if 0
             print_cdecl(st.name->getKey(), st.ty, llvm::errs(), true);
 #endif
             size_t idx = putsymtype(st.name, st.ty, full_loc);
@@ -2424,7 +2426,7 @@ MERGE:
                             )
                         )
                         ) {
-                        type_error(full_loc, "global initializer is not constant"), llvm::errs() << init;
+                        type_error(full_loc, "global initializer is not constant");
                     }
                 }
             } else {
@@ -3124,7 +3126,7 @@ DOT:
                     Declator pair = ty->selems[i];
                     if (l.tok.s == pair.name) {
                         result = ENEW(MemberAccessExpr) {
-                            .loc = result->loc, .ty = pair.ty, .obj = result, .idx = (uint32_t)i};
+                            .loc = result->loc, .ty = pair.ty, .obj = result, .idx = (unsigned)i};
                         if (isLvalue) {
                             result->ty = context.clone(result->ty);
                             result->ty->tags |= TYLVALUE;
@@ -4059,6 +4061,10 @@ NEXT:
         enterBlock(); // the global scope!
         ast = translation_unit();
         leaveBlock2();
+        statics("Parse scope statics\n");
+        statics("  Max typedef scope size: %zu\n", sema.typedefs.maxSyms);
+        statics("  Max tags scope size: %zu\n", sema.tags.maxSyms);
+        endStatics();
         num_typedefs = sema.typedefs.maxSyms;
         num_tags = sema.tags.maxSyms;
         return ast;

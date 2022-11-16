@@ -97,12 +97,12 @@ struct IRGen : public DiagnosticHelper {
     DenseMap<CType, llvm::FunctionType *> function_type_cache{};
 
     llvm::DIBuilder &D() { return *di; }
-    void store(Value p, Value v, uint32_t align = 0) {
+    void store(Value p, Value v, type_tag_t align = 0) {
         llvm::StoreInst *s = B.CreateStore(v, p);
         if (align)
             s->setAlignment(llvm::Align(align));
     }
-    llvm::LoadInst *load(Value p, Type t, uint32_t align = 0) {
+    llvm::LoadInst *load(Value p, Type t, type_tag_t align = 0) {
         assert(p);
         assert(t);
         llvm::LoadInst *i = B.CreateLoad(t, p, false);
@@ -130,7 +130,7 @@ struct IRGen : public DiagnosticHelper {
     }
     void after(Label loc) { B.SetInsertPoint(loc); }
     void emitDebugLocation() { B.SetCurrentDebugLocation(llvm::DebugLoc()); }
-    llvm::StructType *wrapComplex(uint32_t tags) {
+    llvm::StructType *wrapComplex(type_tag_t tags) {
         if (tags & TYFLOAT)
             return _complex_float;
         if (tags & TYDOUBLE)
@@ -142,7 +142,7 @@ struct IRGen : public DiagnosticHelper {
     llvm::StructType *wrapComplex(CType ty) {
         return wrapComplex(ty->tags);
     }
-    llvm::StructType *wrapComplexForInteger(uint32_t tags) {
+    llvm::StructType *wrapComplexForInteger(type_tag_t tags) {
         llvm::Type *ElemTy = types[getNoSignTypeIndex(tags)];
         return llvm::StructType::get(ElemTy, ElemTy);
     }
@@ -155,7 +155,7 @@ struct IRGen : public DiagnosticHelper {
         switch (ty->k) {
         case TYPRIM: 
         {
-            const uint32_t tags = ty->tags;
+            const type_tag_t tags = ty->tags;
             if (tags & TYCOMPLEX) 
                 return wrapComplex(ty->tags);
             return wrapNoComplexSCalar(tags);
@@ -298,10 +298,10 @@ struct IRGen : public DiagnosticHelper {
             delete[] dtags;
     }
     void run(Stmt s, size_t num_typedefs, size_t num_tags) {
-        vars = new Value[num_typedefs](); // not initialized!
-        tags = new Type[num_tags]();      // not initialized!
+        vars = new Value[num_typedefs]; // not initialized!
+        tags = new Type[num_tags];      // not initialized!
         if (options.g)
-            dtags = new DIType[num_tags](); // not initialized!
+            dtags = new DIType[num_tags]; // not initialized!
         for (Stmt ptr = s->next; ptr; ptr = ptr->next)
             gen(ptr);
         finalsizeCodeGen();
@@ -344,14 +344,14 @@ struct IRGen : public DiagnosticHelper {
     Type wrapNoComplexSCalar(CType ty) {
         return types[getNoSignTypeIndex(ty->tags)];
     }
-    Type wrapNoComplexSCalar(uint32_t tags) {
+    Type wrapNoComplexSCalar(type_tag_t tags) {
         return types[getNoSignTypeIndex(tags)];
     }
     Type wrap2(CType ty) {
         switch (ty->k) {
         case TYPRIM:
         {
-            const uint32_t tags = ty->tags;
+            const type_tag_t tags = ty->tags;
             if (tags & TYCOMPLEX) 
                 return wrapComplex(ty->tags);
             return wrapNoComplexSCalar(tags);
@@ -489,7 +489,7 @@ struct IRGen : public DiagnosticHelper {
         default: llvm_unreachable("bad cast operator");
         }
     }
-    llvm::Function *newFunction(llvm::FunctionType *fty, IdentRef name, uint32_t tags, size_t idx) {
+    llvm::Function *newFunction(llvm::FunctionType *fty, IdentRef name, type_tag_t tags, size_t idx) {
         auto old = module->getFunction(name->getKey());
         if (old)
             return old;
@@ -506,7 +506,7 @@ struct IRGen : public DiagnosticHelper {
         vars[idx] = F;
         return F;
     }
-    StringRef getLinkageName(uint32_t tags) {
+    StringRef getLinkageName(type_tag_t tags) {
         if (tags & TYSTATIC)
             return "static";
         if (tags & TYEXTERN)
@@ -807,8 +807,6 @@ struct IRGen : public DiagnosticHelper {
             return local;
         }
         default:
-            llvm::errs() << "expression =" << e << "\nkind = " << (unsigned)e->k << "\n\n";
-            getchar();
             llvm_unreachable("");
         }
     }

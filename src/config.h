@@ -89,3 +89,11 @@ template <unsigned long long n> static constexpr inline unsigned long long cstrl
 #ifndef CC_SHOW_TAB_SIZE
 #define CC_SHOW_TAB_SIZE 4
 #endif
+
+#ifndef CC_STATICS
+  #if CC_DEBUG
+     #define CC_STATICS 1
+  #else
+     #define CC_STATICS 0
+  #endif
+#endif

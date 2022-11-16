@@ -84,7 +84,7 @@ static StringRef get_prim_str(uint32_t tags) {
         return "__float128";
     return "(unknown basic type)";
 }
-static const char *get_type_name_str(enum CTypeKind t) {
+static const char *get_type_name_str(uint32_t t) {
     switch (t) {
     case TYSTRUCT: return "struct";
     case TYUNION: return "union";

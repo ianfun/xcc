@@ -130,12 +130,19 @@
 #include <string_view>
 #endif
 
-#define dbgprint(msg, ...) ((void)logtime(), (void)fprintf(stderr, msg, ##__VA_ARGS__))
+#if CC_DEBUG
+  #define dbgprint(msg, ...) fprintf(stderr, "\33[01;33m[DEBUG]\33[0m: " msg, ##__VA_ARGS__) 
+#else
+  #define dbgprint(...) (void)0
+#endif
 
-static void logtime() {
-    time_t now = time(nullptr);
-    fprintf(stderr, "\33[01;33m[debug]: \33[01;34m%s\33[0m", ctime(&now));
-}
+#if CC_STATICS
+  #define endStatics() fputc(10, stderr)
+  #define statics(msg, ...) fprintf(stderr, msg, ##__VA_ARGS__) 
+#else
+  #define endStatics() (void)0
+  #define statics(...) (void)0
+#endif
 
 namespace xcc {
 #if WINDOWS
@@ -178,7 +185,7 @@ using llvm::Expected;
 using llvm::IntrusiveRefCntPtr;
 using llvm::IntrusiveRefCntPtrInfo;
 using llvm::RefCountedBase;
-
+using type_tag_t = uint64_t;
 constexpr APFloat::cmpResult cmpGreaterThan = APFloat::cmpGreaterThan, cmpEqual = APFloat::cmpEqual,
                                              cmpLessThan = APFloat::cmpLessThan;
 
@@ -410,7 +417,7 @@ static const char *show(enum PostFixOp o) {
 #include "xvector.h"
 
 // hard writtened type tags
-static constexpr uint32_t
+static constexpr type_tag_t
   TYINT = TYINT32,
   TYUINT = TYUINT32,
   TYCHAR = TYINT8,
@@ -543,7 +550,7 @@ enum NoSignTypeIndex {
     xptr,
     NoSignTypeIndexHigh
 };
-static TypeIndex getTypeIndex(uint32_t tags) {
+static TypeIndex getTypeIndex(type_tag_t tags) {
     if (tags & TYVOID)
         return voidty;
     if (tags & TYBOOL)
@@ -576,7 +583,7 @@ static TypeIndex getTypeIndex(uint32_t tags) {
         return fp128ty;
     llvm_unreachable("bad type provided for getTypeIndex()");
 }
-static NoSignTypeIndex getNoSignTypeIndex(uint32_t tags) {
+static NoSignTypeIndex getNoSignTypeIndex(type_tag_t tags) {
     if (tags & TYVOID)
         return xvoid;
     if (tags & TYBOOL)
@@ -615,7 +622,7 @@ static enum BinOp getAtomicrmwOp(Token tok) {
 #include "statements.inc"
 #include "utf8.cpp"
 
-constexpr uint32_t storage_class_specifiers = 
+constexpr type_tag_t storage_class_specifiers = 
  TYSTATIC | TYEXTERN | TYREGISTER | TYTHREAD_LOCAL | TYTYPEDEF | TYAUTO;
 static const char hexs[] = "0123456789ABCDEF";
 
@@ -807,7 +814,7 @@ struct PPMacroDef {
     PPMacro m;
     LocationBase loc;
 };
-static unsigned intRank(uint32_t tags) {
+static unsigned intRank(type_tag_t tags) {
     assert(!(tags & (TYVOID | floatings)));
     assert(tags & intergers_or_bool);
     if (tags & TYBOOL)
@@ -826,7 +833,7 @@ static unsigned intRank(CType ty) {
     assert(ty->k == TYPRIM);
     return intRank(ty->tags);
 }
-static unsigned floatRank(uint32_t tags) {
+static unsigned floatRank(type_tag_t tags) {
     assert(!(tags & (intergers_or_bool)));
     assert(!(tags & TYVOID));
     if (tags & TYFLOAT)
@@ -841,7 +848,7 @@ static unsigned floatRank(CType ty) {
     assert(ty->k == TYPRIM);
     return floatRank(ty->tags);
 }
-static unsigned scalarRankNoComplex(uint32_t tags) {
+static unsigned scalarRankNoComplex(type_tag_t tags) {
     if (tags & floatings)
         return floatRank(tags);
     return intRank(tags);
@@ -850,7 +857,7 @@ static unsigned scalarRankNoComplex(CType ty) {
     assert(ty->k == TYPRIM);
     return scalarRankNoComplex(ty->tags);
 }
-static unsigned scalarRank(uint32_t tags) {
+static unsigned scalarRank(type_tag_t tags) {
     if (tags & TYCOMPLEX)
         return scalarRankNoComplex(tags) + 10;
     return scalarRankNoComplex(tags);

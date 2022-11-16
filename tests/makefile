@@ -5,7 +5,7 @@ CC=clang++
 CXXINCS=-I/usr/include/c++/9 -I/usr/include/x86_64-linux-gnu/c++/9 -I/usr/lib/gcc/x86_64-linux-gnu/9/include
 
 # LLVM C++ flags
-CXXFLAGS=-I/usr/lib/llvm-15/include -std=c++14   -fno-exceptions -D_GNU_SOURCE -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS
+CXXFLAGS=-I/usr/lib/llvm-15/include -std=c++14 -fno-exceptions -D_GNU_SOURCE -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS
 
 # change this to -c if you want to skip linking
 # Flags to link with LLVM libary
@@ -24,7 +24,7 @@ LLDFLAGS= \
 -llldWasm
 
 # debug on/off
-DEBUG=-g -Wextra -Wno-unused-parameter
+DEBUG=-g -Wextra -Wno-unused-parameter -Wno-c++20-extensions
 
 # XCC driver with LLD disabled
 mainNoLLD:

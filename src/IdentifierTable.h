@@ -38,4 +38,10 @@ struct IdentifierTable {
     IdentRef get(StringRef Name, unsigned val = PPIdent) {
         return &*HashTable.insert(std::make_pair(Name, IdentifierInfo(val))).first;
     }
+    ~IdentifierTable() {
+        statics("IdentifierTable statics\n");
+        statics("  - Number of buckets: %u\n", HashTable.getNumBuckets());
+        statics("  - Number of items: %u\n", HashTable.getNumItems());
+        endStatics();
+    }
 };

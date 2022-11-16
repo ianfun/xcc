@@ -54,9 +54,13 @@ template <typename T, unsigned InitialSize = 64> struct BlockScope : public Scop
     size_t numSymsThisBlock() const { return blocks.back(); }
     void push() { blocks.push_back(this->data.size()); }
     void pop() {
+        assert(blocks.size() && "mismatched push/pop: no stack to pop()!");
         maxSyms = std::max(maxSyms, blocks.back());
         this->data.truncate(blocks.back());
         blocks.pop_back();
+    }
+    void finalizeGlobalScope() {
+        maxSyms = std::max(this->data.size(), maxSyms);
     }
     bool isInGlobalScope(IdentRef Name) {
         assert(blocks.size() && "no global scope");
@@ -100,6 +104,5 @@ template <typename T, unsigned InitialSize = 64> struct FunctionAndBlockScope : 
     auto current_function() { return this->data.data() + _current_function_offset; }
     auto current_function() const { return this->data.data() + _current_function_offset; }
     void push_function() { _current_function_offset = this->data.size(); }
-    void pop_function() const { /* nothing */
-    }
+    void pop_function() const { }
 };

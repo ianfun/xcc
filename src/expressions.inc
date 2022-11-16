@@ -84,7 +84,7 @@ union {
     };
     struct {
       Expr obj;
-      uint32_t idx;
+      unsigned idx;
     };
     struct {
       Expr arr3;
@@ -211,7 +211,7 @@ struct MemberAccessExpr {
   CType ty;
   struct {
     Expr obj;
-    uint32_t idx;
+    unsigned idx;
   };
 };
 struct ArrToAddressExpr {
