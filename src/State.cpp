@@ -10,7 +10,7 @@ struct xcc_context {
         b{make(TYBOOL)}, v{make(TYVOID)}, i8{make(TYINT8)}, u8{make(TYUINT8)}, i16{make(TYINT16)},
         u16{make(TYINT16)}, i32{make(TYINT32)}, u32{make(TYUINT32)}, i64{make(TYINT64)}, u64{make(TYUINT64)},
         i128{make(TYINT128)}, u128{make(TYUINT128)}, ffloatty{make(TYFLOAT)}, fdoublety{make(TYDOUBLE)},
-        f128ty{make(TYF128)}
+        fhalfty{make(TYHALF)}, f128ty{make(TYF128)}, f80ty{make(TYF80)}
     {
         _wchar = u16;
         _long = i64;
@@ -28,7 +28,7 @@ struct xcc_context {
     IdentifierTable table; // contains allocator!
     Expr intzero;
     CType constint, b, v, i8, u8, i16, u16, i32, u32, i64, u64, i128, u128, 
-    ffloatty, fdoublety, f128ty, str8ty, str16ty, str32ty, _complex_float, _complex_double, 
+    ffloatty, fdoublety, fhalfty, f128ty, f80ty, str8ty, str16ty, str32ty, _complex_float, _complex_double, 
     _complex_longdouble, _complex_f128, _wchar, _long, _ulong, _longlong, _ulonglong, _longdouble, _uchar;
     CType make(uint32_t tag) { return TNEW(PrimType){.align = 0, .tags = tag}; }
     CType getPointerType(CType base) { return TNEW(PointerType){.align = 0, .tags = 0, .p = base}; }
@@ -58,6 +58,12 @@ struct xcc_context {
     }
     CType getDobule() {
         return fdoublety;
+    }
+    CType getFPHalf() {
+        return fhalfty;
+    }
+    CType getFP80() {
+        return f80ty;
     }
     CType getLongDobule() {
         return _longdouble;

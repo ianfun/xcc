@@ -26,6 +26,7 @@
 #include <llvm/ExecutionEngine/SectionMemoryManager.h>
 #include <llvm/IR/Constants.h>
 #include <llvm/IR/DIBuilder.h>
+#include <llvm/IR/MDBuilder.h>
 #include <llvm/IR/DataLayout.h>
 #include <llvm/IR/DebugInfo.h>
 #include <llvm/IR/DebugInfoMetadata.h>
@@ -178,50 +179,108 @@ using llvm::IntrusiveRefCntPtr;
 using llvm::IntrusiveRefCntPtrInfo;
 using llvm::RefCountedBase;
 
+constexpr APFloat::cmpResult cmpGreaterThan = APFloat::cmpGreaterThan, cmpEqual = APFloat::cmpEqual,
+                                             cmpLessThan = APFloat::cmpLessThan;
+
 enum PostFixOp {
     PostfixIncrement = 1,
     PostfixDecrement
 };
+// https://github.com/llvm-mirror/clang/blob/master/include/clang/AST/OperationKinds.def
 enum UnaryOp {
     UNeg = 1,
     SNeg,
     FNeg,
+    CNeg, // complex negate
     Not,
+    CConj, // complex conjugate(conj(), `~`)
     AddressOf,
     Dereference,
-    LogicalNot
+    LogicalNot,
+    C__real__,
+    C__imag__,
+    ToBool
 };
 enum BinOp {
     // Arithmetic operators
-    UAdd = 1,
-    SAdd,
-    FAdd,
-    USub,
-    SSub,
-    FSub,
-    UMul,
-    SMul,
-    FMul,
-    UDiv,
-    SDiv,
-    FDiv,
-    URem,
-    SRem,
-    FRem,
-    Shr,
-    AShr,
-    Shl,
 
+    // unsigned addition
+    UAdd = 1,
+    // signed addition
+    SAdd,
+    // float addition
+    FAdd,
+    // complex addition(signed or unsigned)
+    CAdd,
+    // float complex addition
+    CFAdd,
+    // unsigned subtraction
+    USub,
+    // signed subtraction
+    SSub,
+    // float subtraction
+    FSub,
+    // complex subtraction(signed or unsigned)
+    CSub,
+    // float complex subtraction
+    CFSub,
+    // unsigned multiplication
+    UMul,
+    // signed multiplication
+    SMul,
+    // float multiplication
+    FMul,
+    // complex multiplication(signed or unsigned)
+    CMul,
+    // unsigned division
+    CFMul,
+    // unsigmed complex multiplication
+    UDiv,
+    // signed division
+    SDiv,
+    // float division
+    FDiv,
+    // signed complex division
+    CSDiv,
+    // unsigned complex division
+    CUDiv,
+    // float complex division
+    CFDiv,
+    // unsigned remainder
+    URem,
+    // signed remainder
+    SRem,
+    // float remainder(extension)
+    FRem,
+    // logical right shift: (a >> b), a is unsigned
+    Shr,
+    // arithmetic right shift(x86: SAR): (a >> b), a is signed
+    AShr,
+    // shift left: (a << b)
+    Shl,
+    // bitwise And: (a & b)
     And,
+    // bitwise Xor: (a ^ b)
     Xor,
+    // bitwise Or: (a | b)
     Or,
 
+    // logical And: (a && b) => (a ? b : false)
     LogicalAnd,
+    // logical Or: (a || b) => (a ? true : b)
     LogicalOr,
+    // assignment operator: (a += b) => (a = a + b)
+    //                      (++a) => (a = a + 1)
+    //                      result type is a'type, a must be a lvalue.
     Assign,
+    // add integer to pointer: ((int*)a + b) => ((uintptr)a + sizeof(b)), result type is a's type
     SAddP,
+    // pointer differece: ((int*)a - (int*)b) => (((uintptr)a - (uintptr)b) / 4), result type is ptrdiff_t1
     PtrDiff,
+    // the comma operator: (a, b)
     Comma,
+    // construct a complex number: (a + bi)
+    Complex_CMPLX,
 
     // Atomic ops
     AtomicrmwAdd,
@@ -241,13 +300,16 @@ enum BinOp {
     SGE,
     SLT,
     SLE,
-    // ordered float compare
+    // ordered float compare operators
     FEQ,
     FNE,
     FGT,
     FGE,
     FLT,
-    FLE
+    FLE,
+    // complex compare operators
+    CEQ,
+    CNE
 };
 enum CastOp {
     Trunc = 1,
@@ -274,6 +336,15 @@ static const char *show(enum BinOp op) {
         BINOP3(Mul, "*");
         BINOP3(Div, "/");
         BINOP3(Rem, "%");
+    case CAdd: return "+";
+    case CFAdd: return "+";
+    case CSub: return "-";
+    case CFSub: return "-";
+    case CMul: return "*";
+    case CFMul: return "*";
+    case CFDiv:
+    case CUDiv:
+    case CSDiv: return "/";
     case Shr:
     case AShr: return ">>";
     case Shl: return "<<";
@@ -286,15 +357,18 @@ static const char *show(enum BinOp op) {
     case SAddP: return "+";
     case PtrDiff: return "-";
     case Comma: return ",";
+    case Complex_CMPLX: return " + j";
     case AtomicrmwAdd: return "+";
     case AtomicrmwSub: return "-";
     case AtomicrmwAnd: return "&";
     case AtomicrmwOr: return "|";
     case AtomicrmwXor: return "^";
     case EQ:
-    case FEQ: return "==";
+    case FEQ:
+    case CEQ: return "==";
     case NE:
-    case FNE: return "!=";
+    case FNE:
+    case CNE: return "!=";
 #define CMPOP3(c, r)                                                                                                   \
     case U##c:                                                                                                         \
     case S##c:                                                                                                         \
@@ -578,13 +652,31 @@ static const char months[12][4] = {
     "Nov", // November
     "Dec"  // December
 };
-static bool compatible(const CType p, const CType expected) {
+static bool type_equal(CType a, CType b) {
+    assert(a && "type_equal: a is nullptr");
+    assert(b && "type_equal: b is nullptr");
+    if (a->k != b->k)
+        return false;
+    else {
+        switch (a->k) {
+        case TYPRIM:
+            return (a->tags & (ty_prim | TYCOMPLEX)) == (b->tags & (ty_prim | TYCOMPLEX));
+        case TYPOINTER: return type_equal(a->p, b->p);
+        case TYENUM:
+        case TYSTRUCT:
+        case TYUNION: return a == b;
+        case TYINCOMPLETE: return a->name == b->name;
+        default: return false;
+        }
+    }
+}
+static bool compatible(CType p, CType expected) {
     // https://en.cppreference.com/w/c/language/type
     if (p->k != expected->k)
         return false;
     else {
         switch (p->k) {
-        case TYPRIM: return (p->tags & ty_prim) == (expected->tags & ty_prim);
+        case TYPRIM: return (p->tags & (ty_prim | TYCOMPLEX)) == (expected->tags & (ty_prim | TYCOMPLEX));
         case TYFUNCTION:
             if (!compatible(p->ret, expected->ret) || p->params.size() != expected->params.size())
                 return false;
@@ -715,18 +807,57 @@ struct PPMacroDef {
     PPMacro m;
     LocationBase loc;
 };
-static unsigned intRank(uint32_t a) {
-    if (a & TYBOOL)
+static unsigned intRank(uint32_t tags) {
+    assert(!(tags & (TYVOID | floatings)));
+    assert(tags & intergers_or_bool);
+    if (tags & TYBOOL)
         return 1;
-    if (a & (TYINT8 | TYUINT8))
+    if (tags & (TYINT8 | TYUINT8))
         return 2;
-    if (a & (TYINT16 | TYUINT16))
+    if (tags & (TYINT16 | TYUINT16))
         return 3;
-    if (a & (TYINT32 | TYUINT32))
+    if (tags & (TYINT32 | TYUINT32))
         return 4;
-    if (a & (TYINT64 | TYUINT64))
+    if (tags & (TYINT64 | TYUINT64))
         return 5;
     return 6;
+}
+static unsigned intRank(CType ty) {
+    assert(ty->k == TYPRIM);
+    return intRank(ty->tags);
+}
+static unsigned floatRank(uint32_t tags) {
+    assert(!(tags & (intergers_or_bool)));
+    assert(!(tags & TYVOID));
+    if (tags & TYFLOAT)
+        return 7;
+    if (tags & TYDOUBLE)
+        return 8;
+    if (tags & TYF128)
+        return 9;
+    llvm_unreachable("");
+}
+static unsigned floatRank(CType ty) {
+    assert(ty->k == TYPRIM);
+    return floatRank(ty->tags);
+}
+static unsigned scalarRankNoComplex(uint32_t tags) {
+    if (tags & floatings)
+        return floatRank(tags);
+    return intRank(tags);
+}
+static unsigned scalarRankNoComplex(CType ty) {
+    assert(ty->k == TYPRIM);
+    return scalarRankNoComplex(ty->tags);
+}
+static unsigned scalarRank(uint32_t tags) {
+    if (tags & TYCOMPLEX)
+        return scalarRankNoComplex(tags) + 10;
+    return scalarRankNoComplex(tags);
+}
+static unsigned scalarRank(CType ty) {
+    assert(ty->k == TYPRIM);
+    return scalarRank(ty->tags);
 }
 #include "console.cpp"
 #include "Diagnostic.cpp"

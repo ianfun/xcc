@@ -303,7 +303,6 @@ def gen_type_tags():
 	tags = [
 		"TYAUTO",
 		"TYCONST",
-		"TYCONSTEXPR",
 		"TYRESTRICT",
 		"TYVOLATILE",
 		"TYATOMIC",
@@ -315,10 +314,10 @@ def gen_type_tags():
 		"TYTHREAD_LOCAL",
 		"TYTYPEDEF",
 		"TYLVALUE",
-		"TYPARAM",
 		"TYVOID",
 		"TYBOOL",
 		"TYCOMPLEX",
+		"TYIMAGINARY"
 		"TYINT8",
 		"TYINT16",
 		"TYINT32",
@@ -329,9 +328,11 @@ def gen_type_tags():
 		"TYUINT32",
 		"TYUINT64",
 		"TYUINT128",
-		"TYFLOAT",
-		"TYDOUBLE",
-		"TYF128"
+		"TYHALF", # HalfTyID
+		"TYFLOAT", # FloatTyID
+		"TYDOUBLE", # DoubleTyID
+		"TYF80", # X86_FP80TyID
+		"TYF128", # FP128TyID
 	]
 	i = 0
 	f.write("constexpr uint32_t\n  TYINVALID=0,\n")
@@ -340,12 +341,14 @@ def gen_type_tags():
 		f.write("  %s=0x%x,\n" % (t, x))
 		i += 1
 	f.write("""\
-  floatings = TYFLOAT | TYDOUBLE | TYF128,
+  floatings = TYHALF | TYFLOAT | TYDOUBLE | TYF80 | TYF128,
   signed_integers = TYINT8 | TYINT16 | TYINT32 | TYINT64 | TYINT128,
   unigned_integers = TYUINT8 | TYUINT16 | TYUINT32 | TYUINT64 | TYUINT128,
   intergers = signed_integers | unigned_integers,
   intergers_or_bool = intergers | TYBOOL,
-  ty_prim = intergers_or_bool | floatings;\n""")
+  ty_prim = intergers_or_bool | floatings,
+  ty_basic = ty_prim | TYCOMPLEX | TYIMAGINARY;
+""")
 	f.close()
 	verbose("done.\n")
 	return Monad.get()
