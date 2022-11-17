@@ -816,7 +816,7 @@ STD_INCLUDE:
             case '\'': return lexCharLit();
             case '(': eat(); return TLbracket;
             case ')': eat(); return TRbracket;
-            case '~': eat(); return TBash;
+            case '~': eat(); return TBitNot;
             case '?': eat(); return TQuestionMark;
             case '{': eat(); return TLcurlyBracket;
             case '}': eat(); return TRcurlyBracket;

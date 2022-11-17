@@ -1,9 +1,9 @@
-template <typename T, unsigned InitialSize> struct ScopeBase {
+template <typename T> struct ScopeBase {
     struct Storage {
         IdentRef sym;
         T info;
     };
-    SmallVector<Storage, InitialSize> data{};
+    std::vector<Storage> data{};
     using iterator = Storage *;
     using const_iterator = const Storage *;
     iterator begin() { return data.data(); }
@@ -46,7 +46,7 @@ template <typename T, unsigned InitialSize> struct ScopeBase {
     size_t numSyms() const { return data.size(); }
     void resize_for_overwrite(size_t N) { data.resize_for_overwrite(N); }
 };
-template <typename T, unsigned InitialSize = 64> struct BlockScope : public ScopeBase<T, InitialSize> {
+template <typename T> struct BlockScope : public ScopeBase<T> {
     // https://stackoverflow.com/q/1120833
     // Derived template-class access to base-class member-data
     SmallVector<size_t, 8> blocks{};
@@ -56,7 +56,7 @@ template <typename T, unsigned InitialSize = 64> struct BlockScope : public Scop
     void pop() {
         assert(blocks.size() && "mismatched push/pop: no stack to pop()!");
         maxSyms = std::max(maxSyms, blocks.back());
-        this->data.truncate(blocks.back());
+        this->data.resize(blocks.back());
         blocks.pop_back();
     }
     void finalizeGlobalScope() {
@@ -99,7 +99,7 @@ template <typename T, unsigned InitialSize = 64> struct BlockScope : public Scop
         return false;
     }
 };
-template <typename T, unsigned InitialSize = 64> struct FunctionAndBlockScope : public BlockScope<T, InitialSize> {
+template <typename T> struct FunctionAndBlockScope : public BlockScope<T> {
     size_t _current_function_offset;
     auto current_function() { return this->data.data() + _current_function_offset; }
     auto current_function() const { return this->data.data() + _current_function_offset; }

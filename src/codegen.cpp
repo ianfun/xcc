@@ -48,6 +48,7 @@ struct IRGen : public DiagnosticHelper {
         types[xfloat] = llvm::Type::getFloatTy(ctx);
         types[xdouble] = llvm::Type::getDoubleTy(ctx);
         types[xfp128] = llvm::Type::getFP128Ty(ctx);
+        types[xfp128ppc] = llvm::Type::getPPC_FP128Ty(ctx);
         intptrTy = layout->getIntPtrType(ctx);
         pointerSizeInBits = intptrTy->getBitWidth();
 
@@ -314,7 +315,7 @@ struct IRGen : public DiagnosticHelper {
     }
     Value make_complex_pair(llvm::Type *ty, Value a, Value b) {
         auto T = cast<llvm::StructType>(ty);
-        if (currentfunction)
+        if (!currentfunction)
             return llvm::ConstantStruct::get(T, {cast<llvm::Constant>(a), cast<llvm::Constant>(b)});
         return B.CreateInsertValue(B.CreateInsertValue(PoisonValue::get(T), a, {0}), b, {1});
     }
@@ -1125,7 +1126,7 @@ BINOP_ATOMIC_RMW:
                  c = gen_complex_real(rhs),
                  d = gen_complex_imag(rhs);
                 Value L, R;
-                if (e->ty->isFloating()) {
+                if (e->lhs->ty->isFloating()) {
                     L = B.CreateFCmpOEQ(a, c);
                     R = B.CreateFCmpOEQ(b, d);
                 } else {
@@ -1142,7 +1143,7 @@ BINOP_ATOMIC_RMW:
                  c = gen_complex_real(rhs),
                  d = gen_complex_imag(rhs);
                 Value L, R;
-                if (e->ty->isFloating()) {
+                if (e->lhs->ty->isFloating()) {
                     L = B.CreateFCmpONE(a, c);
                     R = B.CreateFCmpONE(b, d);
                 } else {

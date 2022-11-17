@@ -1,21 +1,22 @@
+# sudo apt install llvm-15 liblld-15 liblld-15-dev
+LLVM_OBJ_ROOT=/usr/lib/llvm-15/build/Debug+Asserts/lib
+LLVM_INCLUDE=-I/usr/lib/llvm-15/build/Debug+Asserts/include
+CXX_INCS=-I/usr/lib/gcc/x86_64-linux-gnu/9/include -I/usr/local/include
+# LLD is optional
+LLD_ROOT=/usr/local/lib
 # C++ cmopiler
 CC=clang++
-
-# include files
-CXXINCS=-I/usr/include/c++/9 -I/usr/include/x86_64-linux-gnu/c++/9 -I/usr/lib/gcc/x86_64-linux-gnu/9/include
-
 # LLVM C++ flags
-CXXFLAGS=-I/usr/lib/llvm-15/include -std=c++14 -fno-exceptions -D_GNU_SOURCE -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS
-
+CXXFLAGS=$(LLVM_INCLUDE) -std=c++14 -fno-exceptions -D_GNU_SOURCE -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS
 # change this to -c if you want to skip linking
 # Flags to link with LLVM libary
-LDFLAGS=-L/usr/lib/llvm-15/lib -lLLVM-15 -lz -ldl -lpthread -pthread -ltinfo
+LDFLAGS='-L$(LLVM_OBJ_ROOT)' -lLLVM-15 -lz -ldl -lpthread -pthread -ltinfo
 # zlib, dlopen/dlsym/dlclose, pthread, Terminfo
 
 # Flags to link with LLD libary
 # assume you build llvm-project/LLD and `make install` in /usr/local directory
 LLDFLAGS= \
--L/usr/local/lib \
+-L$(LLD_ROOT) \
 -llldCOFF \
 -llldCommon \
 -llldELF \
@@ -60,5 +61,4 @@ all: testLexer testCpp testParser testCodeGen testJit main mainNoLLD
 # clean outputs
 clean:
 	rm -f lexer cpp parser codegen jit xcc *.out *.o *.ll
-
 

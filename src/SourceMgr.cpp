@@ -54,10 +54,10 @@ struct Stream /*FileStream*/ {
 
 struct SourceMgr : public DiagnosticHelper {
     SmallString<STREAM_BUFFER_SIZE> buf;
-    SmallVector<const char *> sysPaths;
-    SmallVector<xstring> userPaths;
-    SmallVector<Stream> streams;
-    SmallVector<fileid_t> includeStack;
+    std::vector<const char *> sysPaths;
+    std::vector<xstring> userPaths;
+    std::vector<Stream> streams;
+    std::vector<fileid_t> includeStack;
     bool hasStdinAdded = false;
     LocTree *tree;
     uint32_t getLine() const { return streams[includeStack.back()].line; }

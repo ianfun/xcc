@@ -391,11 +391,16 @@ static const char *show(enum UnaryOp o) {
     switch (o) {
     case UNeg:
     case SNeg:
+    case CNeg:
     case FNeg: return "-";
-    case Not: return "!";
+    case CConj:
+    case Not: return "~";
     case AddressOf: return "&";
-    case Dereference: return "";
-    case LogicalNot: return "~";
+    case Dereference: return "*";
+    case LogicalNot: return "!";
+    case C__real__: return "__real__ ";
+    case C__imag__: return "__imag__ ";
+    case ToBool: return "(_Bool)";
     default: return "(unknown unary operator)";
     }
 }
@@ -533,6 +538,7 @@ enum TypeIndex {
     floatty,
     doublety,
     fp128ty,
+    fp128ppcty,
     ptrty,
     TypeIndexHigh
 };
@@ -547,6 +553,7 @@ enum NoSignTypeIndex {
     xfloat,
     xdouble,
     xfp128,
+    xfp128ppc,
     xptr,
     NoSignTypeIndexHigh
 };
@@ -581,6 +588,8 @@ static TypeIndex getTypeIndex(type_tag_t tags) {
         return floatty;
     if (tags & TYF128)
         return fp128ty;
+    if (tags & TYPPC_128)
+        return fp128ppcty;
     llvm_unreachable("bad type provided for getTypeIndex()");
 }
 static NoSignTypeIndex getNoSignTypeIndex(type_tag_t tags) {
@@ -604,6 +613,8 @@ static NoSignTypeIndex getNoSignTypeIndex(type_tag_t tags) {
         return xdouble;
     if (tags & TYF128)
         return xfp128;
+    if (tags & TYPPC_128)
+        return xfp128ppc;
     llvm_unreachable("bad type provided for getNoSignTypeIndex()");
 }
 static enum BinOp getAtomicrmwOp(Token tok) {
@@ -815,34 +826,36 @@ struct PPMacroDef {
     LocationBase loc;
 };
 static unsigned intRank(type_tag_t tags) {
-    assert(!(tags & (TYVOID | floatings)));
-    assert(tags & intergers_or_bool);
     if (tags & TYBOOL)
         return 1;
     if (tags & (TYINT8 | TYUINT8))
-        return 2;
+        return 8;
     if (tags & (TYINT16 | TYUINT16))
-        return 3;
+        return 16;
     if (tags & (TYINT32 | TYUINT32))
-        return 4;
+        return 32;
     if (tags & (TYINT64 | TYUINT64))
-        return 5;
-    return 6;
+        return 64;
+    if (tags & (TYINT128 | TYUINT128))
+        return 128;
+    llvm_unreachable("bad call to intRank");
 }
 static unsigned intRank(CType ty) {
     assert(ty->k == TYPRIM);
     return intRank(ty->tags);
 }
 static unsigned floatRank(type_tag_t tags) {
-    assert(!(tags & (intergers_or_bool)));
-    assert(!(tags & TYVOID));
+    if (tags & TYHALF)
+        return 128 + 16;
     if (tags & TYFLOAT)
-        return 7;
+        return 128 + 32;
     if (tags & TYDOUBLE)
-        return 8;
+        return 128 + 64;
     if (tags & TYF128)
-        return 9;
-    llvm_unreachable("");
+        return 128 + 128;
+    if (tags & TYPPC_128)
+        return 128 + 128;
+    llvm_unreachable("bad call to floatRank");
 }
 static unsigned floatRank(CType ty) {
     assert(ty->k == TYPRIM);
@@ -859,7 +872,7 @@ static unsigned scalarRankNoComplex(CType ty) {
 }
 static unsigned scalarRank(type_tag_t tags) {
     if (tags & TYCOMPLEX)
-        return scalarRankNoComplex(tags) + 10;
+        return scalarRankNoComplex(tags) + 128 + 128;
     return scalarRankNoComplex(tags);
 }
 static unsigned scalarRank(CType ty) {

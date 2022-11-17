@@ -38,6 +38,7 @@ type_tags = (
 	"TYDOUBLE", # DoubleTyID
 	"TYF80", # X86_FP80TyID
 	"TYF128", # FP128TyID
+	"TYPPC_128" # PPC_FP128TyID
 )
 
 keywords = (
@@ -535,6 +536,12 @@ unsigned getBitWidth() const {
 	    return 64;
 	if (tags & TYFLOAT)
 	    return 32;
+	if (tags & TYF80)
+		return 80;
+	if (tags & (TYF128 | TYPPC_128))
+		return 128;
+	if (tags & TYHALF)
+		return 16;
 	llvm_unreachable("getting bitWidth in no floating type or integer type");
 }
 // tags is the first member in structure

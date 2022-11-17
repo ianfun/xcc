@@ -72,10 +72,16 @@ unsigned getBitWidth() const {
 	    return 64;
 	if (tags & TYFLOAT)
 	    return 32;
+	if (tags & TYF80)
+		return 80;
+	if (tags & (TYF128 | TYPPC_128))
+		return 128;
+	if (tags & TYHALF)
+		return 16;
 	llvm_unreachable("getting bitWidth in no floating type or integer type");
 }
 // tags is the first member in structure
-type_tag_t tags: 33;
+type_tag_t tags: 34;
 unsigned k: 4;
 // https://llvm.org/doxygen/structllvm_1_1Align.html
 unsigned align: 8; // align in LogValue
@@ -121,13 +127,13 @@ union {
   };
 };
 struct PrimType {
-  type_tag_t tags: 33;
+  type_tag_t tags: 34;
   unsigned k: 4 =TYPRIM;
   unsigned align: 8;
  /* empty! */ 
 };
 struct PointerType {
-  type_tag_t tags: 33;
+  type_tag_t tags: 34;
   unsigned k: 4 =TYPOINTER;
   unsigned align: 8;
   struct {
@@ -135,7 +141,7 @@ struct PointerType {
   };
 };
 struct StructType {
-  type_tag_t tags: 33;
+  type_tag_t tags: 34;
   unsigned k: 4 =TYSTRUCT;
   unsigned align: 8;
   struct {
@@ -145,7 +151,7 @@ struct StructType {
   };
 };
 struct UnionType {
-  type_tag_t tags: 33;
+  type_tag_t tags: 34;
   unsigned k: 4 =TYUNION;
   unsigned align: 8;
   struct {
@@ -155,7 +161,7 @@ struct UnionType {
   };
 };
 struct EnumType {
-  type_tag_t tags: 33;
+  type_tag_t tags: 34;
   unsigned k: 4 =TYENUM;
   unsigned align: 8;
   struct {
@@ -165,7 +171,7 @@ struct EnumType {
   };
 };
 struct BitfieldType {
-  type_tag_t tags: 33;
+  type_tag_t tags: 34;
   unsigned k: 4 =TYBITFIELD;
   unsigned align: 8;
   struct {
@@ -174,7 +180,7 @@ struct BitfieldType {
   };
 };
 struct ArrayType {
-  type_tag_t tags: 33;
+  type_tag_t tags: 34;
   unsigned k: 4 =TYARRAY;
   unsigned align: 8;
   struct {
@@ -185,7 +191,7 @@ struct ArrayType {
   };
 };
 struct FunctionType {
-  type_tag_t tags: 33;
+  type_tag_t tags: 34;
   unsigned k: 4 =TYFUNCTION;
   unsigned align: 8;
   struct {
@@ -195,7 +201,7 @@ struct FunctionType {
   };
 };
 struct IncompleteType {
-  type_tag_t tags: 33;
+  type_tag_t tags: 34;
   unsigned k: 4 =TYINCOMPLETE;
   unsigned align: 8;
   struct {
