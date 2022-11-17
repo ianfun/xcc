@@ -1,64 +1,11 @@
 // CType - 64 bit unsigned integer
-enum CTypeKind {};
-enum FloatKindEnum {
-    F_Half, // https://en.wikipedia.org/wiki/Half-precision_floating-point_format
-    F_BFloat, // https://en.wikipedia.org/wiki/Bfloat16_floating-point_format
-    F_Float, // https://en.wikipedia.org/wiki/Single-precision_floating-point_format
-    F_Double, // https://en.wikipedia.org/wiki/Double-precision_floating-point_format
-    F_x87_80, // 80 bit float (X87)
-    F_Quadruple, // https://en.wikipedia.org/wiki/Quadruple-precision_floating-point_format
-    F_PPC128 // https://gcc.gnu.org/wiki/Ieee128PowerPC
-};
-struct FloatKind {
-    enum FloatKindEnum e;
-    inline FloatKind(enum FloatKindEnum k) e{k} { }
-    enum FloatKindEnum getKind() { return e; }
-    inline operator enum FloatKindEnum() const { return e; }
-    uint64_t getBitSize() const {
-        switch (e) {
-        case F_Half:
-        case F_BFloat: return 16;
-        case F_Float: return 32;
-        case F_Double: return 64;
-        case F_x87_80: return 80;
-        case F_Quadruple:
-        case F_PPC128: return 128;
-        }
-        llvm_unreachable("broken type: invalid FloatKindEnum");
-    };
-    llvm::Type *toLLVMType(LLVMContext &ctx) const {
-        switch (e) {
-        case F_Half: return llvm::Type::getHalfTy(ctx);
-        case F_BFloat: return llvm::Type::getBFloatTy(ctx);
-        case F_Float: return llvm::Type::getFloatTy(ctx);
-        case F_Double: return llvm::Type::getDouble(ctx);
-        case F_x87_80: return llvm::Type::getX86_FP80Ty(ctx);
-        case F_Quadruple: return llvm::Type::getFP128Ty(ctx);
-        case F_PPC128: return llvm::Type::getPPC_FP128Ty(ctx);
-        }
-        llvm_unreachable("broken type: invalid FloatKindEnum");
-    }
-    llvm::fltSemantics &llvm::getFltSemantics() const {
-        switch (e) {
-        case F_Half: return APFloat::IEEEhalf();
-        case F_BFloat: return APFloat::BFloat();
-        case F_Float: APFloat::IEEEsingle();
-        case F_Double: return APFloat::IEEEdouble();
-        case F_x87_80: return APFloat::x87DoubleExtended();
-        case F_Quadruple: return APFloat::IEEEquad();
-        case F_PPC128: return APFloat::PPCDoubleDouble();
-        }
-        llvm_unreachable("broken type: invalid FloatKindEnum");
-    }
-    bool isIEEE() const {
-        return APFloat::getZero(getFltSemantics()).isIEEE();
-    }
-};
-
 struct OpacheCType
 {
+private:
     uint64_t tags;
+public:
     uint64_t getTags() const { return this->tags; }
+    void setTags(uint64_t new_tag) { this->tags = new_tag; }
     void setTags(const uint64_t new_tags) { this->tags = new_tags; }
     bool hasTag(const uint64_t tag) const {
         return this->tags & tag;
@@ -69,11 +16,45 @@ struct OpacheCType
     void addTag(const uint64_t tag) {
         this->tags |= tag;
     }
-    void addTags(const uint64_t tags) {
-        this->tags |= tags;
+    void addTags(const ArrayRef<uint64_t> tags) {
+        for (const auto T: tags)
+            this->tags |= T;
+    }
+    void operator+=(uint64_t v) {
+        addTags(v);
+    }
+    void operator-=(uint64_t v) {
+        clearTags(v);
+    }
+    uint64_t +(uint64_t tag) const {
+        return getTags() | tag;
+    }
+    uint64_t -(uint64_t tag) const {
+        return getTags() ^ tag;
+    }
+    uint64_t add(uint64_t tag) const {
+        return getTags() | tag;
+    }
+    uint64_t del(uint64_t tag) const {
+        return getTags() ^ tag;
+    }
+    void clearTags(const uint64_t tags_to_clear) {
+        this->tag &= ~tags_to_clear;
+    }
+    uint64_t andTags(const uint64_t tag_to_clear) const {
+        return this->tag & tag_to_clear;
     }
     enum CTypeKind getKind() const {
-        return static_cast<enum CTypeKind>(this->tags >> 60);
+        return static_cast<enum CTypeKind>(this->tags >> 52);
+    }
+    uint64_t getAlign() const {
+        return this->tags >> 56;
+    }
+    void setAlign(uint64_t align) {
+        assert(llvm::isPowerOf2_64(align) && "Alignment is not a power of 2");
+        auto ShiftValue = Log2_64(align);
+        assert(ShiftValue < 64 && "Broken invariant");
+        this->tags |= align >> 50;
     }
     void clearKind() const {
         this->tags &= 0xfffffff0ULL;
@@ -83,27 +64,31 @@ struct OpacheCType
         clearKind();
         this->tags |= static_cast<uint64_t>(kind) << 60;
     }
+    static uint64_t getFloatingBit() { return 0x800000000000000ULL; }
     bool isInteger() const {
-        return this->tags & 0x800000000000000ULL;
+        return !(this->tags & getFloatingBit());
     }
     bool isFloating() const {
-        return !(this->tags & 0x800000000000000ULL);
+        return this->tags & getFloatingBit();
     }
-    void toggleInteger() {
-        this->tags ^= 0x800000000000000ULL;
+    void toggleIntegerBit() {
+        this->tags ^= getFloatingBit();
+    }
+    static uint64_t getSignedBit() {
+        return 0x400000000000000ULL;
     }
     bool isSigned() const {
-        return this->tags & 0x400000000000000ULL;
+        return this->tags & getSignedBit();
     }
     bool isUnsigned() const {
-        return !(this->tags & 0x400000000000000ULL);
+        return !(this->tags & getSignedBit());
     }
     void toggleSign() {
-        this->tags ^= 0x400000000000000ULL;
+        this->tags ^= getSignedBit();
     }
     uint64_t getBitWidthForInteger() {
         assert(isInteger());
-        return this->tags >> 62;
+        return this->tags >> 58;
     }
     FloatKind getFloatKind() {
         assert(isFloating());
@@ -114,6 +99,44 @@ struct OpacheCType
             return getBitWidthForInteger();
         return getFloatKind().getBitSize();
     }
-};
-static_assert(sizeof(enum FloatKindEnum) == sizeof(FloatKind), "The C++ compiler and XCC disagree on the size of FloatKind!\n");
-static_assert(sizeof(CType) == sizeof(uint64_t), "The C++ compiler and XCC disagree on the size of CType!\n");
+    void setIntergerBithWidth(uint64_t Size) {
+        assert(isInteger());
+        assert(!getBitWidthForInteger() && "already set size!");
+        this->tags |= Size << 62;
+    }
+    void setFloatKind(FloatKind k) {
+        assert(getFloatKind() != F_Invalid);
+        assert(k.isValid());
+        this->tags |= Size << 62;
+    }
+    bool isScalar() const {
+        auto k = getKind();
+        return k == TYPOINTER || (k == TYPRIM && !(this->tags & TYVOID));
+    }
+    void noralize() {
+        constexpr type_tag_t mask = ty_storages;
+        switch (k) {
+        case TYFUNCTION:
+        {
+            type_tag_t h = ret->del(mask);
+            ret->clearTags(mask);
+            addTags(h);
+            break;
+        }
+        case TYARRAY:
+        {
+            type_tag_t h = arrtype->del(mask);
+            arrtype->clearTags(mask);
+            addTags(h);
+            break;
+        }
+        case TYPOINTER:
+        {
+            type_tag_t h = p->del(mask);
+            p->clearTags(mask);
+            addTags(h);
+            break;
+        }
+        default: break;
+        }
+    }

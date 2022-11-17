@@ -143,19 +143,19 @@ struct Parser : public DiagnosticHelper {
         return complex_pair(a, b, tryGetComplexTypeFromNonComplex(a->ty->tags));
     }
     Expr complex_zero(CType ty) {
-        assert(ty->tags & TYCOMPLEX);
+        assert(ty->hasTag(TYCOMPLEX));
         auto T = irgen.wrapComplex(ty->tags);
         auto zero = llvm::Constant::getNullValue(T->getTypeAtIndex((unsigned)0));
         return wrap(ty, llvm::ConstantStruct::get(T, {zero, zero}));
     }
     Expr complex_neg_zero(CType ty) {
-        assert(ty->tags & TYCOMPLEX);
+        assert(ty->hasTag(TYCOMPLEX));
         auto T = irgen.wrapComplex(ty->tags);
         auto neg_zero = ConstantFP::getNegativeZero(T->getTypeAtIndex((unsigned)0));
         return wrap(ty, llvm::ConstantStruct::get(T, {neg_zero, neg_zero}));
     }
     Expr complex_pos_neg_zero(CType ty) {
-        assert(ty->tags & TYCOMPLEX);
+        assert(ty->hasTag(TYCOMPLEX));
         auto T = irgen.wrapComplex(ty->tags);
         auto TY = T->getTypeAtIndex((unsigned)0);
         auto zero = ConstantFP::getZero(TY);
@@ -163,7 +163,7 @@ struct Parser : public DiagnosticHelper {
         return wrap(ty, llvm::ConstantStruct::get(T, {zero, neg_zero}));
     }
     Expr complex_neg_nan_pair(CType ty) {
-        assert(ty->tags & TYCOMPLEX);
+        assert(ty->hasTag(TYCOMPLEX));
         auto T = irgen.wrapComplex(ty->tags);
         auto TY = T->getTypeAtIndex((unsigned)0);
         auto neg_zero = ConstantFP::getNegativeZero(TY);
@@ -171,7 +171,7 @@ struct Parser : public DiagnosticHelper {
         return wrap(ty, llvm::ConstantStruct::get(T, {neg_zero, qnan}));
     }
     Expr complex_inf_pair(CType ty) {
-        assert(ty->tags & TYCOMPLEX);
+        assert(ty->hasTag(TYCOMPLEX));
         auto T = irgen.wrapComplex(ty->tags);
         auto inf = ConstantFP::getInfinity(T->getTypeAtIndex((unsigned)0));
         return wrap(ty, llvm::ConstantStruct::get(T, {inf, inf}));
@@ -180,7 +180,7 @@ struct Parser : public DiagnosticHelper {
     CType gettypedef(IdentRef Name) {
         assert(Name && "gettypedef: Name is nullptr");
         auto it = sema.typedefs.getSym(Name);
-        if (it && it->ty->tags & TYTYPEDEF)
+        if (it && it->ty->hasTag(TYTYPEDEF))
             return it->ty;
         return nullptr;
     }
@@ -287,22 +287,22 @@ struct Parser : public DiagnosticHelper {
         CType base = yt->ret;
         if (base->k == TYARRAY)
             type_error(full_loc, "function cannot return array");
-        if (base->tags & TYREGISTER)
+        if (base->hasTag(TYREGISTER))
             warning(full_loc, "'register' in function return type");
-        if (base->tags & TYTHREAD_LOCAL)
+        if (base->hasTag(TYTHREAD_LOCAL))
             warning(full_loc, "'_Thread_local' in function return type");
-        if (base->tags & (TYCONST | TYRESTRICT | TYVOLATILE | TYATOMIC))
+        if (base->hasTag((TYCONST | TYRESTRICT | TYVOLATILE | TYATOMIC)))
             warning(full_loc, "type qualifiers ignored in function");
         size_t idx;
         auto it = sema.typedefs.getSymInCurrentScope(Name, idx);
         if (it) {
             if (!compatible(yt, it->ty)) {
                 type_error(full_loc, "conflicting types for function declaration %I", Name);
-            } else if (!(it->ty->ret->tags & TYSTATIC) && base->tags & TYSTATIC) {
+            } else if (!it->ty->ret->hasTag(TYSTATIC) && base->hasTag(TYSTATIC)) {
                 type_error(full_loc, "static declaration of %I follows non-static declaration", Name);
                 note(it->loc, "previous declaration of %I was here", Name);
             } else {
-                it->ty->tags |= it->ty->ret->tags & (TYSTATIC);
+                it->ty->addTag(it->ty->ret->getTags() & (TYSTATIC));
             }
         } else {
             idx = sema.typedefs.putSym(
@@ -319,14 +319,14 @@ struct Parser : public DiagnosticHelper {
         size_t idx;
         auto it = sema.typedefs.getSymInCurrentScope(Name, idx);
         if (it) {
-            if (yt->tags & TYTYPEDEF) {
+            if (yt->hasTag(TYTYPEDEF)) {
                 if (!compatible(it->ty, yt)) {
                     type_error("%I redeclared as different kind of symbol", Name);
                     note(it->loc, "previous declaration of %I is here", Name);
                 }
                 goto PUT;
             }
-            if (isTopLevel() || (yt->tags & (TYEXTERN | TYSTATIC))) {
+            if (isTopLevel() || (yt->hasTag((TYEXTERN | TYSTATIC))) {
                 auto M = type_qualifiers | TYSTATIC | TYTHREAD_LOCAL | TYREGISTER | TYTYPEDEF | TYATOMIC;
                 CType old = it->ty;
                 bool err = true;
@@ -378,7 +378,7 @@ struct Parser : public DiagnosticHelper {
         assert(p->k == expected->k);
         switch (p->k) {
         case TYPRIM:
-            if ((p->tags & (ty_prim | TYCOMPLEX)) == (expected->tags & (ty_prim | TYCOMPLEX)))
+            if ((p->getTags() & (ty_prim | TYCOMPLEX)) == (expected->getTags() & (ty_prim | TYCOMPLEX)))
                 return Cast_Ok;
             if (getNoSignTypeIndex(p->tags) == getNoSignTypeIndex(expected->tags))
                 return Cast_Sign;
@@ -394,9 +394,9 @@ struct Parser : public DiagnosticHelper {
         case TYENUM:
         case TYUNION: return p == expected ? Cast_Ok : Cast_Imcompatible;
         case TYPOINTER:
-            if ((p->p->tags & TYCONST) > (expected->p->tags & TYCONST))
+            if ((p->p->getTags() & TYCONST) > (expected->p->getTags() & TYCONST))
                 return Cast_DiscardsQualifiers;
-            if (p->p->tags & TYVOID || expected->p->tags & TYVOID)
+            if (p->p->hasTag(TYVOID) || expected->p->hasTag(TYVOID))
                 return Cast_Ok;
             return canBeSavelyCastTo(p->p, expected->p);
         case TYINCOMPLETE: return (p->tag == expected->tag && p->name == expected->name) ? Cast_Ok : Cast_Imcompatible;
@@ -428,7 +428,7 @@ struct Parser : public DiagnosticHelper {
             return e->k == EConstant ?
                 wrap(to, llvm::ConstantExpr::getFPTrunc(e->C, irgen.wrapNoComplexSCalar(to)), e->loc) :
                 make_cast(e, FPTrunc, to);
-        if (to->tags & (TYF128 | TYPPC_128))
+        if (to->hasTag(TYF128 | TYPPC_128))
             type_error(e->loc, "unsupported floating fast");
         return e;
     }
@@ -436,15 +436,15 @@ struct Parser : public DiagnosticHelper {
         assert(e && "cast from nullptr");
         assert(e->ty && "cannot cast from expression with no type");
         assert(to && "cast type is nullptr");
-        if ((to->tags & intergers_or_bool)) {
+        if (to->isInteger()) {
             const unsigned
                 rA = to->getBitWidth(),
                 rB = e->ty->getBitWidth();
             if (rA > rB)
                 return
                     e->k == EConstant ?
-                        wrap(to, ((e->ty->tags & signed_integers) ? &llvm::ConstantExpr::getSExt : &llvm::ConstantExpr::getZExt)(e->C, irgen.wrapNoComplexSCalar(to), false), e->loc) :
-                        make_cast(e, e->ty->tags & signed_integers ? SExt : ZExt, to);
+                        wrap(to, (e->ty->isSigned() ? &llvm::ConstantExpr::getSExt : &llvm::ConstantExpr::getZExt)(e->C, irgen.wrapNoComplexSCalar(to), false), e->loc) :
+                        make_cast(e, e->ty->isSigned() ? SExt : ZExt, to);
             if (rA < rB)            
                 return e->k == EConstant ?
                     wrap(to, llvm::ConstantExpr::getTrunc(e->C, irgen.wrapNoComplexSCalar(to)), e->loc) :
@@ -455,7 +455,7 @@ struct Parser : public DiagnosticHelper {
     }
     Expr integer_to_ptr(Expr e, CType to) {
         assert(e->ty && "cannot cast from expression with no type");
-        assert((e->ty->tags & intergers_or_bool) && "bad call to integer_to_ptr()");
+        assert((e->ty->isInteger()) && "bad call to integer_to_ptr()");
         assert((to->k == TYPOINTER) && "bad call to integer_to_ptr()");
         if (e->k == EConstant) {
             auto CI = cast<ConstantInt>(e->C);
@@ -469,7 +469,7 @@ struct Parser : public DiagnosticHelper {
     Expr ptr_to_integer(Expr e, CType to) {
         assert(e->ty && "cannot cast from expression with no type");
         assert((e->ty->k == TYPOINTER) && "bad call to ptr_to_integer()");
-        assert((to->tags & intergers_or_bool) && "bad call to ptr_to_integer()");
+        assert((to->isInteger()) && "bad call to ptr_to_integer()");
         if (e->k == EConstant)
             return wrap(to, llvm::ConstantExpr::getPtrToInt(e->C, irgen.wrapNoComplexSCalar(to)), e->loc);
         return make_cast(e, PtrToInt, to);
@@ -477,7 +477,7 @@ struct Parser : public DiagnosticHelper {
     Expr integer_to_float(Expr e, CType to) {
         assert(e->ty && "cannot cast from expression with no type");
         assert(to->isFloating() && "bad call to integer_to_float()");
-        assert((e->ty->tags & intergers_or_bool) && "bad call to integer_to_float()");
+        assert((e->ty->isInteger()) && "bad call to integer_to_float()");
         if (e->ty->isSigned()) {
             if (e->k == EConstant)
                 return wrap(to, llvm::ConstantExpr::getSIToFP(e->C, irgen.wrapNoComplexSCalar(to)), e->loc);
@@ -490,7 +490,7 @@ struct Parser : public DiagnosticHelper {
     Expr float_to_integer(Expr e, CType to) {
         assert(e->ty && "cannot cast from expression with no type");
         assert(e->ty->isFloating() && "bad call to float_to_integer()");
-        assert((to->tags & intergers_or_bool) && "bad call to float_to_integer()");
+        assert((to->isInteger()) && "bad call to float_to_integer()");
         if (to->isSigned()) {
             if (e->k == EConstant)
                 return wrap(to, llvm::ConstantExpr::getFPToSI(e->C, irgen.wrapNoComplexSCalar(to)), e->loc);
@@ -565,7 +565,7 @@ PTR_CAST:
         Location loc = getLoc();
         if (type_equal(e->ty, to))
             return e;
-        if (e->ty->tags & TYVOID)
+        if (e->ty->hasTag(TYVOID))
             return type_error(loc, "cannot cast 'void' expression to type %T", to), e;
         if (to->k == TYINCOMPLETE || e->ty->k == TYINCOMPLETE)
             return type_error(loc, "cannot cast to incomplete type: %T", to), e;
@@ -577,11 +577,11 @@ PTR_CAST:
             return bit_cast(castto(e, context.getInt()), to);
         if (!(e->ty->isScalar() && to->isScalar()))
             return type_error(loc, "cast operand shall have scalar type"), e;
-        if (to->tags & TYBOOL) {
+        if (to->hasTag(TYBOOL)) {
             // simplify 'boolean(a) zext to int(b)' to 'a'
             if (e->k == EConstant)
                 foldBool(e, false);
-            else if (e->k == ECast && e->castop == ZExt && e->castval->ty->tags & TYBOOL)
+            else if (e->k == ECast && e->castop == ZExt && e->castval->ty->hasTag(TYBOOL))
                 return e->castval;
             if (e->k == EConstant)
                 if (auto CI = dyn_cast<ConstantInt>(e->C))
@@ -595,27 +595,27 @@ PTR_CAST:
         if (e->ty->k == TYPOINTER && to->k == TYPOINTER)
             return ptr_cast(e, to, implict);
         // if e is a complex number
-        if (e->ty->tags & TYCOMPLEX) {
+        if (e->ty->hasTag(TYCOMPLEX)) {
             Expr lhs = complex_get_real(e);
             Expr rhs = complex_get_imag(e);
             if (e->ty->isFloating()) {
                 if (to->isFloating())
-                    return (to->tags & TYCOMPLEX) ? 
+                    return (to->hasTag(TYCOMPLEX)) ? 
                         complex_pair(float_cast(lhs, to), float_cast(rhs, to), to) :
                         float_cast(lhs, to);
-                return (to->tags & TYCOMPLEX) ? 
+                return (to->hasTag(TYCOMPLEX)) ? 
                     complex_pair(float_to_integer(lhs, to), float_to_integer(rhs, to), to) :
                     float_to_integer(lhs, to);
             }
             if (to->isFloating())
-                return (to->tags & TYCOMPLEX) ? complex_pair(integer_to_float(lhs, to), integer_to_float(rhs, to), to) :
+                return to->hasTag(TYCOMPLEX) ? complex_pair(integer_to_float(lhs, to), integer_to_float(rhs, to), to) :
                   integer_to_float(lhs, to);
-            return (to->tags & TYCOMPLEX) ?
+            return to->hasTag(TYCOMPLEX) ?
                 complex_pair(int_cast(lhs, to), int_cast(rhs, to), to) :
                 int_cast(lhs, to);
         }
         // than, e is not a complex number, and cast to complex
-        if (to->tags & TYCOMPLEX) {
+        if (to->hasTag(TYCOMPLEX) {
             if (to->isFloating())
                 return complex_from_real((this->*(e->ty->isFloating() ? &Parser::float_cast : &Parser::integer_to_float))(e, to), to);
             if (e->ty->isFloating())
@@ -624,13 +624,13 @@ PTR_CAST:
         }
         if (e->ty->isFloating() && to->isFloating())
             return float_cast(e, to);
-        if (e->ty->tags & intergers_or_bool && to->isFloating())
+        if (e->ty->isInteger() && to->isFloating())
             return integer_to_float(e, to);
-        if (e->ty->isFloating() && to->tags & intergers_or_bool)
+        if (e->ty->isFloating() && to->isInteger())
             return float_to_integer(e, to);
-        if (e->ty->k == TYPOINTER && to->tags & intergers_or_bool)
+        if (e->ty->k == TYPOINTER && to->isInteger())
             return ptr_to_integer(e, to);
-        if (e->ty->tags & intergers_or_bool && to->k == TYPOINTER)
+        if (e->ty->isInteger() && to->k == TYPOINTER)
             return integer_to_ptr(e, to);
         return int_cast(e, to);
     }
@@ -660,12 +660,12 @@ PTR_CAST:
     void leaveBlock2() {
         if (!getNumErrors()) {
             for (const auto &it : sema.typedefs) {
-                if (it.info.ty->tags & TYTYPEDEF)
+                if (it.info.ty->hasTag(TYTYPEDEF))
                     continue;
                 if (it.info.ty->k == TYFUNCTION) {
-                    if (it.info.ty->ret->tags & TYSTATIC)
+                    if (it.info.ty->ret->hasTag(TYSTATIC))
                         warning(it.info.loc, "static function %I' declared but not used", it.sym);
-                } else if (it.info.ty->tags & TYSTATIC) {
+                } else if (it.info.ty->hasTag(TYSTATIC)) {
                     warning(it.info.loc, "static variable %I declared but not used", it.sym);
                 }
             }
@@ -674,11 +674,11 @@ PTR_CAST:
         sema.tags.finalizeGlobalScope();
     }
     void to2(Expr &e, type_tag_t tag) {
-        if ((e->ty->tags & ty_prim) != tag)
+        if ((e->ty->getTags() & ty_prim) != tag)
             e = castto(e, context.make(tag));
     }
     void integer_promotions(Expr &e) {
-        if (e->ty->k == TYBITFIELD || (e->ty->tags & (TYBOOL | TYINT8 | TYUINT8 | TYINT16 | TYUINT16) && !(e->ty->tags & TYCOMPLEX)))
+        if (e->ty->k == TYBITFIELD || (e->ty->hasTag(TYBOOL | TYINT8 | TYUINT8 | TYINT16 | TYUINT16) && !e->ty->hasTag(TYCOMPLEX)))
             to2(e, TYINT);
     }
     void complex_conv(Expr &a, Expr &b, const type_tag_t at, const type_tag_t bt) {
@@ -743,8 +743,8 @@ PTR_CAST:
             return;
         auto sizeofa = getsizeof(a->ty);
         auto sizeofb = getsizeof(b->ty);
-        bool isaunsigned = (at & unigned_integers);
-        bool isbunsigned = (bt & unigned_integers);
+        bool isaunsigned = a->ty->isUnsigned();
+        bool isbunsigned = b->ty->isUnsigned();
         // if operand has the same sign
         if (isaunsigned == isbunsigned)
             return sizeofa > sizeofb ? b = castto(b, a->ty) : a = castto(a, b->ty), (void)0;
@@ -763,11 +763,11 @@ PTR_CAST:
     void default_argument_promotions(Expr &e) {
         if (e->ty->k == TYENUM || e->ty->k == TYUNION || e->ty->k == TYSTRUCT || e->ty->k == TYPOINTER)
             return;
-        if (e->ty->tags & TYFLOAT)
+        if (e->ty->hasTag(TYFLOAT))
             e = castto(e, context.getDobule());
         integer_promotions(e);
     }
-    bool checkInteger(CType ty) { return ty->tags & intergers_or_bool; }
+    bool checkInteger(CType ty) { return ty->isInteger(); }
     bool checkInteger(Expr e) { return checkInteger(e->ty); }
     void checkInteger(Expr a, Expr b) {
         if (!(checkInteger(a->ty) && checkInteger(b->ty)))
@@ -854,7 +854,7 @@ PTR_CAST:
     }
     void make_ptr_arith(Expr &e) {
         assert(e->ty->k == TYPOINTER && "expect a pointer");
-        if ((e->ty->p->tags & TYVOID) || (e->k == EUnary && e->uop == AddressOf && e->ty->p->k == TYFUNCTION)) {
+        if (e->ty->p->hasTag(TYVOID) || (e->k == EUnary && e->uop == AddressOf && e->ty->p->k == TYFUNCTION)) {
             e = context.clone(e);
             e->ty = context.getChar();
         }
@@ -900,7 +900,7 @@ PTR_CAST:
             return;
         }
         checkSpec(result, r);
-        if (result->ty->tags & TYCOMPLEX) {
+        if (result->ty->hasTag(TYCOMPLEX)) {
             if (result->k == EConstant && r->k == EConstant) {
                 if (isa<ConstantAggregateZero>(result->C))
                     return (void)(result = r);
@@ -1009,7 +1009,7 @@ PTR_CAST:
             return;
         }
         checkSpec(result, r);
-        if (result->ty->tags & TYCOMPLEX) {
+        if (result->ty->hasTag(TYCOMPLEX)) {
             if (result->k == EConstant && r->k == EConstant) {
                 if (isa<ConstantAggregateZero>(result->C)) {
                     if (isa<ConstantAggregateZero>(r->C))
@@ -1250,7 +1250,7 @@ ONE : {
     void make_mul(Expr &result, Expr &r) {
         checkArithmetic(result, r);
         conv(result, r);
-        if (result->ty->tags & TYCOMPLEX) {
+        if (result->ty->hasTag(TYCOMPLEX)) {
             if (result->k == EConstant && r->k == EConstant) {
                 if (isa<ConstantAggregateZero>(result->C))
                     return (void)(result = complex_zero(r->ty));
@@ -1336,7 +1336,7 @@ ZERO:
     void make_div(Expr &result, Expr &r) {
         checkArithmetic(result, r);
         conv(result, r);
-        if (result->ty->tags & TYCOMPLEX) {
+        if (result->ty->hasTag(TYCOMPLEX)) {
             // if the first operand is a nonzero finite number or an infinity and the second operand is a zero then the result of the / operator is an infinity.
             if (result->k == EConstant && r->k == EConstant) {
                 if (isa<ConstantAggregateZero>(result->C)) {
@@ -1477,7 +1477,7 @@ NOT_CONSTANT:
         if (!(r = isEq ? relational_expression() : shift_expression()))
             return;
         checkSpec(result, r);
-        if ((result->ty->tags & TYCOMPLEX) && !isEq)
+        if ((result->ty->hasTag(TYCOMPLEX)) && !isEq)
             return type_error("complex numbers unsupported in relational-expression");
         if (result->k == EConstant && r->k == EConstant) {
             if (const auto CI = dyn_cast<ConstantInt>(result->C)) {
@@ -1535,7 +1535,7 @@ NOT_CONSTANT:
                 result = getBool(B);
                 return;
             }
-            if (result->ty->tags & TYCOMPLEX) {
+            if (result->ty->hasTag(TYCOMPLEX)) {
                 if (isa<ConstantAggregateZero>(result->C)) {
                     if (isa<ConstantAggregateZero>(r->C))
                         return (void)(result = getBool(tok == TEq)); // equal!
@@ -1567,7 +1567,7 @@ NOT_CONSTANT:
             }
             
         }
-        if (result->ty->tags & TYCOMPLEX)
+        if (result->ty->hasTag(TYCOMPLEX))
             result = boolToInt(binop(result, tok == TEq ? CEQ : CNE, r, context.getBool()));
         else
             result =
@@ -1601,10 +1601,10 @@ NOT_CONSTANT:
     void type_qualifier_list(CType &ty) {
         for (;;)
             switch (l.tok.tok) {
-            case Kconst: ty->tags |= TYCONST, consume(); continue;
-            case Krestrict: ty->tags |= TYRESTRICT, consume(); continue;
-            case Kvolatile: ty->tags |= TYVOLATILE, consume(); continue;
-            case K_Atomic: ty->tags |= TYATOMIC, consume(); continue;
+            case Kconst: ty->addTag(TYCONST), consume(); continue;
+            case Krestrict: ty->addTag(TYRESTRICT), consume(); continue;
+            case Kvolatile: ty->addTag(TYVOLATILE), consume(); continue;
+            case K_Atomic: ty->addTag(TYATOMIC), consume(); continue;
             default: return;
             }
     }
@@ -1675,7 +1675,7 @@ NO_REPEAT:
                 if (!eat_typedef)
                     goto BREAK;
                 eat_typedef = context.clone(eat_typedef);
-                eat_typedef->tags &= ~TYTYPEDEF;
+                eat_typedef->clearTag(TYTYPEDEF);
                 break;
             case Kunion:
             case Kstruct:
@@ -1706,7 +1706,7 @@ NO_REPEAT:
             if (tags) {
                 warning(loc, "type-specifier missing(has type-qualifiers), defaults to 'int'");
                 CType intTy = context.clone(context.getInt());
-                intTy->tags |= tags;
+                intTy->addTags(tags);
                 return intTy;
             }
             switch (firstTok) {
@@ -1795,7 +1795,7 @@ NO_REPEAT:
             return context.make(tags);
 MERGE:
         auto k = eat_typedef->k;
-        if ((tags & (ty_prim | TYCOMPLEX)) && (eat_typedef->tags & (ty_prim | TYCOMPLEX) || k != TYPRIM)) {
+        if ((tags & (ty_prim | TYCOMPLEX)) && (eat_typedef->hasTag(ty_prim | TYCOMPLEX) || k != TYPRIM)) {
             type_error(loc, "bad declaration specifier: cannot merge %T with %T", eat_typedef, context.make(tags));
         }
         eat_typedef->tags |= tags;
@@ -1829,7 +1829,7 @@ MERGE:
                 s.make_eos();
                 switch (enc) {
                     case 8:
-                        if (!(ty->arrtype->tags & TYCHAR))
+                        if (!(ty->arrtype->hasTag(TYCHAR)))
                             type_error(loc1, "initializing non-char array with string literal");
                         return wrap(context.getFixArrayType(context.getChar(), s.size() + 1), llvm::ConstantDataArray::getString(irgen.ctx, s.str(), false), loc1);
                     case 16:
@@ -1848,7 +1848,7 @@ MERGE:
                                 data.push_back(0xDC00 + (codepoint & 0x3FF));
                             }
                             data.push_back(0);
-                            if (!(ty->arrtype->tags & TYINT32))
+                            if (!(ty->arrtype->hasTag(TYINT32)))
                                 type_error(loc1, "initializing %T array with wide string literal", ty->arrtype);
                             return wrap(context.getFixArrayType(context.getWchar(), s.size()), llvm::ConstantDataArray::get(irgen.ctx, data), loc1);
                         } else {
@@ -1865,7 +1865,7 @@ MERGE:
                                 data.push_back(0xDC00 + (codepoint & 0x3FF));
                             }
                             data.push_back(0);
-                            if (!(ty->arrtype->tags & TYINT16))
+                            if (!(ty->arrtype->hasTag(TYINT16)))
                                 type_error(loc1, "initializing %T array with wide string literal", ty->arrtype);
                             return wrap(context.getFixArrayType(context.getWchar(), s.size()), llvm::ConstantDataArray::get(irgen.ctx, data), loc1);
                         }
@@ -1878,7 +1878,7 @@ MERGE:
                             if (!decode(&state, &codepoint, (uint32_t)(unsigned char)c))
                                 data.push_back(codepoint);
                         data.push_back(0);
-                        if (!(ty->arrtype->tags & TYUINT32))
+                        if (!(ty->arrtype->hasTag(TYUINT32)))
                             type_error(loc1, "initializing %T array with wide string literal", ty->arrtype);
                         return wrap(context.getFixArrayType(context.getUChar(), s.size()), llvm::ConstantDataArray::get(irgen.ctx, data), loc1);
                     }
@@ -2225,7 +2225,7 @@ MERGE:
         }
         bool zero = false;
         for (size_t i = 0; i < params.size(); ++i) {
-            if (i == 0 && (params[0].ty->tags & TYVOID))
+            if (i == 0 && (params[0].ty->hasTag(TYVOID)))
                 zero = true;
             if (params[i].ty->k == TYARRAY)
                 params[i].ty = context.getPointerType(params[i].ty->arrtype);
@@ -2360,7 +2360,7 @@ MERGE:
         if (e->k == EVar) {
             Variable_Info &var_info = sema.typedefs.getSym(e->sval);
             var_info.tags |= ASSIGNED;
-            if (var_info.ty->tags & TYCONST) {
+            if (var_info.ty->hasTag(TYCONST)) {
                 type_error(getLoc(), "cannot modify const-qualified variable %R: %T", sema.typedefs.getSymName(e->sval),
                            var_info.ty);
                 return false;
@@ -2368,11 +2368,11 @@ MERGE:
             return true;
         }
         if (e->ty->k == TYPOINTER) {
-            if ((e->ty->tags & TYLVALUE) && e->ty->p->k == TYARRAY)
+            if ((e->ty->tags.hasTag(TYLVALUE)) && e->ty->p->k == TYARRAY)
                 return type_error(getLoc(), "array is not assignable"), false;
             return true;
         }
-        if (e->ty->tags & TYLVALUE)
+        if (e->ty->hasTag(TYLVALUE))
             return true;
         return type_error(getLoc(), "expression is not assignable"), false;
     }
@@ -2418,12 +2418,12 @@ MERGE:
                 // function definition
                 if (st.name->second.getToken() == PP_main) {
                     if (st.ty->params.size()) {
-                        if (!(st.ty->params.front().ty->tags & TYINT)) {
+                        if (!(st.ty->params.front().hasTag(TYINT))) {
                             type_error(full_loc, "first parameter of main is not 'int'");
                         }
                         if (st.ty->params.size() >= 2) {
                             if (!(st.ty->params[1].ty->k == TYPOINTER && st.ty->params[1].ty->p->k == TYPOINTER &&
-                                  st.ty->params[1].ty->p->p->tags & (TYCHAR | TYUCHAR))) {
+                                  st.ty->params[1].ty->p->p->hasTag(TYCHAR | TYUCHAR))) {
                                 type_error(full_loc, "second parameter of main is not 'char**'");
                             }
                         }
@@ -2446,7 +2446,7 @@ MERGE:
                 jumper.cur = 0;
                 sreachable = true;
                 for (auto it = sema.typedefs.begin(); it != sema.typedefs.end(); ++it)
-                    if (!(it->info.ty->tags & TYCONST))
+                    if (!(it->info.ty->hasTag(TYCONST)))
                         it->info.val = nullptr;
                 return insertStmt(res);
             }
@@ -2457,10 +2457,10 @@ MERGE:
             size_t idx = putsymtype(st.name, st.ty, full_loc);
 
             result->vars.push_back(VarDecl{.name = st.name, .ty = st.ty, .init = nullptr, .idx = idx});
-            if (st.ty->tags & TYINLINE)
+            if (st.ty->hasTag(TYINLINE))
                 warning(full_loc, "inline can only used in function declaration");
             if (!(st.ty->tags & TYEXTERN)) {
-                if ((st.ty->tags & TYVOID) && !(st.ty->tags & TYTYPEDEF))
+                if ((st.ty->tags & TYVOID) && !(st.ty->hasTag(TYTYPEDEF)))
                     return type_error(full_loc, "variable %I declared void", st.name);
                 if (st.ty->k == TYINCOMPLETE)
                     return type_error(full_loc, "variable %I has imcomplete type %T", st.name);
@@ -2485,16 +2485,16 @@ MERGE:
                 result->vars.back().init = init;
                 if (st.ty->k == TYARRAY && !st.ty->hassize && !st.ty->vla) 
                     result->vars.back().ty = init->ty;
-                if (init->k == EConstant && st.ty->tags & TYCONST)
+                if (init->k == EConstant && st.ty->hasTag(TYCONST))
                     var_info.val = init->C; // for const and constexpr, their value can be fold to constant
-                if ((isTopLevel() || (st.ty->tags & (TYSTATIC | TYEXTERN))) && init->k != EConstant && init->k != EConstantArray &&
+                if ((isTopLevel() || (st.ty->hasTag(TYSTATIC | TYEXTERN))) && init->k != EConstant && init->k != EConstantArray &&
                     init->k != EConstantArraySubstript) {
                     // take address of globals is constant!
                     if (!
                         (init->k == EVar && 
                             (
                                 sema.typedefs.isInGlobalScope(init->sval) || 
-                                sema.typedefs.getSym(init->sval).ty->tags & (TYEXTERN | TYSTATIC)
+                                sema.typedefs.getSym(init->sval).ty->hasTag(TYEXTERN | TYSTATIC)
                             )
                         )
                         ) {
@@ -2545,7 +2545,7 @@ MERGE:
                 }
                 if (!(e = cast_expression()))
                     return nullptr;
-                if (ty->tags & TYVOID)
+                if (ty->hasTag(TYVOID))
                     return ENEW(VoidExpr){.loc = e->loc, .ty = context.getVoid(), .voidexpr = e};
                 return castto(e, ty);
             }
@@ -2592,10 +2592,10 @@ MERGE:
             consume();
             if (!(e = cast_expression()))
                 return nullptr;
-            if (!(checkInteger(e->ty) || (e->ty->tags & TYCOMPLEX)))
+            if (!(checkInteger(e->ty) || (e->ty->hasTag(TYCOMPLEX))))
                 return type_error(loc, "integer type expected"), nullptr;
             integer_promotions(e);
-            if (e->ty->tags & TYCOMPLEX) {
+            if (e->ty->tags->hasTag(TYCOMPLEX)) {
                 if (e->k == EConstant) {
                     if (auto CS = dyn_cast<llvm::ConstantStruct>(e->C)) {
                         if (auto REAL = dyn_cast<ConstantFP>(CS->getOperand(0))) {
@@ -2634,10 +2634,10 @@ MERGE:
                 return e->ty = context.getPointerType(e->arr3->ty), e;
             if (e->ty->k == TYBITFIELD)
                 return type_error(loc, "cannot take address of bit-field"), e;
-            if (e->ty->tags & TYREGISTER)
+            if (e->ty->hasTag(TYREGISTER))
                 return type_error(loc, "take address of register variable"), e;
             if (e->k == EUnary && e->uop == AddressOf && e->ty->p->k == TYFUNCTION)
-                return e->ty->tags &= ~TYLVALUE, e;
+                return e->ty->clearTags(TYLVALUE), e;
             if (!assignable(e))
                 return e;
             return unary(e, AddressOf, context.getPointerType(e->ty));
@@ -2651,7 +2651,7 @@ MERGE:
                 return type_error(loc, "arithmetic type expected"), nullptr;
             integer_promotions(e);
             if (e->k == EConstant) { // fold simple negate numbers, e.g, -10
-                if (e->ty->tags & TYCOMPLEX) {
+                if (e->ty->hasTag(TYCOMPLEX)) {
                     if (isa<ConstantAggregateZero>(e->C)) 
                         return e->ty->isFloating() ? complex_neg_zero(e->ty) : complex_zero(e->ty);
                     if (auto CS = dyn_cast<llvm::ConstantStruct>(e->C)) {
@@ -2674,7 +2674,7 @@ MERGE:
                             e->loc);
                 }
             }
-            return unary(e, (e->ty->tags & TYCOMPLEX) ? CNeg : (e->ty->isSigned() ? SNeg : UNeg), e->ty);
+            return unary(e, (e->ty->hasTag(TYCOMPLEX)) ? CNeg : (e->ty->isSigned() ? SNeg : UNeg), e->ty);
         }
         case TAdd: {
             Expr e;
@@ -3094,13 +3094,13 @@ NEXT:
                 consume();
                 if (!it)
                     return type_error(loc, "use of undeclared identifier %I", sym), getIntZero();
-                if (it->ty->tags & TYTYPEDEF)
+                if (it->hasTag(TYTYPEDEF))
                     return type_error("typedefs are not allowed here %I", sym), getIntZero();
                 it->tags |= USED;
                 CType ty = context.clone(it->ty);
                 // lvalue conversions
-                ty->tags &= (ty_prim | TYCOMPLEX | TYIMAGINARY);
-                ty->tags |= TYLVALUE;
+                ty->andTags(ty_prim | TYCOMPLEX | TYIMAGINARY);
+                ty->addTag(TYLVALUE);
                 if (it->val)
                     return wrap(ty, it->val, loc);
                 switch (ty->k) {
@@ -3224,7 +3224,7 @@ DOT:
                             .loc = result->loc, .ty = pair.ty, .obj = result, .idx = (unsigned)i};
                         if (isLvalue) {
                             result->ty = context.clone(result->ty);
-                            result->ty->tags |= TYLVALUE;
+                            result->addTag(TYLVALUE);
                         }
                         consume();
                         goto CONTINUE;
@@ -3316,7 +3316,7 @@ CONTINUE:;
     }
     void make_deref(Expr &e, Location loc) {
         assert(e->ty->k == TYPOINTER && "bad call to make_deref: expect a pointer");
-        if ((e->ty->p->k == TYINCOMPLETE) || (e->ty->p->tags & TYVOID)) {
+        if ((e->ty->p->k == TYINCOMPLETE) || e->ty->p->hasTag(TYVOID)) {
             type_error(loc, "dereference from incomplete/void type: %T", e->ty);
             return;
         }
@@ -3342,7 +3342,7 @@ CONTINUE:;
             }
         }
         CType ty = context.clone(e->ty->p);
-        ty->tags |= TYLVALUE;
+        ty->addTag(TYLVALUE);
         e = unary(e, Dereference, ty);
     }
     void tryContinue() {
@@ -3387,7 +3387,7 @@ CONTINUE:;
             }
         } break;
         case llvm::Value::ConstantAggregateZeroVal: {
-            assert((e->ty->tags & TYCOMPLEX) && "only complex number/structures are able to convert to bool");
+            assert((e->ty->hasTag(TYCOMPLEX)) && "only complex number/structures are able to convert to bool");
             e = getBool(reverse);
         } break;
         case llvm::Value::ConstantPointerNullVal: {
@@ -3600,7 +3600,7 @@ NEXT:
             consume();
             if (l.tok.tok == TSemicolon) {
                 consume();
-                if (sema.currentfunctionRet->tags & TYVOID)
+                if (sema.currentfunctionRet->hasTag(TYVOID))
                     return insertStmt(SNEW(ReturnStmt){.loc = loc, .ret = nullptr});
 
                 return warning(loc, "function should not return void in a function return %T", sema.currentfunctionRet),
@@ -3615,7 +3615,7 @@ NEXT:
             if (!(e = expression()))
                 return;
             checkSemicolon();
-            if (sema.currentfunctionRet->tags & TYVOID)
+            if (sema.currentfunctionRet->hasTag(TYVOID))
                 return warning(loc, "function should return a value in a function return void"),
                        note("A return statement with an expression shall not appear in a function whose return type is "
                             "void"),
@@ -3630,7 +3630,7 @@ NEXT:
                 return;
             if (tok == Kswitch) {
                 integer_promotions(test);
-                if (test->ty->k != TYPRIM && !(test->ty->tags & intergers_or_bool)) {
+                if (test->ty->k != TYPRIM && !(test->ty->hasTags(intergers_or_bool))) {
                     type_error("switch requires expression of integer type (%T invalid)", test->ty);
                     test->ty = context.getInt();
                 }
@@ -4120,7 +4120,7 @@ NEXT:
             }
             if (!(e = assignment_expression()))
                 return nullptr;
-            if (result->ty->tags & TYATOMIC) {
+            if (result->ty->hasTag(TYATOMIC)) {
                 BinOp op = getAtomicrmwOp(tok);
                 if (op) {
                     if (!(rhs = castto(e, result->ty)))
@@ -4210,7 +4210,7 @@ NEXT:
                 if (sema.pfunc->second.getToken() == PP_main) {
                     insertStmt(SNEW(ReturnStmt){.loc = loc2, .ret = getIntZero()});
                 } else {
-                    if (!(sema.currentfunctionRet->tags & TYVOID)) {
+                    if (!(sema.currentfunctionRet->hasTag(TYVOID))) {
                         // if this label never reaches (never break to it)
                         if (s->k != SLabel || (s->labelName == nullptr && !jumper.used_breaks.contains(s->label))) {
                             warning(loc2, "control reaches end of non-void function");

@@ -411,6 +411,62 @@ static const char *show(enum PostFixOp o) {
     default: return "(unknown postfix operator)";
     }
 }
+enum FloatKindEnum {
+    F_Invalid,
+    F_Half, // https://en.wikipedia.org/wiki/Half-precision_floating-point_format
+    F_BFloat, // https://en.wikipedia.org/wiki/Bfloat16_floating-point_format
+    F_Float, // https://en.wikipedia.org/wiki/Single-precision_floating-point_format
+    F_Double, // https://en.wikipedia.org/wiki/Double-precision_floating-point_format
+    F_x87_80, // 80 bit float (X87)
+    F_Quadruple, // https://en.wikipedia.org/wiki/Quadruple-precision_floating-point_format
+    F_PPC128 // https://gcc.gnu.org/wiki/Ieee128PowerPC
+};
+struct FloatKind {
+    enum FloatKindEnum e;
+    inline FloatKind(enum FloatKindEnum k) e{k} { }
+    enum FloatKindEnum getKind() { return e; }
+    inline operator enum FloatKindEnum() const { return e; }
+    bool isValid() const { return e != F_Invalid && e <= F_PPC128; }
+    uint64_t getBitSize() const {
+        switch (e) {
+        case F_Half:
+        case F_BFloat: return 16;
+        case F_Float: return 32;
+        case F_Double: return 64;
+        case F_x87_80: return 80;
+        case F_Quadruple:
+        case F_PPC128: return 128;
+        }
+        llvm_unreachable("broken type: invalid FloatKindEnum");
+    };
+    llvm::Type *toLLVMType(LLVMContext &ctx) const {
+        switch (e) {
+        case F_Half: return llvm::Type::getHalfTy(ctx);
+        case F_BFloat: return llvm::Type::getBFloatTy(ctx);
+        case F_Float: return llvm::Type::getFloatTy(ctx);
+        case F_Double: return llvm::Type::getDouble(ctx);
+        case F_x87_80: return llvm::Type::getX86_FP80Ty(ctx);
+        case F_Quadruple: return llvm::Type::getFP128Ty(ctx);
+        case F_PPC128: return llvm::Type::getPPC_FP128Ty(ctx);
+        }
+        llvm_unreachable("broken type: invalid FloatKindEnum");
+    }
+    llvm::fltSemantics &llvm::getFltSemantics() const {
+        switch (e) {
+        case F_Half: return APFloat::IEEEhalf();
+        case F_BFloat: return APFloat::BFloat();
+        case F_Float: APFloat::IEEEsingle();
+        case F_Double: return APFloat::IEEEdouble();
+        case F_x87_80: return APFloat::x87DoubleExtended();
+        case F_Quadruple: return APFloat::IEEEquad();
+        case F_PPC128: return APFloat::PPCDoubleDouble();
+        }
+        llvm_unreachable("broken type: invalid FloatKindEnum");
+    }
+    bool isIEEE() const {
+        return APFloat::getZero(getFltSemantics()).isIEEE();
+    }
+};
 #include "option.cpp"
 #include "Arena.cpp"
 #include "tokens.inc"
@@ -673,12 +729,12 @@ static const char months[12][4] = {
 static bool type_equal(CType a, CType b) {
     assert(a && "type_equal: a is nullptr");
     assert(b && "type_equal: b is nullptr");
-    if (a->k != b->k)
+    if (a->getKind() != b->getKind())
         return false;
     else {
-        switch (a->k) {
+        switch (a->getKind()) {
         case TYPRIM:
-            return (a->tags & (ty_prim | TYCOMPLEX)) == (b->tags & (ty_prim | TYCOMPLEX));
+            return a->andTags(ty_prim | TYCOMPLEX) == b->andTags(ty_prim | TYCOMPLEX);
         case TYPOINTER: return type_equal(a->p, b->p);
         case TYENUM:
         case TYSTRUCT:
@@ -690,11 +746,11 @@ static bool type_equal(CType a, CType b) {
 }
 static bool compatible(CType p, CType expected) {
     // https://en.cppreference.com/w/c/language/type
-    if (p->k != expected->k)
+    if (p->getKind() != expected->getKind())
         return false;
     else {
-        switch (p->k) {
-        case TYPRIM: return (p->tags & (ty_prim | TYCOMPLEX)) == (expected->tags & (ty_prim | TYCOMPLEX));
+        switch (p->getKind()) {
+        case TYPRIM: return p->andTags(ty_prim | TYCOMPLEX) == expected->andTags(ty_prim | TYCOMPLEX);
         case TYFUNCTION:
             if (!compatible(p->ret, expected->ret) || p->params.size() != expected->params.size())
                 return false;
@@ -707,9 +763,11 @@ static bool compatible(CType p, CType expected) {
         case TYUNION: return p == expected;
         case TYPOINTER: {
             // ignore TYLVALUE attribute
-            return (p->p->tags & TYVOID) || (expected->p->tags & TYVOID) ||
-                   (((p->tags & type_qualifiers) == (expected->tags & type_qualifiers)) &&
-                    compatible(p->p, expected->p));
+            return p->p->hasTag(TYVOID) || expected->p->hasTag(TYVOID) ||
+                   (
+                    p->andTags(type_qualifiers) == expected->andTags(type_qualifiers) &&
+                    compatible(p->p, expected->p)
+                  );
         }
         case TYINCOMPLETE: return p->tag == expected->tag && p->name == expected->name;
         case TYBITFIELD: llvm_unreachable("");
@@ -841,8 +899,8 @@ static unsigned intRank(type_tag_t tags) {
     llvm_unreachable("bad call to intRank");
 }
 static unsigned intRank(CType ty) {
-    assert(ty->k == TYPRIM);
-    return intRank(ty->tags);
+    assert(ty->getKind() == TYPRIM);
+    return intRank(ty->getTags());
 }
 static unsigned floatRank(type_tag_t tags) {
     if (tags & TYHALF)
@@ -858,8 +916,8 @@ static unsigned floatRank(type_tag_t tags) {
     llvm_unreachable("bad call to floatRank");
 }
 static unsigned floatRank(CType ty) {
-    assert(ty->k == TYPRIM);
-    return floatRank(ty->tags);
+    assert(ty->getKind() == TYPRIM);
+    return floatRank(ty->getTags());
 }
 static unsigned scalarRankNoComplex(type_tag_t tags) {
     if (tags & floatings)
@@ -867,8 +925,8 @@ static unsigned scalarRankNoComplex(type_tag_t tags) {
     return intRank(tags);
 }
 static unsigned scalarRankNoComplex(CType ty) {
-    assert(ty->k == TYPRIM);
-    return scalarRankNoComplex(ty->tags);
+    assert(ty->getKind() == TYPRIM);
+    return scalarRankNoComplex(ty->getTags());
 }
 static unsigned scalarRank(type_tag_t tags) {
     if (tags & TYCOMPLEX)
@@ -876,8 +934,8 @@ static unsigned scalarRank(type_tag_t tags) {
     return scalarRankNoComplex(tags);
 }
 static unsigned scalarRank(CType ty) {
-    assert(ty->k == TYPRIM);
-    return scalarRank(ty->tags);
+    assert(ty->getKind() == TYPRIM);
+    return scalarRank(ty->getTags());
 }
 #include "console.cpp"
 #include "Diagnostic.cpp"

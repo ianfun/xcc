@@ -141,14 +141,14 @@ struct IRGen : public DiagnosticHelper {
         return wrapComplexForInteger(tags);
     }
     llvm::StructType *wrapComplex(CType ty) {
-        return wrapComplex(ty->tags);
+        return wrapComplex(ty->getTags());
     }
     llvm::StructType *wrapComplexForInteger(type_tag_t tags) {
         llvm::Type *ElemTy = types[getNoSignTypeIndex(tags)];
         return llvm::StructType::get(ElemTy, ElemTy);
     }
     llvm::StructType *wrapComplexForInteger(CType ty) {
-        return wrapComplexForInteger(ty->tags);
+        return wrapComplexForInteger(ty->getTags());
     }
     Type wrap(CType ty) {
         // wrap a CType to LLVM Type
@@ -156,9 +156,9 @@ struct IRGen : public DiagnosticHelper {
         switch (ty->k) {
         case TYPRIM: 
         {
-            const type_tag_t tags = ty->tags;
+            const type_tag_t tags = ty->getTags();
             if (tags & TYCOMPLEX) 
-                return wrapComplex(ty->tags);
+                return wrapComplex(ty->getTags());
             return wrapNoComplexSCalar(tags);
         }
         case TYPOINTER: return types[xptr];
@@ -197,11 +197,11 @@ struct IRGen : public DiagnosticHelper {
     DIType wrap3(CType ty) {
         DIType result = wrap3Noqualified(ty);
         if (result) {
-            if (ty->tags & TYCONST)
+            if (ty->hasTag(TYCONST))
                 result = di->createQualifiedType(llvm::dwarf::DW_TAG_const_type, result);
-            if (ty->tags & TYVOLATILE)
+            if (ty->hasTag(TYVOLATILE))
                 result = di->createQualifiedType(llvm::dwarf::DW_TAG_volatile_type, result);
-            if (ty->tags & TYRESTRICT)
+            if (ty->hasTag(TYRESTRICT))
                 result = di->createQualifiedType(llvm::dwarf::DW_TAG_restrict_type, result);
         }
         return result;
@@ -320,13 +320,13 @@ struct IRGen : public DiagnosticHelper {
         return B.CreateInsertValue(B.CreateInsertValue(PoisonValue::get(T), a, {0}), b, {1});
     }
     Value make_complex_pair(CType ty, Value a, Value b) {
-        return make_complex_pair(wrapComplex(ty->tags), a, b);
+        return make_complex_pair(wrapComplex(ty->getTags()), a, b);
     }
     Value gen_cond(Expr e) {
         Value V = gen(e);
-        if (e->ty->tags & TYBOOL)
+        if (e->ty->hasTag(TYBOOL))
             return V;
-        if (e->ty->tags & TYCOMPLEX) {
+        if (e->ty->hasTag(TYCOMPLEX)) {
             Value a = gen_complex_real(V);
             Value b = gen_complex_imag(V);
             if (e->ty->isFloating()) {
@@ -343,7 +343,7 @@ struct IRGen : public DiagnosticHelper {
         return B.CreateIsNotNull(V);
     }
     Type wrapNoComplexSCalar(CType ty) {
-        return types[getNoSignTypeIndex(ty->tags)];
+        return types[getNoSignTypeIndex(ty->getTags())];
     }
     Type wrapNoComplexSCalar(type_tag_t tags) {
         return types[getNoSignTypeIndex(tags)];
@@ -352,9 +352,9 @@ struct IRGen : public DiagnosticHelper {
         switch (ty->k) {
         case TYPRIM:
         {
-            const type_tag_t tags = ty->tags;
+            const type_tag_t tags = ty->getTags();
             if (tags & TYCOMPLEX) 
-                return wrapComplex(ty->tags);
+                return wrapComplex(ty->getTags());
             return wrapNoComplexSCalar(tags);
         }
         case TYPOINTER: return types[xptr];
@@ -392,9 +392,9 @@ struct IRGen : public DiagnosticHelper {
     DIType wrap3Noqualified(CType ty) {
         switch (ty->k) {
         // TODO: complex!!
-        case TYPRIM: return ditypes[getTypeIndex(ty->tags)];
+        case TYPRIM: return ditypes[getTypeIndex(ty->getTags())];
         case TYPOINTER:
-            if (ty->tags & TYVOID)
+            if (ty->hasTag(TYVOID))
                 return ditypes[ptrty];
             return di->createPointerType(wrap3(ty->p), pointerSizeInBits);
         case TYSTRUCT:
@@ -594,11 +594,11 @@ struct IRGen : public DiagnosticHelper {
         case SFunction: {
             assert(this->labels.empty());
             auto ty = cast<llvm::FunctionType>(wrap(s->functy));
-            currentfunction = newFunction(ty, s->funcname, s->functy->tags, s->func_idx);
+            currentfunction = newFunction(ty, s->funcname, s->functy->getTags(), s->func_idx);
             llvm::DISubprogram *sp = nullptr;
             if (options.g) {
                 sp =
-                    di->createFunction(getLexScope(), s->funcname->getKey(), getLinkageName(s->functy->ret->tags),
+                    di->createFunction(getLexScope(), s->funcname->getKey(), getLinkageName(s->functy->ret->getTags()),
                                        getFile(s->loc.id), s->loc.line, createDebugFuctionType(s->functy), s->loc.line);
                 currentfunction->setSubprogram(sp);
                 lexBlocks.push_back(sp);
@@ -683,17 +683,17 @@ struct IRGen : public DiagnosticHelper {
                 auto init = it.init;
                 auto idx = it.idx;
                 auto align = varty->align;
-                if (varty->tags & TYTYPEDEF) {
+                if (varty->hasTag(TYTYPEDEF)) {
                     /* nothing */
                 } else if (varty->k == TYFUNCTION) {
-                    newFunction(cast<llvm::FunctionType>(wrap(varty)), name, varty->tags, idx);
-                } else if (!currentfunction || varty->tags & (TYEXTERN | TYSTATIC)) {
+                    newFunction(cast<llvm::FunctionType>(wrap(varty)), name, varty->getTags(), idx);
+                } else if (!currentfunction || varty->hasTag(TYEXTERN | TYSTATIC)) {
                     auto GV = module->getGlobalVariable(name->getKey(), true);
                     if (GV) {
                         auto L = GV->getLinkage();
-                        if (!(varty->tags & TYEXTERN)) {
+                        if (!varty->hasTag(TYEXTERN)) {
                             if (L == ExternalLinkage) {
-                                if (varty->tags & TYSTATIC)
+                                if (varty->hasTag(TYSTATIC))
                                     GV->setLinkage(InternalLinkage); // make it from extern declaration to static
                                 else
                                     GV->setLinkage(ExternalLinkage); // a definition!
@@ -701,12 +701,12 @@ struct IRGen : public DiagnosticHelper {
                         }
                         if (init) {
                             GV->setInitializer(cast<llvm::Constant>(gen(init))); // now update initializer
-                            if (!(varty->tags & TYSTATIC))
+                            if (!varty->hasTag(TYSTATIC))
                                 GV->setLinkage(ExternalLinkage); // a definition!
                         }
                         break;
                     }
-                    auto tags = varty->tags;
+                    auto tags = varty->getTags();
                     Type ty = wrap(varty);
                     llvm::Constant *ginit = init ? cast<llvm::Constant>(gen(init)) : llvm::Constant::getNullValue(ty);
                     GV = new llvm::GlobalVariable(*module, ty, tags & TYCONST, ExternalLinkage, nullptr, name->getKey());
@@ -726,7 +726,7 @@ struct IRGen : public DiagnosticHelper {
                         GV->setLinkage(CommonLinkage);
                     vars[idx] = GV;
                     if (options.g) {
-                        StringRef linkage = getLinkageName(varty->tags);
+                        StringRef linkage = getLinkageName(varty->getTags());
                         auto gve = di->createGlobalVariableExpression(getLexScope(), name->getKey(), linkage,
                                                                       getFile(s->loc.id), s->loc.line, wrap3(varty),
                                                                       false, di->createExpression());
@@ -861,9 +861,9 @@ struct IRGen : public DiagnosticHelper {
                 auto rhs = gen(e->rhs);
                 auto s = B.CreateAlignedStore(rhs, basep,
                                               e->lhs->ty->align ? llvm::Align(e->lhs->ty->align) : llvm::MaybeAlign());
-                if (e->lhs->ty->tags & TYVOLATILE)
+                if (e->lhs->ty->hasTag(TYVOLATILE))
                     s->setVolatile(true);
-                if (e->lhs->ty->tags & TYATOMIC)
+                if (e->lhs->ty->hasTag(TYATOMIC))
                     s->setOrdering(llvm::AtomicOrdering::SequentiallyConsistent);
                 return rhs;
             }
@@ -1238,7 +1238,7 @@ BINOP_SHIFT:
             case Dereference: {
                 auto ty = wrap(e->ty);
                 auto r = load(Val, ty);
-                auto tags = e->uoperand->ty->p->tags;
+                auto tags = e->uoperand->ty->p->getTags();
                 if (tags & TYVOLATILE)
                     r->setVolatile(true);
                 if (tags & TYATOMIC)
@@ -1273,14 +1273,14 @@ BINOP_SHIFT:
         case EVar: {
             auto pvar = vars[e->sval];
             auto r = load(pvar, wrap(e->ty), e->ty->align);
-            if (e->ty->tags & TYVOLATILE)
+            if (e->ty->hasTag(TYVOLATILE))
                 r->setVolatile(true);
-            if (e->ty->tags & TYATOMIC)
+            if (e->ty->hasTag(TYATOMIC))
                 r->setOrdering(llvm::AtomicOrdering::SequentiallyConsistent);
             return r;
         }
         case ECondition: {
-            if (e->ty->tags & TYVOID) {
+            if (e->ty->hasTag(TYVOID)) {
                 Label iftrue = llvm::BasicBlock::Create(ctx, "", currentfunction);
                 Label iffalse = llvm::BasicBlock::Create(ctx);
                 Label ifend = llvm::BasicBlock::Create(ctx);
