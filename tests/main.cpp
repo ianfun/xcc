@@ -97,6 +97,8 @@ int xcc_link(xcc::DiagnosticHelper &Diags, llvm::StringRef objFileName, const ll
 
 int main(int argc_, const char **argv_)
 {
+    assert(argc_ > 0 && "no program name!");
+    assert(argv_ && "NULL argv!");
     // make our text printer that print to stderr
     xcc::TextDiagnosticPrinter printer(llvm::errs()); 
 
@@ -107,7 +109,7 @@ int main(int argc_, const char **argv_)
     XInitLLVM crashReport(ctx, argc_, argv_);
 
     // init args
-    llvm::SmallVector<const char *, 8> argv(argv_, argv_ + argc_);
+    llvm::ArrayRef<const char *> argv(argv_, size_t(argc_));
     
     // register targets
     llvm::InitializeAllTargets();

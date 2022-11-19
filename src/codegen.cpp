@@ -4,7 +4,7 @@
  *
 */
 
-struct IRGen : public DiagnosticHelper {
+struct IRGen: public DiagnosticHelper {
 
     using Type = llvm::Type *;
     using Value = llvm::Value *;
@@ -21,7 +21,63 @@ struct IRGen : public DiagnosticHelper {
     static constexpr auto DefaultStorageClass = llvm::GlobalValue::DefaultStorageClass,
                           DLLImportStorageClass = llvm::GlobalValue::DLLImportStorageClass,
                           DLLExportStorageClass = llvm::GlobalValue::DLLExportStorageClass;
-
+enum TypeIndex {
+    voidty,
+    i1ty,
+    i8ty,
+    u8ty,
+    i16ty,
+    u16ty,
+    i32ty,
+    u32ty,
+    i64ty,
+    u64ty,
+    i128ty,
+    u128ty,
+    bfloatty,
+    halfty,
+    floatty,
+    doublety,
+    fp80ty,
+    fp128ty,
+    fp128ppcty,
+    fdecimal32ty,
+    fdecimal64ty,
+    fdecimal128ty,
+    ptrty,
+    TypeIndexHigh
+};
+static enum TypeIndex getTypeIndex(CType ty) {
+    // TODO: Complex, Imaginary
+    if (ty->hasTag(TYVOID)) return voidty;
+    if (ty->isInteger()) {
+        bool s = ty->isSigned();
+        auto k = ty->getIntegerKind();
+        switch (k.asLog2()) {
+        case 1: return s ? i1ty : u1ty;
+        case 3: return s ? i8ty : u8ty;
+        case 4: return s ? i16ty : u16ty;
+        case 5: return s ? i32ty : u32ty;
+        case 6: return s ? i64ty : u64ty;
+        case 7: return s ? i128ty : u128ty;
+        default: llvm_unreachable("invalid IntegerKind");
+        }
+    }
+    auto k = ty->getFloatKind();
+    switch (k.asEnum()) {
+        case F_Half: return halfty;
+        case F_BFloat: return bfloatty;
+        case F_Float: return ffloatty;
+        case F_Double: return fdoublety;
+        case F_x87_80: return fp80ty;
+        case F_Quadruple: return fp128ty;
+        case F_PPC128: return fp128ppcty;
+        case F_Decimal32: return fdecimal32ty;
+        case F_Decimal64: return fdecimal64ty;
+        case F_Decimal128: return fdecimal128ty;
+    }
+    llvm_unreachable("invalid FloatKind");
+}
     IRGen(xcc_context &context, DiagnosticConsumer &Diag, SourceMgr &SM, LLVMContext &ctx, const Options &options)
         : DiagnosticHelper{Diag}, context{context}, SM{SM}, ctx{ctx}, B{ctx}, options{options} {
         auto CPU = "generic";
@@ -35,20 +91,24 @@ struct IRGen : public DiagnosticHelper {
             return;
         }
         layout = new llvm::DataLayout(machine->createDataLayout());
-        types[xvoid] = llvm::Type::getVoidTy(ctx);
+        void_type = llvm::Type::getVoidTy(ctx);
 
-        types[xptr] = llvm::PointerType::get(ctx, 0);
-        types[x1] = llvm::Type::getInt1Ty(ctx);
-        types[x8] = llvm::Type::getInt8Ty(ctx);
-        types[x16] = llvm::Type::getInt16Ty(ctx);
-        auto i32 = llvm::Type::getInt32Ty(ctx);
-        types[x32] = i32;
-        types[x64] = llvm::Type::getInt64Ty(ctx);
-        types[x128] = llvm::Type::getInt128Ty(ctx);
-        types[xfloat] = llvm::Type::getFloatTy(ctx);
-        types[xdouble] = llvm::Type::getDoubleTy(ctx);
-        types[xfp128] = llvm::Type::getFP128Ty(ctx);
-        types[xfp128ppc] = llvm::Type::getPPC_FP128Ty(ctx);
+        pointer_type = llvm::PointerType::get(ctx, 0);
+        integer_types[1] = llvm::Type::getInt1Ty(ctx);
+        integer_types[3] = llvm::Type::getInt8Ty(ctx);
+        integer_types[4] = llvm::Type::getInt16Ty(ctx);
+        integer_types[5] = llvm::Type::getInt32Ty(ctx);
+        integer_types[6] = llvm::Type::getInt64Ty(ctx);
+        integer_types[7] = llvm::Type::getInt128Ty(ctx);
+
+        float_types_array[F_Half] = llvm::Type::getHalfTy();
+        float_types_array[F_BFloat] = llvm::Type::getBFloatTy();
+        float_types_array[F_Float] = llvm::Type::getFloatTy(ctx);
+        float_types_array[F_Double] = llvm::Type::getDoubleTy(ctx);
+        float_types_array[F_Quadruple] = llvm::Type::getFP128Ty(ctx);
+        float_types_array[F_PPC128] = llvm::Type::getPPC_FP128Ty(ctx);
+        // TODO: Decimal float types
+
         intptrTy = layout->getIntPtrType(ctx);
         pointerSizeInBits = intptrTy->getBitWidth();
 
@@ -57,9 +117,8 @@ struct IRGen : public DiagnosticHelper {
         i32_0 = llvm::ConstantInt::get(i32, 0);
         i1_0 = llvm::ConstantInt::getFalse(ctx);
         i1_1 = llvm::ConstantInt::getTrue(ctx);
-        _complex_double = llvm::StructType::get(types[xdouble], types[xdouble]);
-        _complex_float = llvm::StructType::get(types[xfloat], types[xfloat]);
-        _complex_f128 = llvm::StructType::get(types[xfp128], types[xfp128]);
+        _complex_double = llvm::StructType::get(float_types_array[F_Double], float_types_array[F_Double]);
+        _complex_float = llvm::StructType::get(float_types_array[F_Float], float_types_array[F_Float]);
         addModule("main");
     }
     xcc_context &context;
@@ -84,7 +143,11 @@ struct IRGen : public DiagnosticHelper {
     unsigned lastFileID = -1;
     llvm::DIFile *lastFile = nullptr;
     OnceAllocator alloc{};
-    Type types[TypeIndexHigh];
+    llvm::IntegerType *integer_types_array[IntegerKind::MAX_KIND];
+    const llvm::IntegerType **integer_types = &(integer_types_array[-1]);
+    llvm::Type *float_types_array[FloatKind::MAX_KIND];
+    llvm::PointerType *pointer_type;
+    llvm::Type *void_type;
     DIType *ditypes = nullptr;
     // jump labels
     llvm::SmallVector<Label, 5> labels{};
@@ -93,7 +156,7 @@ struct IRGen : public DiagnosticHelper {
     llvm::Type **tags = nullptr;
     llvm::DIType **dtags = nullptr;
     llvm::DIType **dtypes = nullptr;
-    llvm::StructType *_complex_float, *_complex_double, *_complex_f128;
+    llvm::StructType *_complex_float, *_complex_double;
     Location debugLoc;
     DenseMap<CType, llvm::FunctionType *> function_type_cache{};
 
@@ -113,7 +176,7 @@ struct IRGen : public DiagnosticHelper {
     }
     const llvm::Instruction *getTerminator() { return B.GetInsertBlock()->getTerminator(); }
     llvm::ValueAsMetadata *mdNum(uint64_t num) {
-        Value v = llvm::ConstantInt::get(types[x32], num);
+        Value v = llvm::ConstantInt::get(integer_types[5], num);
         return llvm::ValueAsMetadata::get(v);
     }
     DIScope getLexScope() { return lexBlocks.back(); }
@@ -131,37 +194,31 @@ struct IRGen : public DiagnosticHelper {
     }
     void after(Label loc) { B.SetInsertPoint(loc); }
     void emitDebugLocation() { B.SetCurrentDebugLocation(llvm::DebugLoc()); }
-    llvm::StructType *wrapComplex(type_tag_t tags) {
-        if (tags & TYFLOAT)
-            return _complex_float;
-        if (tags & TYDOUBLE)
-            return _complex_double;
-        if (tags & TYF128)
-            return _complex_f128;
-        return wrapComplexForInteger(tags);
-    }
     llvm::StructType *wrapComplex(CType ty) {
-        return wrapComplex(ty->getTags());
-    }
-    llvm::StructType *wrapComplexForInteger(type_tag_t tags) {
-        llvm::Type *ElemTy = types[getNoSignTypeIndex(tags)];
-        return llvm::StructType::get(ElemTy, ElemTy);
+        if (ty->isFloating()) {
+            FloatKind k = ty->getFloatKind();
+            if (k == F_Double) return _complex_double;
+            if (k == F_Float) return _complex_float;
+            auto T = float_types_array[k];
+            return llvm::StructType::get(T, T);
+        }
+        return wrapComplexForInteger(ty);
     }
     llvm::StructType *wrapComplexForInteger(CType ty) {
-        return wrapComplexForInteger(ty->getTags());
+        return integer_types[ty->getIntegerKind().asLog2()];
     }
     Type wrap(CType ty) {
         // wrap a CType to LLVM Type
         assert(ty && "wrap a nullptr");
-        switch (ty->k) {
+        switch (ty->getKind()) {
         case TYPRIM: 
         {
             const type_tag_t tags = ty->getTags();
             if (tags & TYCOMPLEX) 
-                return wrapComplex(ty->getTags());
-            return wrapNoComplexSCalar(tags);
+                return wrapComplex(ty);
+            return wrapNoComplexScalar(tags);
         }
-        case TYPOINTER: return types[xptr];
+        case TYPOINTER: return pointer_type;
         case TYFUNCTION: {
             // fast case: search cached
             auto it = function_type_cache.find(ty);
@@ -178,12 +235,12 @@ struct IRGen : public DiagnosticHelper {
             return T;
         }
         case TYARRAY: return llvm::ArrayType::get(wrap(ty->arrtype), ty->arrsize);
-        case TYENUM: return types[x32];
+        case TYENUM: return integer_types[5];
         case TYINCOMPLETE:
             switch (ty->tag) {
             case TYSTRUCT: 
             case TYUNION: return tags[ty->iidx];
-            case TYENUM: return types[x32];
+            case TYENUM: return integer_types[5];
             default: llvm_unreachable("");
             }
         case TYBITFIELD:
@@ -224,7 +281,7 @@ struct IRGen : public DiagnosticHelper {
             // module level asm
             module->appendModuleInlineAsm(s);
         else {
-            auto ty = llvm::FunctionType::get(types[xvoid], false);
+            auto ty = llvm::FunctionType::get(void_type, false);
             auto f = llvm::InlineAsm::get(ty, s, StringRef(), true);
             B.CreateCall(ty, f);
         }
@@ -278,12 +335,15 @@ struct IRGen : public DiagnosticHelper {
             ditypes[i64ty] = di->createBasicType("long long", 64, llvm::dwarf::DW_ATE_signed);
             ditypes[u64ty] = di->createBasicType("unsigned long long", 64, llvm::dwarf::DW_ATE_unsigned);
             ditypes[i128ty] = di->createBasicType("__int128", 128, llvm::dwarf::DW_ATE_unsigned);
-            ditypes[u128ty] = di->createBasicType("__uint128", 128, llvm::dwarf::DW_ATE_unsigned);
-            ditypes[floatty] =
-                di->createBasicType("float", getSizeInBits(types[xfloat]), llvm::dwarf::DW_ATE_decimal_float);
-            ditypes[doublety] =
-                di->createBasicType("double", getSizeInBits(types[xdouble]), llvm::dwarf::DW_ATE_decimal_float);
-            ditypes[ptrty] = di->createPointerType(nullptr, pointerSizeInBits, 0, llvm::None, "void*");
+            ditypes[u128ty] = di->createBasicType("unsigned __int128", 128, llvm::dwarf::DW_ATE_unsigned);
+            ditypes[bfloatty] = di->createBasicType("__bf16", 16, llvm::dwarf::DW_ATE_float);
+            ditypes[halfty]  di->createBasicType("Half", 16, llvm::dwarf::DW_ATE_float);
+            ditypes[floatty] = di->createBasicType("float", 32, llvm::dwarf::DW_ATE_float);
+            ditypes[doublety] = di->createBasicType("double", 64, llvm::dwarf::DW_ATE_float);
+            ditypes[fdecimal32ty] = di->createBasicType("_Decimal32", 32, llvm::dwarf::DW_ATE_decimal_float);
+            ditypes[fdecimal64ty] = di->createBasicType("_Decimal64", 64, llvm::dwarf::DW_ATE_decimal_float);
+            ditypes[fdecimal128ty] = di->createBasicType("_Decimal128", 128, llvm::dwarf::DW_ATE_decimal_float);
+            ditypes[ptrty] = di->createNullPointerType();
             module->addModuleFlag(llvm::Module::Warning, "Debug Info Version", llvm::DEBUG_METADATA_VERSION);
             module->addModuleFlag(llvm::Module::Warning, "Dwarf Version", llvm::dwarf::DWARF_VERSION);
         }
@@ -342,22 +402,22 @@ struct IRGen : public DiagnosticHelper {
         }
         return B.CreateIsNotNull(V);
     }
-    Type wrapNoComplexSCalar(CType ty) {
+    Type wrapNoComplexScalar(CType ty) {
         return types[getNoSignTypeIndex(ty->getTags())];
     }
-    Type wrapNoComplexSCalar(type_tag_t tags) {
+    Type wrapNoComplexScalar(type_tag_t tags) {
         return types[getNoSignTypeIndex(tags)];
     }
     Type wrap2(CType ty) {
-        switch (ty->k) {
+        switch (ty->getKind()) {
         case TYPRIM:
         {
             const type_tag_t tags = ty->getTags();
             if (tags & TYCOMPLEX) 
-                return wrapComplex(ty->getTags());
-            return wrapNoComplexSCalar(tags);
+                return wrapComplex(ty);
+            return wrapNoComplexScalar(tags);
         }
-        case TYPOINTER: return types[xptr];
+        case TYPOINTER: return pointer_type;
         case TYSTRUCT:
         case TYUNION: {
             size_t L = ty->selems.size();
@@ -367,7 +427,7 @@ struct IRGen : public DiagnosticHelper {
             return llvm::StructType::create(ctx, ArrayRef<Type>(buf, L));
         }
         case TYARRAY: return llvm::ArrayType::get(wrap(ty->arrtype), ty->arrsize);
-        case TYENUM: return types[x32];
+        case TYENUM: return integer_types[5];
         default: llvm_unreachable("");
         }
     }
@@ -390,7 +450,7 @@ struct IRGen : public DiagnosticHelper {
         return MD;
     }
     DIType wrap3Noqualified(CType ty) {
-        switch (ty->k) {
+        switch (ty->getKind()) {
         // TODO: complex!!
         case TYPRIM: return ditypes[getTypeIndex(ty->getTags())];
         case TYPOINTER:
@@ -422,7 +482,7 @@ struct IRGen : public DiagnosticHelper {
                     wrap3(ty->selems[i].ty)
                 );
             }
-            DIType result = (ty->k == TYSTRUCT) ?
+            DIType result = (ty->getKind() == TYSTRUCT) ?
                     di->createStructType(
                     getLexScope(), Name,
                     getFile(debugLoc.id), debugLoc.line,
@@ -468,7 +528,7 @@ struct IRGen : public DiagnosticHelper {
         B.CreateBr(phiBB);
 
         append(phiBB);
-        auto phi = B.CreatePHI(types[x1], 2);
+        auto phi = B.CreatePHI(integer_types[1], 2);
         phi->addIncoming(R, leftBB);
         phi->addIncoming(L, rightBB);
         return phi;
@@ -550,8 +610,8 @@ struct IRGen : public DiagnosticHelper {
                 lexBlocks.pop_back();
         } break;
         case SDecl: {
-            if (s->decl_ty->k == TYINCOMPLETE) {
-                if (s->decl_ty->tag != TYENUM) {
+            if (s->decl_ty->getKind() == TYINCOMPLETE) {
+                if (s->decl_ty->tag != TagType_Enum) {
                     auto T = llvm::StructType::create(ctx, s->decl_ty->name->getKey());
                     tags[s->decl_idx] = T;
                 }
@@ -568,7 +628,7 @@ struct IRGen : public DiagnosticHelper {
                     dtags[s->decl_idx] = MD;
                 }
             } else {
-                if (s->decl_ty->k != TYENUM) {
+                if (s->decl_ty->getKind() != TYENUM) {
                     size_t l = s->decl_ty->selems.size();
                     Type *buf = alloc.Allocate<Type>(l);
                     for (size_t i = 0; i < l; ++i)
@@ -580,7 +640,7 @@ struct IRGen : public DiagnosticHelper {
             }
         } break;
         case SUpdateForwardDecl: {
-            if (s->now->tags != TYENUM) {
+            if (s->now->tag != TagType_Enum) {
                 auto T = cast<llvm::StructType>(tags[s->prev_idx]);
                 size_t L = s->now->selems.size();
                 Type *buf = alloc.Allocate<Type>(L);
@@ -671,7 +731,7 @@ struct IRGen : public DiagnosticHelper {
             if (currentfunction)
                 module->appendModuleInlineAsm(s->asms);
             else {
-                auto ty = llvm::FunctionType::get(types[xvoid], false);
+                auto ty = llvm::FunctionType::get(void_type, false);
                 auto f = llvm::InlineAsm::get(ty, s->asms, StringRef(), true);
                 B.CreateCall(ty, f);
             }
@@ -685,7 +745,7 @@ struct IRGen : public DiagnosticHelper {
                 auto align = varty->align;
                 if (varty->hasTag(TYTYPEDEF)) {
                     /* nothing */
-                } else if (varty->k == TYFUNCTION) {
+                } else if (varty->getKind() == TYFUNCTION) {
                     newFunction(cast<llvm::FunctionType>(wrap(varty)), name, varty->getTags(), idx);
                 } else if (!currentfunction || varty->hasTag(TYEXTERN | TYSTATIC)) {
                     auto GV = module->getGlobalVariable(name->getKey(), true);
@@ -823,7 +883,7 @@ struct IRGen : public DiagnosticHelper {
             auto ty = wrap(e->ty);
             auto r = load(p, ty, e->poperand->ty->align);
             Value v;
-            if (e->ty->k == TYPOINTER) {
+            if (e->ty->getKind() == TYPOINTER) {
                 ty = wrap(e->poperand->ty->p);
                 v = B.CreateInBoundsGEP(ty, r, {e->pop == PostfixIncrement ? i32_1 : i32_n1});
             } else {
@@ -844,8 +904,8 @@ struct IRGen : public DiagnosticHelper {
             bool isVar = e->k == EVar;
             auto ty = wrap(e->obj->ty);
             auto base = isVar ? getAddress(e->obj) : gen(e->obj);
-            if (isVar || e->obj->ty->k == TYPOINTER) {
-                auto pMember = B.CreateInBoundsGEP(ty, base, {llvm::ConstantInt::get(cast<llvm::IntegerType>(types[x32]), e->idx)});
+            if (isVar || e->obj->ty->getKind() == TYPOINTER) {
+                auto pMember = B.CreateInBoundsGEP(ty, base, {llvm::ConstantInt::get(integer_types[5], e->idx)});
                 return load(pMember, wrap(e->ty), e->obj->ty->align);
             }
             return B.CreateExtractValue(load(base, ty, e->obj->ty->align), e->idx);

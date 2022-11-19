@@ -148,7 +148,7 @@ ctypes = {
 	"TYBITFIELD": ("CType bittype", "unsigned bitsize",),
 	"TYARRAY": ("Expr vla", "CType arrtype", "bool hassize", "unsigned arrsize",),
 	"TYFUNCTION": ("CType ret", "xvector<Param> params", "bool isVarArg",),
-	"TYINCOMPLETE": ("uint8_t tag", "IdentRef name", "size_t iidx",),
+	"TYINCOMPLETE": ("enum TagType tag", "IdentRef name", "size_t iidx",),
 }
 
 def verbose(msg):
@@ -343,16 +343,7 @@ def gen_type_tags():
 		x = 1 << i
 		f.write("  %s=0x%x,\n" % (t, x))
 		i += 1
-	f.write("""\
-  floatings = TYHALF | TYFLOAT | TYDOUBLE | TYF80 | TYF128,
-  signed_integers = TYINT8 | TYINT16 | TYINT32 | TYINT64 | TYINT128,
-  unigned_integers = TYUINT8 | TYUINT16 | TYUINT32 | TYUINT64 | TYUINT128,
-  intergers = signed_integers | unigned_integers,
-  intergers_or_bool = intergers | TYBOOL,
-  ty_prim = intergers_or_bool | floatings,
-  ty_basic = ty_prim | TYCOMPLEX | TYIMAGINARY,
-  ty_storages = TYTYPEDEF | TYEXTERN | TYSTATIC | TYTHREAD_LOCAL | TYREGISTER | TYCONSTEXPR\
-;\n""")
+	f.write(";\n")
 	f.close()
 	verbose("done.\n")
 	return Monad.get()

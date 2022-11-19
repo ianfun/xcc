@@ -96,23 +96,13 @@ struct OpacheCType
         assert(isInteger());
         tags ^= sign_bit;
     }
-    IntegerKind getInteger() const {
+    IntegerKind getIntegerKind() const {
         assert(isInteger());
         return IntegerKind::fromLog2((tags >> 47) & 0b111);
     }
     FloatKind getFloatKind() const {
         assert(isFloating());
         return (tags >> 47) & 0b1111;
-    }
-    static uint64_t make_integer(IntegerKind kind, bool Signed = false) {
-        const uint64_t log2size = kind.asLog2();
-        assert(log2size <= 7 && "integer suze too large, max is log2(128)=7!");
-        return (log2size << 47) | (Signed ? sign_bit : 0ULL);
-    }
-    static uint64_t make_float(FloatKind kind) {
-        const uint64_t k = kind;
-        assert(k < 16 && "invalid kind(max is 15)");
-        return (k << 47) | integer_bit;
     }
     void clearFloatAllBits() {
         tags &= ~(0b1111ULL << 47);

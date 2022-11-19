@@ -1,3 +1,66 @@
+namespace detail {
+static StringRef get_pointer_qual_str(type_tag_t a) {
+    if (a & TYCONST)
+        return "const";
+    if (a & TYVOLATILE)
+        return "volatile";
+    if (a & TYRESTRICT)
+        return "restrict";
+    return StringRef();
+}
+// clang::BuiltinType::getName
+static StringRef get_prim_str(const_CType ty) {
+    if (ty->hasTag(TYVOID)) return "void";
+    if (ty->isInteger()) {
+        bool s = ty->isSigned();
+        switch (ty->getIntegerKind().asLog2()) {
+            case 1: return "_Bool"; // XXX: C23 is bool
+            case 3: return s ? "char" : "unsigned char";
+            case 4: return s ? "short" : "unsigned short";
+            case 5: return s ? "int" : "unsigned int"; // XXX: 'unsigned' is ok
+            case 6: return s ? "long long" : "unsigned long long";
+            case 7: return s ? "__int128" : "unsigned __int128";
+            default: llvm_unreachable("invalid IntegerKind");
+        }
+    }
+    switch (ty->getFloatKind().asEnum()) {
+        case F_Half: return "half";
+        case F_BFloat: return "__bf16";
+        case F_Float: return "float";
+        case F_Double: return "double";
+        case F_x87_80: return "__float80";
+        case F_Quadruple: return "__float128";
+        case F_PPC128: return "__ibm128";
+        case F_Decimal32: return "_Decimal32";
+        case F_Decimal64: return "_Decimal64";
+        case F_Decimal128: return "_Decimal128";
+    }
+    llvm_unreachable("broken type: invalid FloatKindEnum");
+}
+raw_ostream &print_basic(raw_ostream &OS, const_CType ty) {
+    if (ty->hasTag(TYCOMPLEX))
+        OS << "_Complex ";
+    else if (ty->hasTag(TYIMAGINARY))
+        OS << "_Imaginary";
+    return OS << get_prim_str(ty);
+}
+static StringRef get_storage_str(type_tag_t tags) {
+    if (tags & TYSTATIC)
+        return "static";
+    if (tags & TYEXTERN)
+        return "extern";
+    if (tags & TYTHREAD_LOCAL)
+        return "_Thread_local";
+    if (tags & TYTYPEDEF)
+        return "typedef";
+    if (tags & TYREGISTER)
+        return "register";
+    if (tags & TYATOMIC)
+        return "_Atomic";
+    return StringRef();
+}
+} // end namespace detail
+
 raw_ostream &operator<<(llvm::raw_ostream &, const CType);
 
 raw_ostream &operator<<(llvm::raw_ostream &OS, const Expr e) {
@@ -42,85 +105,18 @@ raw_ostream &operator<<(llvm::raw_ostream &OS, const Expr e) {
     }
     llvm_unreachable("");
 }
-static StringRef get_pointer_qual_str(uint32_t a) {
-    if (a & TYCONST)
-        return "const";
-    if (a & TYVOLATILE)
-        return "volatile";
-    if (a & TYRESTRICT)
-        return "restrict";
-    return StringRef();
-}
-static StringRef get_prim_str(uint32_t tags) {
-    if (tags & TYVOID)
-        return "void";
-    if (tags & TYBOOL)
-        return "_Bool";
-    if (tags & TYINT8)
-        return "char";
-    if (tags & TYINT16)
-        return "short";
-    if (tags & TYINT32)
-        return "int";
-    if (tags & TYINT64)
-        return "long long";
-    if (tags & TYUINT8)
-        return "unsigned char";
-    if (tags & TYUINT16)
-        return "unsigned short";
-    if (tags & TYUINT32)
-        return "unsigned int";
-    if (tags & TYUINT64)
-        return "unsigned long long";
-    if (tags & TYINT128)
-        return "__int128";
-    if (tags & TYUINT128)
-        return "__uint128";
-    if (tags & TYFLOAT)
-        return "float";
-    if (tags & TYDOUBLE)
-        return "double";
-    if (tags & TYF128)
-        return "__float128";
-    return "(unknown basic type)";
-}
-static const char *get_type_name_str(uint32_t t) {
-    switch (t) {
-    case TYSTRUCT: return "struct";
-    case TYUNION: return "union";
-    case TYENUM: return "enum";
-    default: llvm_unreachable("bad arguments to get_type_name_str");
-    }
-}
-static StringRef get_storage_str(uint32_t tags) {
-    if (tags & TYSTATIC)
-        return "static";
-    if (tags & TYEXTERN)
-        return "extern";
-    if (tags & TYTHREAD_LOCAL)
-        return "_Thread_local";
-    if (tags & TYTYPEDEF)
-        return "typedef";
-    if (tags & TYREGISTER)
-        return "register";
-    if (tags & TYATOMIC)
-        return "_Atomic";
-    return StringRef();
-}
 
 raw_ostream &operator<<(llvm::raw_ostream &OS, const CType ty) {
     switch (ty->k) {
     case TYPRIM: {
         auto tags = ty->tags;
-        auto str0 = get_pointer_qual_str(tags);
+        auto str0 = detail::get_pointer_qual_str(tags);
         if (str0.size())
             OS << str0 << ' ';
-        auto str = get_storage_str(tags);
+        auto str = detail::get_storage_str(tags);
         if (str.size())
             OS << str << ' ';
-        if (ty->tags & TYCOMPLEX)
-            OS << "_Complex ";
-        return OS << get_prim_str(tags);
+        return print_basic(OS, ty);
     }
     case TYPOINTER: {
         auto str = get_pointer_qual_str(ty->tags);
@@ -146,7 +142,7 @@ raw_ostream &operator<<(llvm::raw_ostream &OS, const CType ty) {
             OS << ty->arrsize;
         return OS << ']';
     case TYFUNCTION: {
-        auto str = get_storage_str(ty->tags);
+        auto str = detail::get_storage_str(ty->tags);
         OS << '(' << ty->ret;
         if (ty->tags & TYINLINE)
             OS << "inline" << ' ';
@@ -170,7 +166,7 @@ raw_ostream &operator<<(llvm::raw_ostream &OS, const CType ty) {
         }
         return OS << ')' << ')';
     }
-    case TYINCOMPLETE: return OS << get_type_name_str(ty->tag) << ' ' << ty->name->getKey();
+    case TYINCOMPLETE: return OS << show(ty->tag) << ' ' << ty->name->getKey();
     }
     llvm_unreachable("");
 }
@@ -178,19 +174,17 @@ raw_ostream &operator<<(llvm::raw_ostream &OS, const CType ty) {
 raw_ostream &operator>>(llvm::raw_ostream &OS, const CType ty) {
     switch (ty->k) {
     case TYPRIM: {
-        auto tags = ty->tags;
-        auto str0 = get_pointer_qual_str(tags);
+        auto tags = ty->getTags();
+        auto str0 = detail::get_pointer_qual_str(tags);
         if (str0.size())
             OS << str0 << ' ';
-        auto str = get_storage_str(tags);
+        auto str = detail::get_storage_str(tags);
         if (str.size())
             OS << str << ' ';
-        if (ty->tags & TYCOMPLEX)
-            OS << "_Complex ";
-        return OS << get_prim_str(ty->tags);
+        return detail::print_basic(OS, ty);
     }
     case TYPOINTER: {
-        auto str = get_pointer_qual_str(ty->tags);
+        auto str = detail::get_pointer_qual_str(ty->getTags());
         OS << "pointer[elementType=" << ty->p;
         if (!str.empty())
             OS << ", qualifiers=" << str;
@@ -208,7 +202,7 @@ raw_ostream &operator>>(llvm::raw_ostream &OS, const CType ty) {
             OS << ty->arrsize;
         return OS << "]";
     case TYFUNCTION: {
-        auto str = get_storage_str(ty->tags);
+        auto str = detail::get_storage_str(ty->tags);
         OS << "Function[ret=" << ty->ret;
         if (ty->tags & TYINLINE)
             OS << "inline" << ' ';
@@ -234,7 +228,7 @@ raw_ostream &operator>>(llvm::raw_ostream &OS, const CType ty) {
             OS << "], isVarArg=false]";
         return OS << ']';
     }
-    case TYINCOMPLETE: return OS << get_type_name_str(ty->tag) << ' ' << ty->name->getKey();
+    case TYINCOMPLETE: return OS << show(ty->tag) << ' ' << ty->name->getKey();
     }
     llvm_unreachable("");
 }
@@ -243,19 +237,17 @@ void print_cdecl(const CType ty, raw_ostream &OS) {
     switch (ty->k) {
     case TYPRIM: {
         auto tags = ty->tags;
-        auto str0 = get_pointer_qual_str(tags);
+        auto str0 = detail::get_pointer_qual_str(tags);
         if (str0.size())
             OS << str0 << ' ';
-        auto str = get_storage_str(tags);
+        auto str = detail::get_storage_str(tags);
         if (str.size())
             OS << str << ' ';
-        if (ty->tags & TYCOMPLEX)
-            OS << "_Complex ";
-        OS << get_prim_str(ty->tags);
+        print_basic(OS, ty);
         break;
     }
     case TYPOINTER: {
-        auto str = get_pointer_qual_str(ty->tags);
+        auto str = detail::get_pointer_qual_str(ty->tags);
         if (!str.empty())
             OS << str << ' ';
         OS << "pointer to ";
@@ -304,7 +296,7 @@ void print_cdecl(const CType ty, raw_ostream &OS) {
         print_cdecl(ty->ret, OS);
         break;
     }
-    case TYINCOMPLETE: OS << get_type_name_str(ty->tag) << ' ' << ty->name->getKey(); break;
+    case TYINCOMPLETE: OS << show(ty->tag) << ' ' << ty->name->getKey(); break;
     }
 }
 void print_cdecl(StringRef name, const CType ty, raw_ostream &OS = llvm::errs(), bool addNewLine = false) {

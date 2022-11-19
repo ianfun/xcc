@@ -188,7 +188,18 @@ using llvm::RefCountedBase;
 using type_tag_t = uint64_t;
 constexpr APFloat::cmpResult cmpGreaterThan = APFloat::cmpGreaterThan, cmpEqual = APFloat::cmpEqual,
                                              cmpLessThan = APFloat::cmpLessThan;
-
+enum TagType: uint8_t {
+    TagType_Enum,
+    TagType_Struct,
+    TagType_Union
+};
+const char *show(enum TagType tag) {
+    switch (tag) {
+    case TagType_Enum: return "enum";
+    case TagType_Struct: return "struct";
+    case TagType_Union: return "union";
+    }
+}
 enum PostFixOp {
     PostfixIncrement = 1,
     PostfixDecrement
@@ -415,7 +426,6 @@ static const char *show(enum PostFixOp o) {
 // TODO: Decimal Float
 // https://discourse.llvm.org/t/rfc-decimal-floating-point-support-iso-iec-ts-18661-2-and-c23/62152
 enum FloatKindEnum: uint8_t {
-    F_Invalid,
     F_Half, // https://en.wikipedia.org/wiki/Half-precision_floating-point_format
     F_BFloat, // https://en.wikipedia.org/wiki/Bfloat16_floating-point_format
     F_Float, // https://en.wikipedia.org/wiki/Single-precision_floating-point_format
@@ -428,12 +438,14 @@ enum FloatKindEnum: uint8_t {
     F_Decimal128
 };
 struct FloatKind {
+    static constexpr size_t MAX_KIND = static_cast<size_t>(F_Decimal128) - static_cast<size_t>(F_Half) + 1;
     enum FloatKindEnum e;
-    inline FloatKind(enum FloatKindEnum k) e{k} { }
-    inline FloatKind(uint64_t k) e{static_cast<enum FloatKindEnum>(k)} {}
+    constexpr FloatKind(enum FloatKindEnum k) e{k} { }
+    FloatKind(uint64_t k) e{static_cast<enum FloatKindEnum>(k)} { assert(k < 16 && "invalid kind(max is 15)"); }
     enum FloatKindEnum getKind() { return e; }
-    inline operator enum FloatKindEnum() const { return e; }
-    inline operator uint64_t() const { return static_cast<uint64_t>(e); }
+    constexpr operator enum FloatKindEnum() const { return e; }
+    constexpr operator uint64_t() const { return static_cast<uint64_t>(e); }
+    constexpr enum FloatKindEnum asEnum() const { return e; }
     bool isValid() const { return e != F_Invalid && e <= F_PPC128; }
     uint64_t getBitWidth() const {
         switch (e) {
@@ -480,17 +492,21 @@ struct FloatKind {
     APFloat getZero() const {
         return APFloat::getZero(getFltSemantics());
     }
-    ConstantFP getZero(LLVMContext &ctx) const {
+    ConstantFP *getZero(LLVMContext &ctx) const {
         return ConstantFP::get(ctx, getZero());
     }
 };
 struct IntegerKind {
+    static constexpr size_t MAX_KIND = 7;
     uint8_t shift;
-    IntegerKind(uint8_t shift): shift{shift} {}
-    uint8_t asLog2() const {
+    constexpr IntegerKind(uint8_t shift): shift{shift} {
+        // assert(shift != 2 && "4 bit integer is invalid");
+        // assert(shift <= MAX_KIND && "integer width more than 128 bit is invalid");
+    }
+    constexpr uint8_t asLog2() const {
         return shift;
     }
-    uint64_t asBits() const {
+    constexpr uint64_t asBits() const {
         return uint64_t(1) << shift;
     }
     uint64_t getBitWidth() const { return asBits(); }
@@ -499,7 +515,7 @@ struct IntegerKind {
         assert((bits % 8) == 0 && "invalid call to asBytes(): loss information!");
         return bits / 8;
     }
-    static IntegerKind fromLog2(uint64_t Value) {
+    static constexpr IntegerKind fromLog2(uint8_t Value) {
         return IntegerKind(Value);
     }
     static IntegerKind fromBytes(uint64_t Bytes) {
@@ -517,7 +533,7 @@ struct IntegerKind {
     llvm::Type *toLLVMType(LLVMContext &ctx) const {
         return IntegerType::get(ctx, asBits());
     }
-    ConstantInt getZero(LLVMContext &ctx) const {
+    ConstantInt *getZero(LLVMContext &ctx) const {
         return ConstantInt::get(ctx, getZero());
     }
 };
@@ -530,6 +546,17 @@ struct IntegerKind {
 #include "xint128.cpp"
 #include "xstring.h"
 #include "xvector.h"
+static constexpr uint64_t build_integer(IntegerKind kind, bool Signed = false) {
+    const uint64_t log2size = kind.asLog2();
+    return (log2size << 47) | (Signed ? OpaqueCType::sign_bit : 0ULL);
+}
+static constexpr uint64_t build_float(FloatKind kind) {
+    const uint64_t k = kind;
+    return (k << 47) | OpaqueCType::integer_bit;
+}
+constexpr type_tag_t
+  ty_basic = ty_prim | TYCOMPLEX | TYIMAGINARY,
+  ty_storages = TYTYPEDEF | TYEXTERN | TYSTATIC | TYTHREAD_LOCAL | TYREGISTER | TYCONSTEXPR;
 
 // hard writtened type tags
 static constexpr type_tag_t
@@ -625,161 +652,35 @@ struct GNUSwitchCase : public SwitchCase {
     GNUSwitchCase(Location loc, label_t label, const APInt *CastStart, const APInt *CaseEnd)
         : SwitchCase(loc, label, CastStart), range{*CaseEnd - *CastStart} { }
 };
-enum ReachableKind {
-    Reachable,
-    MayReachable,
-    Unreachable
-};
-constexpr uint8_t LBL_UNDEFINED = 0, LBL_FORWARD = 1, LBL_DECLARED = 2, LBL_OK = 4;
 
-enum TypeIndex {
-    voidty,
-    i1ty,
-    i8ty,
-    u8ty,
-    i16ty,
-    u16ty,
-    i32ty,
-    u32ty,
-    i64ty,
-    u64ty,
-    i128ty,
-    u128ty,
-    floatty,
-    doublety,
-    fp128ty,
-    fp128ppcty,
-    ptrty,
-    TypeIndexHigh
-};
-enum NoSignTypeIndex {
-    xvoid,
-    x1,
-    x8,
-    x16,
-    x32,
-    x64,
-    x128,
-    xfloat,
-    xdouble,
-    xfp128,
-    xfp128ppc,
-    xptr,
-    NoSignTypeIndexHigh
-};
-static TypeIndex getTypeIndex(type_tag_t tags) {
-    if (tags & TYVOID)
-        return voidty;
-    if (tags & TYBOOL)
-        return i1ty;
-    if (tags & TYINT8)
-        return i8ty;
-    if (tags & TYUINT8)
-        return u8ty;
-    if (tags & TYINT16)
-        return i16ty;
-    if (tags & TYUINT16)
-        return u16ty;
-    if (tags & TYINT32)
-        return i32ty;
-    if (tags & TYUINT32)
-        return u32ty;
-    if (tags & TYINT64)
-        return i64ty;
-    if (tags & TYUINT64)
-        return u64ty;
-    if (tags & TYINT128)
-        return i128ty;
-    if (tags & TYUINT128)
-        return u128ty;
-    if (tags & TYDOUBLE)
-        return doublety;
-    if (tags & TYFLOAT)
-        return floatty;
-    if (tags & TYF128)
-        return fp128ty;
-    if (tags & TYPPC_128)
-        return fp128ppcty;
-    llvm_unreachable("bad type provided for getTypeIndex()");
-}
-static NoSignTypeIndex getNoSignTypeIndex(type_tag_t tags) {
-    if (tags & TYVOID)
-        return xvoid;
-    if (tags & TYBOOL)
-        return x1;
-    if (tags & (TYINT8 | TYUINT8))
-        return x8;
-    if (tags & (TYINT16 | TYUINT16))
-        return x16;
-    if (tags & (TYINT32 | TYUINT32))
-        return x32;
-    if (tags & (TYINT64 | TYUINT64))
-        return x64;
-    if (tags & (TYINT128 | TYUINT128))
-        return x128;
-    if (tags & TYFLOAT)
-        return xfloat;
-    if (tags & TYDOUBLE)
-        return xdouble;
-    if (tags & TYF128)
-        return xfp128;
-    if (tags & TYPPC_128)
-        return xfp128ppc;
-    llvm_unreachable("bad type provided for getNoSignTypeIndex()");
-}
-static enum BinOp getAtomicrmwOp(Token tok) {
-    switch (tok) {
-    default: return static_cast<BinOp>(0);
-    case TAsignAdd: return AtomicrmwAdd;
-    case TAsignSub: return AtomicrmwSub;
-    case TAsignBitOr: return AtomicrmwOr;
-    case TAsignBitAnd: return AtomicrmwAnd;
-    case TAsignBitXor: return AtomicrmwXor;
-    }
-}
 #include "ctypes.inc"
 #include "expressions.inc"
 #include "printer.cpp"
 #include "statements.inc"
 #include "utf8.cpp"
-
+static enum CTypeKind transform(enum TagType tag) {
+    switch (tag) {
+    case TagType_Union: return TYUNION;
+    case TagType_Struct: return TYSTRUCT;
+    case TagType_Enum: return TYENUM;
+    }
+    llvm_unreachable("bad TagType");
+}
+static const char *show_transform(enum CTypeKind k) {
+    switch (k) {
+    case TYENUM: return "enum";
+    case TYUNION: return "union";
+    case TYSTRUCT: return "struct";
+    }
+}
 constexpr type_tag_t storage_class_specifiers = 
  TYSTATIC | TYEXTERN | TYREGISTER | TYTHREAD_LOCAL | TYTYPEDEF | TYAUTO;
-static const char hexs[] = "0123456789ABCDEF";
 
+static const char hexs[] = "0123456789ABCDEF";
 static char hexed(unsigned a) { return hexs[a & 0b1111]; }
-enum PPFlags : uint8_t {
-    PFNormal = 1,
-    PFPP = 2
-};
-// integer tags
-enum ITag : uint8_t {
-    Iint,
-    Ilong,
-    Iulong,
-    Ilonglong,
-    Iulonglong,
-    Iuint
-};
-static bool isCSkip(char c) {
-    // space, tab, new line, form feed are translate into ' '
-    return c == ' ' || c == '\t' || c == '\f' || c == '\v';
-}
+
 static bool is_declaration_specifier(Token a) { return a >= Kextern && a <= Kvolatile; }
-static const char months[12][4] = {
-    "Jan", // January
-    "Feb", // February
-    "Mar", // March
-    "Apr", // April
-    "May", // May
-    "Jun", // June
-    "Jul", // July
-    "Aug", // August
-    "Sep", // September
-    "Oct", // October
-    "Nov", // November
-    "Dec"  // December
-};
+
 static bool type_equal(CType a, CType b) {
     assert(a && "type_equal: a is nullptr");
     assert(b && "type_equal: b is nullptr");
@@ -835,13 +736,8 @@ static bool compatible(CType p, CType expected) {
     }
     llvm_unreachable("");
 }
-enum FTag : uint8_t {
-    Fdobule,
-    Ffloat
-};
 
 // TokenV: A Token with a value, and a macro is a sequence of TokenVs
-
 enum TokenVKind : uint8_t {
     ATokenVBase,
     ATokenIdent,
@@ -895,7 +791,6 @@ enum PPMacroKind : uint8_t {
     MOBJ,
     MFUNC
 };
-
 struct PPMacro {
     static bool tokensEq(ArrayRef<TokenV> a, ArrayRef<TokenV> b) {
         if (a.size() != b.size())
@@ -927,8 +822,8 @@ struct PPMacro {
     IdentRef Name;
     enum PPMacroKind k = MOBJ; // 1 byte
     bool ivarargs = false;     // 1 byte
-    llvm::SmallVector<TokenV, 20> tokens{};
-    llvm::SmallVector<IdentRef, 0> params{};
+    SmallVector<TokenV, 20> tokens{};
+    SmallVector<IdentRef, 0> params{};
     bool equals(PPMacro &other) {
         return ((k == other.k) && (k == MFUNC ? (ivarargs == other.ivarargs) : true) && tokensEq(tokens, other.tokens));
     }
@@ -937,59 +832,21 @@ struct PPMacroDef {
     PPMacro m;
     LocationBase loc;
 };
-static unsigned intRank(type_tag_t tags) {
-    if (tags & TYBOOL)
-        return 1;
-    if (tags & (TYINT8 | TYUINT8))
-        return 8;
-    if (tags & (TYINT16 | TYUINT16))
-        return 16;
-    if (tags & (TYINT32 | TYUINT32))
-        return 32;
-    if (tags & (TYINT64 | TYUINT64))
-        return 64;
-    if (tags & (TYINT128 | TYUINT128))
-        return 128;
-    llvm_unreachable("bad call to intRank");
+static unsigned intRank(const_CType ty) {
+    return ty->getIntegerKind()->asLog2();
 }
-static unsigned intRank(CType ty) {
-    assert(ty->getKind() == TYPRIM);
-    return intRank(ty->getTags());
+static unsigned floatRank(const_CType ty) {
+    return ty->getFloatKind().getBitWidth();
 }
-static unsigned floatRank(type_tag_t tags) {
-    if (tags & TYHALF)
-        return 128 + 16;
-    if (tags & TYFLOAT)
-        return 128 + 32;
-    if (tags & TYDOUBLE)
-        return 128 + 64;
-    if (tags & TYF128)
-        return 128 + 128;
-    if (tags & TYPPC_128)
-        return 128 + 128;
-    llvm_unreachable("bad call to floatRank");
-}
-static unsigned floatRank(CType ty) {
-    assert(ty->getKind() == TYPRIM);
-    return floatRank(ty->getTags());
-}
-static unsigned scalarRankNoComplex(type_tag_t tags) {
+static unsigned scalarRankNoComplex(const_CType ty) {
     if (tags & floatings)
-        return floatRank(tags);
-    return intRank(tags);
+        return floatRank(ty) + 100; // a dummy number
+    return intRank(ty);
 }
-static unsigned scalarRankNoComplex(CType ty) {
-    assert(ty->getKind() == TYPRIM);
-    return scalarRankNoComplex(ty->getTags());
-}
-static unsigned scalarRank(type_tag_t tags) {
-    if (tags & TYCOMPLEX)
-        return scalarRankNoComplex(tags) + 128 + 128;
-    return scalarRankNoComplex(tags);
-}
-static unsigned scalarRank(CType ty) {
-    assert(ty->getKind() == TYPRIM);
-    return scalarRank(ty->getTags());
+static unsigned scalarRank(const_CType ty) {
+    if (ty->hasTag(TYCOMPLEX))
+        return scalarRankNoComplex(ty) + 1000; // a dummy number
+    return scalarRank(ty);
 }
 #include "console.cpp"
 #include "Diagnostic.cpp"

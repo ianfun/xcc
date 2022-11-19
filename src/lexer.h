@@ -3,6 +3,28 @@
 struct Parser;
 
 struct Lexer : public DiagnosticHelper {
+    enum PPFlags : uint8_t {
+        PFNormal = 1,
+        PFPP = 2
+    };
+    static const char months[12][4] = {
+        "Jan", // January
+        "Feb", // February
+        "Mar", // March
+        "Apr", // April
+        "May", // May
+        "Jun", // June
+        "Jul", // July
+        "Aug", // August
+        "Sep", // September
+        "Oct", // October
+        "Nov", // November
+        "Dec"  // December
+    };
+    static bool isCSkip(char c) {
+        // space, tab, new line, form feed are translate into ' '
+        return c == ' ' || c == '\t' || c == '\f' || c == '\v';
+    }
     TokenV tok = TNul;
     bool want_expr = false;
     bool isPPMode = false;

@@ -98,3 +98,7 @@ ianfun
 
 * 015006@mst.hlis.hlc.edu.tw
 * ianfun.github.io@gmail.com
+
+## References
+
+* C23: https://open-std.org/JTC1/SC22/WG14/www/docs/n3054.pdf
