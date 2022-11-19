@@ -472,12 +472,7 @@ def gen_ctypes():
 	for decls in ctypes.values():
 		if decls:
 			f.write("  struct {\n      " + ';\n      '.join(decls) + ';\n  };\n')
-	f.write(
-"""};
-static_assert(sizeof(enum FloatKindEnum) == sizeof(FloatKind), "The C++ compiler and XCC disagree on the size of FloatKind!\\n");
-static_assert(sizeof(CType) == sizeof(uint64_t), "The C++ compiler and XCC disagree on the size of CType!\\n");
-"""
-	)
+	f.write("};")
 	l = []
 	for name, decls in ctypes.items():
 		realname = name[2:3] + name[3::].lower() + "Type"

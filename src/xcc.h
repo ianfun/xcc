@@ -411,7 +411,10 @@ static const char *show(enum PostFixOp o) {
     default: return "(unknown postfix operator)";
     }
 }
-enum FloatKindEnum {
+// Octuple-precision floating-point are not supported
+// TODO: Decimal Float
+// https://discourse.llvm.org/t/rfc-decimal-floating-point-support-iso-iec-ts-18661-2-and-c23/62152
+enum FloatKindEnum: uint8_t {
     F_Invalid,
     F_Half, // https://en.wikipedia.org/wiki/Half-precision_floating-point_format
     F_BFloat, // https://en.wikipedia.org/wiki/Bfloat16_floating-point_format
@@ -419,15 +422,20 @@ enum FloatKindEnum {
     F_Double, // https://en.wikipedia.org/wiki/Double-precision_floating-point_format
     F_x87_80, // 80 bit float (X87)
     F_Quadruple, // https://en.wikipedia.org/wiki/Quadruple-precision_floating-point_format
-    F_PPC128 // https://gcc.gnu.org/wiki/Ieee128PowerPC
+    F_PPC128, // https://gcc.gnu.org/wiki/Ieee128PowerPC
+    F_Decimal32,
+    F_Decimal64,
+    F_Decimal128
 };
 struct FloatKind {
     enum FloatKindEnum e;
     inline FloatKind(enum FloatKindEnum k) e{k} { }
+    inline FloatKind(uint64_t k) e{static_cast<enum FloatKindEnum>(k)} {}
     enum FloatKindEnum getKind() { return e; }
     inline operator enum FloatKindEnum() const { return e; }
+    inline operator uint64_t() const { return static_cast<uint64_t>(e); }
     bool isValid() const { return e != F_Invalid && e <= F_PPC128; }
-    uint64_t getBitSize() const {
+    uint64_t getBitWidth() const {
         switch (e) {
         case F_Half:
         case F_BFloat: return 16;
@@ -436,6 +444,9 @@ struct FloatKind {
         case F_x87_80: return 80;
         case F_Quadruple:
         case F_PPC128: return 128;
+        case F_Decimal32: return 32;
+        case F_Decimal64: return 64;
+        case F_Decimal128: return 128;
         }
         llvm_unreachable("broken type: invalid FloatKindEnum");
     };
@@ -448,8 +459,8 @@ struct FloatKind {
         case F_x87_80: return llvm::Type::getX86_FP80Ty(ctx);
         case F_Quadruple: return llvm::Type::getFP128Ty(ctx);
         case F_PPC128: return llvm::Type::getPPC_FP128Ty(ctx);
+        default: llvm_unreachable("Decimal floating are not supported now!");
         }
-        llvm_unreachable("broken type: invalid FloatKindEnum");
     }
     llvm::fltSemantics &llvm::getFltSemantics() const {
         switch (e) {
@@ -460,11 +471,54 @@ struct FloatKind {
         case F_x87_80: return APFloat::x87DoubleExtended();
         case F_Quadruple: return APFloat::IEEEquad();
         case F_PPC128: return APFloat::PPCDoubleDouble();
+        default: llvm_unreachable("Decimal floating are not supported now!");
         }
-        llvm_unreachable("broken type: invalid FloatKindEnum");
     }
     bool isIEEE() const {
         return APFloat::getZero(getFltSemantics()).isIEEE();
+    }
+    APFloat getZero() const {
+        return APFloat::getZero(getFltSemantics());
+    }
+    ConstantFP getZero(LLVMContext &ctx) const {
+        return ConstantFP::get(ctx, getZero());
+    }
+};
+struct IntegerKind {
+    uint8_t shift;
+    IntegerKind(uint8_t shift): shift{shift} {}
+    uint8_t asLog2() const {
+        return shift;
+    }
+    uint64_t asBits() const {
+        return uint64_t(1) << shift;
+    }
+    uint64_t getBitWidth() const { return asBits(); }
+    uint64_t asBytes() const {
+        uint64_t bits = asBits();
+        assert((bits % 8) == 0 && "invalid call to asBytes(): loss information!");
+        return bits / 8;
+    }
+    static IntegerKind fromLog2(uint64_t Value) {
+        return IntegerKind(Value);
+    }
+    static IntegerKind fromBytes(uint64_t Bytes) {
+        assert(llvm::isPowerOf2_64(Bytes));
+        return fromLog2(llvm::Log2_64(Bytes));
+    }
+    static IntegerKind fromBits(uint64_t Bits) {
+        assert(llvm::isPowerOf2_64(Bits));
+        return fromBytes(llvm::Log2_64(Bits));
+    }
+    APInt getZero() const {
+        return APInt::getZero(asBits());
+    }
+    bool isBool() const { return asBits() == 1; }
+    llvm::Type *toLLVMType(LLVMContext &ctx) const {
+        return IntegerType::get(ctx, asBits());
+    }
+    ConstantInt getZero(LLVMContext &ctx) const {
+        return ConstantInt::get(ctx, getZero());
     }
 };
 #include "option.cpp"
