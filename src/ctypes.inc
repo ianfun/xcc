@@ -47,13 +47,12 @@ enum CTypeKind: uint8_t {
       bool isVarArg;
   };
   struct {
-      uint8_t tag;
+      enum TagType tag;
       IdentRef name;
       size_t iidx;
   };
+  };
 };
-static_assert(sizeof(enum FloatKindEnum) == sizeof(FloatKind), "The C++ compiler and XCC disagree on the size of FloatKind!\n");
-static_assert(sizeof(CType) == sizeof(uint64_t), "The C++ compiler and XCC disagree on the size of CType!\n");
 struct PrimType {
   uint64_t tags;
 };
@@ -114,7 +113,7 @@ struct FunctionType{
 struct IncompleteType{
   uint64_t tags;
   struct {
-    uint8_t tag;
+    enum TagType tag;
     IdentRef name;
     size_t iidx;
   };

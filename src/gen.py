@@ -326,7 +326,7 @@ def gen_type_tags():
 		x = 1 << i
 		f.write("  %s=0x%x,\n" % (t, x))
 		i += 1
-	f.write(";\n")
+	f.write("TYINVALID = 0;\n")
 	f.close()
 	verbose("done.\n")
 	return Monad.get()
@@ -446,7 +446,7 @@ def gen_ctypes():
 	for decls in ctypes.values():
 		if decls:
 			f.write("  struct {\n      " + ';\n      '.join(decls) + ';\n  };\n')
-	f.write("};")
+	f.write("  };\n};\n")
 	l = []
 	for name, decls in ctypes.items():
 		realname = name[2:3] + name[3::].lower() + "Type"

@@ -47,12 +47,12 @@ IsUTF8(StringRef str) {
 
 // clang-format on
 
-llvm::ConstantDataArray *getUTF8(xstring s, LLVMContext &ctx) {
+llvm::Constant *getUTF8(xstring s, LLVMContext &ctx) {
   return llvm::ConstantDataArray::getString(ctx, s, false);
 }
 
 template <typename T>
-llvm::ConstantDataArray *getUTF16AsNBit(xstring s, LLVMContext &ctx) {
+llvm::Constant *getUTF16AsNBit(xstring s, LLVMContext &ctx) {
   SmallVector<T> data;
   uint32_t state = 0, codepoint;
   for (auto c : s) {
@@ -68,14 +68,16 @@ llvm::ConstantDataArray *getUTF16AsNBit(xstring s, LLVMContext &ctx) {
   return llvm::ConstantDataArray::get(ctx, data);
 }
 // in Linux, wchar_t are 32 bit(int)
-llvm::ConstantDataArray *getUTF16As32Bit(xstring s, LLVMContext &ctx) {
+llvm::Constant *getUTF16As32Bit(xstring s, LLVMContext &ctx) {
   return getUTF16AsNBit<uint32_t>(s, ctx);
 }
 // in Windows, wchar_t are 16 bit(unsigned short)
-llvm::ConstantDataArray *getUTF16As32Bit(xstring s, LLVMContext &ctx) {
+llvm::Constant *getUTF16As16Bit(xstring s, LLVMContext &ctx) {
   return getUTF16AsNBit<uint16_t>(s, ctx);
 }
-llvm::ConstantDataArray *getUTF32(xstring s, LLVMContext &ctx) {
+llvm::Constant *getUTF32(xstring s, LLVMContext &ctx) {
+  uint32_t state = 0, codepoint;
+  llvm::SmallVector<uint32_t> data;
   for (const auto c : s)
       if (!decode(&state, &codepoint, (uint32_t)(unsigned char)c))
           data.push_back(codepoint);

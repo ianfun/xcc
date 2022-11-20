@@ -195,7 +195,7 @@ enum TagType: uint8_t {
     TagType_Union
 };
 enum StringPrefix: uint8_t {
-    Prefix_none, // An integer character constant has type int.
+    Prefix_none,// An integer character constant has type int.
     Prefix_u8, // A UTF-8 character constant has type char8_t. (unsigned)
     Prefix_L,  // A wchar_t character constant prefixed by the letter L has type wchar_t
     Prefix_u,  // A UTF-16 character constant has type char16_t (unsigned)
@@ -430,6 +430,17 @@ static const char *show(enum PostFixOp o) {
     default: return "(unknown postfix operator)";
     }
 }
+static void bin(uint64_t a) {
+    putchar(a & 1 ? '1' : '0');
+    putchar(a & 2 ? '1' : '0');
+    putchar(a & 4 ? '1' : '0');
+    putchar(a & 8 ? '1' : '0');
+    putchar(a & 16 ? '1' : '0');
+    putchar(a & 32 ? '1' : '0');
+    putchar(a & 64 ? '1' : '0');
+    putchar(a & 128 ? '1' : '0');
+    putchar(' ');
+}
 // Octuple-precision floating-point are not supported
 // TODO: Decimal Float
 // https://discourse.llvm.org/t/rfc-decimal-floating-point-support-iso-iec-ts-18661-2-and-c23/62152
@@ -449,14 +460,16 @@ enum FloatKindEnum: uint8_t {
 struct FloatKind {
     static constexpr size_t MAX_KIND = static_cast<size_t>(F_Decimal128) - static_cast<size_t>(F_Half);
     enum FloatKindEnum e;
-    FloatKind(enum FloatKindEnum k) e{k} { }
-    FloatKind(uint64_t k) e{static_cast<enum FloatKindEnum>(k)} { assert(k < 16 && "invalid kind(max is 15)"); }
-    enum FloatKindEnum getKind() { return e; }
-    operator enum FloatKindEnum() const { return e; }
-    operator uint64_t() const { return static_cast<uint64_t>(e); }
-    enum FloatKindEnum asEnum() const { return e; }
-    bool isValid() const { return e != F_Invalid && e <= F_PPC128; }
-    operator bool() const { return e != F_Invalid; }
+    constexpr FloatKind(enum FloatKindEnum k): e{k} { }
+    constexpr FloatKind(uint64_t k): e{static_cast<enum FloatKindEnum>(k)} { assert(k < 16 && "invalid kind(max is 15)"); }
+    constexpr enum FloatKindEnum getKind() { return e; }
+    constexpr operator uint64_t() const { return static_cast<uint64_t>(e); }
+    constexpr enum FloatKindEnum asEnum() const { return e; }
+    constexpr bool isValid() const { return e != F_Invalid && e <= F_PPC128; }
+    constexpr operator bool() const { return e != F_Invalid; }
+    constexpr bool equals(const enum FloatKindEnum other) const {
+        return e == other;
+    }
     uint64_t getBitWidth() const {
         switch (e) {
         case F_Half:
@@ -478,7 +491,7 @@ struct FloatKind {
         case F_Half: return llvm::Type::getHalfTy(ctx);
         case F_BFloat: return llvm::Type::getBFloatTy(ctx);
         case F_Float: return llvm::Type::getFloatTy(ctx);
-        case F_Double: return llvm::Type::getDouble(ctx);
+        case F_Double: return llvm::Type::getDoubleTy(ctx);
         case F_x87_80: return llvm::Type::getX86_FP80Ty(ctx);
         case F_Quadruple: return llvm::Type::getFP128Ty(ctx);
         case F_PPC128: return llvm::Type::getPPC_FP128Ty(ctx);
@@ -487,11 +500,11 @@ struct FloatKind {
         }
         llvm_unreachable("Decimal floating are not supported now!");
     }
-    llvm::fltSemantics &getFltSemantics() const {
+    const llvm::fltSemantics &getFltSemantics() const {
         switch (e) {
         case F_Half: return APFloat::IEEEhalf();
         case F_BFloat: return APFloat::BFloat();
-        case F_Float: APFloat::IEEEsingle();
+        case F_Float: return APFloat::IEEEsingle();
         case F_Double: return APFloat::IEEEdouble();
         case F_x87_80: return APFloat::x87DoubleExtended();
         case F_Quadruple: return APFloat::IEEEquad();
@@ -530,22 +543,20 @@ struct FloatKind {
 struct IntegerKind {
     static constexpr size_t MAX_KIND = 7;
     uint8_t shift;
-    IntegerKind(uint8_t shift): shift{shift} {
-        assert(shift != 2 && );
-    }
-    const char *isValid() const {
+    constexpr IntegerKind(uint8_t shift): shift{shift} {}
+    constexpr bool isValid() const {
         return shift != 2 && shift <= MAX_KIND;
     }
-    operator bool() const {
+    constexpr operator bool() const {
         return shift;
     }
-    uint8_t asLog2() const {
+    constexpr uint8_t asLog2() const {
         return shift;
     }
-    uint64_t asBits() const {
+    constexpr uint64_t asBits() const {
         return uint64_t(1) << shift;
     }
-    StringRef show(bool Signed) const {
+    constexpr StringRef show(bool Signed) const {
         switch (shift) {
             case 1: return "_Bool"; // XXX: C23 is bool
             case 3: return Signed ? StringRef("char") : StringRef("unsigned char");
@@ -557,16 +568,16 @@ struct IntegerKind {
         }
         return "(invalid IntegerKind)";
     }
-    uint64_t getBitWidth() const { return asBits(); }
+    constexpr uint64_t getBitWidth() const { return asBits(); }
     uint64_t asBytes() const {
         uint64_t bits = asBits();
         assert((bits % 8) == 0 && "invalid call to asBytes(): loss information!");
         return bits / 8;
     }
-    bool operator==(const IntegerKind &other) const {
+    constexpr bool operator==(const IntegerKind &other) const {
         return asLog2() == other.asLog2();
     }
-    static IntegerKind fromLog2(uint8_t Value) {
+    constexpr static IntegerKind fromLog2(uint8_t Value) {
         return IntegerKind(Value);
     }
     static IntegerKind fromBytes(uint64_t Bytes) {
@@ -582,12 +593,16 @@ struct IntegerKind {
     }
     bool isBool() const { return asBits() == 1; }
     llvm::Type *toLLVMType(LLVMContext &ctx) const {
-        return IntegerType::get(ctx, asBits());
+        return llvm::IntegerType::get(ctx, asBits());
     }
     ConstantInt *getZero(LLVMContext &ctx) const {
         return ConstantInt::get(ctx, getZero());
     }
 };
+static constexpr uint64_t 
+   build_integer(IntegerKind kind, bool Signed = false),
+   build_float(FloatKind kind);
+
 #include "option.cpp"
 #include "Arena.cpp"
 #include "tokens.inc"
@@ -597,14 +612,7 @@ struct IntegerKind {
 #include "xint128.cpp"
 #include "xstring.h"
 #include "xvector.h"
-static constexpr uint64_t build_integer(IntegerKind kind, bool Signed = false) {
-    const uint64_t log2size = kind.asLog2();
-    return (log2size << 47) | (Signed ? OpaqueCType::sign_bit : 0ULL);
-}
-static constexpr uint64_t build_float(FloatKind kind) {
-    const uint64_t k = kind;
-    return (k << 47) | OpaqueCType::integer_bit;
-}
+
 constexpr type_tag_t
   storage_class_specifiers = TYTYPEDEF | TYEXTERN | TYSTATIC | TYTHREAD_LOCAL | TYREGISTER | TYCONSTEXPR| TYAUTO,
   type_qualifiers = TYCONST | TYRESTRICT | TYVOLATILE | TYATOMIC,
@@ -697,6 +705,16 @@ struct GNUSwitchCase : public SwitchCase {
 #include "printer.cpp"
 #include "statements.inc"
 #include "utf8.cpp"
+
+static constexpr uint64_t build_integer(IntegerKind kind, bool Signed) {
+    const uint64_t log2size = kind.asLog2();
+    return (log2size << 47) | (Signed ? OpaqueCType::sign_bit : 0ULL);
+}
+static constexpr uint64_t build_float(FloatKind kind) {
+    const uint64_t k = kind;
+    return (k << 47) | OpaqueCType::integer_bit;
+}
+
 static enum CTypeKind transform(enum TagType tag) {
     switch (tag) {
     case TagType_Union: return TYUNION;
@@ -710,9 +728,9 @@ static const char *show_transform(enum CTypeKind k) {
     case TYENUM: return "enum";
     case TYUNION: return "union";
     case TYSTRUCT: return "struct";
+    default: llvm_unreachable("bad call to show_transform");
     }
 }
-
 static const char hexs[] = "0123456789ABCDEF";
 static char hexed(unsigned a) { return hexs[a & 0b1111]; }
 
@@ -871,13 +889,13 @@ struct PPMacroDef {
     LocationBase loc;
 };
 static unsigned intRank(const_CType ty) {
-    return ty->getIntegerKind()->asLog2();
+    return ty->getIntegerKind().asLog2();
 }
 static unsigned floatRank(const_CType ty) {
     return ty->getFloatKind().getBitWidth();
 }
 static unsigned scalarRankNoComplex(const_CType ty) {
-    if (tags & floatings)
+    if (ty->isFloating())
         return floatRank(ty) + 100; // a dummy number
     return intRank(ty);
 }

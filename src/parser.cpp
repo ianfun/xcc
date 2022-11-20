@@ -7,7 +7,7 @@
 // and Semantics(https://en.wikipedia.org/wiki/Semantics_(computer_science)).
 
 struct Parser : public DiagnosticHelper {
-    constexpr uint8_t LBL_UNDEFINED = 0, LBL_FORWARD = 1, LBL_DECLARED = 2, LBL_OK = 4;
+    static constexpr uint8_t LBL_UNDEFINED = 0, LBL_FORWARD = 1, LBL_DECLARED = 2, LBL_OK = 4;
     struct Type_info {
         CType ty = nullptr;
         Location loc = Location();
@@ -17,7 +17,7 @@ struct Parser : public DiagnosticHelper {
         uint8_t flags = LBL_UNDEFINED;
         Location loc = Location();
     };
-    constexpr uint8_t 
+    static constexpr uint8_t 
         LOCAL_GARBAGE = 0,         // just declared
         USED = 0x1,                // set if variable is used
         ASSIGNED = 0x2,            // set if assigned or initialized
@@ -72,22 +72,22 @@ private:
         return ENEW(UnaryExpr){.loc = e->loc, .ty = ty, .uoperand = e, .uop = op};
     }
     Expr complex_from_real(Expr real, CType ty) {
-        ty = tryGetComplexTypeFromNonComplex(ty);
+        ty = context.tryGetComplexTypeFromNonComplex(ty);
         auto zero = llvm::Constant::getNullValue(irgen.wrapNoComplexScalar(ty));
         if (real->k == EConstant)
-            return wrap(ty, llvm::ConstantStruct::get(irgen.wrapComplex(ty->tags), {real->C, zero}), real->loc);
+            return wrap(ty, llvm::ConstantStruct::get(irgen.wrapComplex(ty), {real->C, zero}), real->loc);
         return binop(real, Complex_CMPLX, wrap(ty, zero), ty);
     }
     Expr complex_from_imag(Expr imag, CType ty) {
-        ty = tryGetComplexTypeFromNonComplex(ty);
+        ty = context.tryGetComplexTypeFromNonComplex(ty);
         auto zero = ConstantFP::getZero(irgen.wrapNoComplexScalar(ty));
         if (imag->k == EConstant)
-            return wrap(ty, llvm::ConstantStruct::get(irgen.wrapComplex(ty->tags), {zero, imag->C}), imag->loc);
+            return wrap(ty, llvm::ConstantStruct::get(irgen.wrapComplex(ty), {zero, imag->C}), imag->loc);
         return binop(wrap(ty, zero), Complex_CMPLX, imag, ty);
     }
     Expr complex_pair(Expr a, Expr b, CType ty) {
         return (a->k == EConstant && b->k == EConstant) ?
-            wrap(ty, llvm::ConstantStruct::get(irgen.wrapComplex(ty->tags), {a->C, b->C})) :
+            wrap(ty, llvm::ConstantStruct::get(irgen.wrapComplex(ty), {a->C, b->C})) :
             binop(a, Complex_CMPLX, b, ty);
     }
     Expr complex_get_real(Expr e) {
@@ -116,23 +116,23 @@ private:
     }
     Expr complex_pair(Expr a, Expr b) {
         assert(a && b && "complex_pair: nullptr is invalid");
-        return complex_pair(a, b, tryGetComplexTypeFromNonComplex(a->ty));
+        return complex_pair(a, b, context.tryGetComplexTypeFromNonComplex(a->ty));
     }
     Expr complex_zero(CType ty) {
         assert(ty->isComplex());
-        auto T = irgen.wrapComplex(ty->tags);
+        auto T = irgen.wrapComplex(ty);
         auto zero = llvm::Constant::getNullValue(T->getTypeAtIndex((unsigned)0));
         return wrap(ty, llvm::ConstantStruct::get(T, {zero, zero}));
     }
     Expr complex_neg_zero(CType ty) {
         assert(ty->isComplex());
-        auto T = irgen.wrapComplex(ty->tags);
+        auto T = irgen.wrapComplex(ty);
         auto neg_zero = ConstantFP::getNegativeZero(T->getTypeAtIndex((unsigned)0));
         return wrap(ty, llvm::ConstantStruct::get(T, {neg_zero, neg_zero}));
     }
     Expr complex_pos_neg_zero(CType ty) {
         assert(ty->isComplex());
-        auto T = irgen.wrapComplex(ty->tags);
+        auto T = irgen.wrapComplex(ty);
         auto TY = T->getTypeAtIndex((unsigned)0);
         auto zero = ConstantFP::getZero(TY);
         auto neg_zero = ConstantFP::getNegativeZero(TY);
@@ -140,7 +140,7 @@ private:
     }
     Expr complex_neg_nan_pair(CType ty) {
         assert(ty->isComplex());
-        auto T = irgen.wrapComplex(ty->tags);
+        auto T = irgen.wrapComplex(ty);
         auto TY = T->getTypeAtIndex((unsigned)0);
         auto neg_zero = ConstantFP::getNegativeZero(TY);
         auto qnan = ConstantFP::getQNaN(TY, true);
@@ -148,7 +148,7 @@ private:
     }
     Expr complex_inf_pair(CType ty) {
         assert(ty->isComplex());
-        auto T = irgen.wrapComplex(ty->tags);
+        auto T = irgen.wrapComplex(ty);
         auto inf = ConstantFP::getInfinity(T->getTypeAtIndex((unsigned)0));
         return wrap(ty, llvm::ConstantStruct::get(T, {inf, inf}));
     }
@@ -306,7 +306,7 @@ private:
                 auto M = type_qualifiers | TYSTATIC | TYTHREAD_LOCAL | TYREGISTER | TYTYPEDEF;
                 CType old = it->ty;
                 bool err = true;
-                type_tag_t t1 = yt->tags, t2 = old->tags;
+                type_tag_t t1 = yt->getTagsQualifiersAndStoragesOnly(), t2 = old->getTagsQualifiersAndStoragesOnly();
                 if ((t1 & M) != (t2 & M))
                     type_error(it->loc, "conflicting type qualifiers for %I", Name);
                 else if (!compatible(old, yt))
@@ -696,13 +696,13 @@ PTR_CAST:
         // complex integer + floatings
         // complex int + double => complex double
         if (bt->isFloating()) {
-            CType resultTy = tryGetComplexTypeFromNonComplex(bt);
+            CType resultTy = context.tryGetComplexTypeFromNonComplex(bt);
             a = castto(a, resultTy);
             b = castto(b, resultTy);
             return;
         }
         // complex integer + integer
-        CType resultTy = tryGetComplexTypeFromNonComplex(intRank(at) > intRank(bt) ? at : bt);
+        CType resultTy = context.tryGetComplexTypeFromNonComplex(intRank(at) > intRank(bt) ? at : bt);
         a = castto(a, resultTy);
         b = castto(b, resultTy);
         return;

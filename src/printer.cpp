@@ -44,7 +44,7 @@ raw_ostream &operator<<(llvm::raw_ostream &OS, const Expr e) {
 }
 
 raw_ostream &operator<<(llvm::raw_ostream &OS, const CType ty) {
-    switch (ty->k) {
+    switch (ty->getKind()) {
     case TYPRIM: {
         auto str0 = ty->get_pointer_qual_str();
         if (str0.size())
@@ -56,7 +56,7 @@ raw_ostream &operator<<(llvm::raw_ostream &OS, const CType ty) {
     }
     case TYPOINTER: {
         auto str = ty->get_pointer_qual_str();
-        bool isArrType = ty->p->k == TYARRAY;
+        bool isArrType = ty->p->getKind() == TYARRAY;
         if (isArrType)
             OS << '(';
         OS << ty->p << " *";
@@ -80,9 +80,9 @@ raw_ostream &operator<<(llvm::raw_ostream &OS, const CType ty) {
     case TYFUNCTION: {
         auto str = ty->get_storage_str();
         OS << '(' << ty->ret;
-        if (ty->tags & TYINLINE)
+        if (ty->hasTag(TYINLINE))
             OS << "inline" << ' ';
-        if (ty->tags & TYNORETURN)
+        if (ty->hasTag(TYNORETURN))
             OS << "_Noreturn" << ' ';
         if (str.size())
             OS << str;
@@ -108,7 +108,7 @@ raw_ostream &operator<<(llvm::raw_ostream &OS, const CType ty) {
 }
 
 raw_ostream &operator>>(llvm::raw_ostream &OS, const CType ty) {
-    switch (ty->k) {
+    switch (ty->getKind()) {
     case TYPRIM: {
         auto str0 = ty->get_pointer_qual_str();
         if (str0.size())
@@ -139,9 +139,9 @@ raw_ostream &operator>>(llvm::raw_ostream &OS, const CType ty) {
     case TYFUNCTION: {
         auto str = ty->get_storage_str();
         OS << "Function[ret=" << ty->ret;
-        if (ty->tags & TYINLINE)
+        if (ty->hasTag(TYINLINE))
             OS << "inline" << ' ';
-        if (ty->tags & TYNORETURN)
+        if (ty->hasTag(TYNORETURN))
             OS << "_Noreturn" << ' ';
         if (str.size())
             OS << str;
@@ -169,7 +169,7 @@ raw_ostream &operator>>(llvm::raw_ostream &OS, const CType ty) {
 }
 
 void print_cdecl(const CType ty, raw_ostream &OS) {
-    switch (ty->k) {
+    switch (ty->getKind()) {
     case TYPRIM: {
         auto str0 = ty->get_pointer_qual_str();
         if (str0.size())
@@ -181,7 +181,7 @@ void print_cdecl(const CType ty, raw_ostream &OS) {
         break;
     }
     case TYPOINTER: {
-        auto str = ty->get_pointer_qual_str(ty);
+        auto str = ty->get_pointer_qual_str();
         if (!str.empty())
             OS << str << ' ';
         OS << "pointer to ";
@@ -221,9 +221,9 @@ void print_cdecl(const CType ty, raw_ostream &OS) {
                 OS << ", ...";
         }
         OS << ") returning ";
-        if (ty->tags & TYINLINE)
+        if (ty->hasTag(TYINLINE))
             OS << "inline" << ' ';
-        if (ty->tags & TYNORETURN)
+        if (ty->hasTag(TYNORETURN))
             OS << "_Noreturn" << ' ';
         if (str.size())
             OS << str;

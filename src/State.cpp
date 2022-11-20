@@ -20,11 +20,12 @@ struct xcc_context {
         u128 = make_unsigned(9);
 
         fhalfty = make_floating(F_Half);
+        bfloatty = make_floating(F_BFloat);
         ffloatty = make_floating(F_Float);
         fdoublety = make_floating(F_Double);
         f80ty = make_floating(F_x87_80);
-        f128ty = make_floating(TYPPC_128);
-        ppc_f128 = make_floating(TYPPC_128);
+        f128ty = make_floating(F_Quadruple);
+        ppc_f128 = make_floating(F_PPC128);
         fdecimal32 = make_floating(F_Decimal32);
         fdecimal64 = make_floating(F_Decimal64);
         fdecimal128 = make_floating(F_Decimal128);
@@ -36,7 +37,7 @@ struct xcc_context {
         _uchar = isUChar_tSigned() ? i32 :  u32;
         _size_t = make_unsigned(getSize_tLog2());
         _ptr_diff_t = make_signed(getSize_tLog2());
-        _uint_ptr = make_unsigned();
+        _uint_ptr = make_unsigned(6);
 
         // For wide string literals prefixed by the letter u or U, the array elements have type char16_t or char32_t
         str32ty = getPointerType(getChar32_t());
@@ -56,10 +57,12 @@ struct xcc_context {
     IdentifierTable table; // contains allocator!
     Expr intzero;
     CType constint, b, v, i8, u8, i16, u16, i32, u32, i64, u64, i128, u128, 
-    ffloatty, fdoublety, fhalfty, f128ty, ppc_f128, f80ty, str8ty, str16ty, str32ty, stringty, wstringty, _complex_float, _complex_double, 
-    _complex_longdouble, _wchar, _long, _ulong, _longlong, _ulonglong, _longdouble, _uchar, _size_t, _ptr_diff_t;
+    ffloatty, fdoublety, bfloatty, fhalfty, f128ty, ppc_f128, f80ty, str8ty, str16ty, str32ty, stringty, wstringty, _complex_float, _complex_double, 
+    _complex_longdouble, 
+    _short ,_ushort, _wchar, _long, _ulong, _longlong, _ulonglong, _longdouble, _uchar, 
+    _size_t, _ptr_diff_t, _uint_ptr, fdecimal32, fdecimal64, fdecimal128;
     [[nodiscard]] CType make(uint64_t tags) {
-        return TNEW(PrimType)(tags);
+        return TNEW(PrimType){.tags = tags};
     }
     [[nodiscard]] CType make_unsigned(uint8_t shift, uint64_t tags = 0) {
         return make(build_integer(IntegerKind::fromLog2(shift), false) | tags);
@@ -77,8 +80,8 @@ struct xcc_context {
         if (ty->isFloating()) {
             const auto k = ty->getFloatKind();
             switch (k.asEnum()) {
-            case F_Double: return context.getComplexDouble();
-            case F_Float: return context.getComplexFloat();
+            case F_Double: return getComplexDouble();
+            case F_Float: return getComplexFloat();
             default: break;
             }
             return make_complex_float(k);
@@ -99,6 +102,7 @@ struct xcc_context {
         CType res = reinterpret_cast<CType>(getAllocator().Allocate(ctype_max_size, 1));
         res->setTags(0);
         res->setKind(TYPRIM);
+        return res;
     }
     [[nodiscard]] CType getComplexFloat() const {
         return _complex_float;
@@ -111,6 +115,9 @@ struct xcc_context {
     }
     [[nodiscard]] CType getFloat() const {
         return ffloatty;
+    }
+    [[nodiscard]] CType getBFloat() const {
+        return bfloatty;
     }
     [[nodiscard]] CType getDobule() const {
         return fdoublety;
@@ -184,22 +191,25 @@ struct xcc_context {
         return _uchar;
     }
     [[nodiscard]] CType getShort() const {
-        return i16;
+        return _short;
     }
     [[nodiscard]] CType getUShort() const {
-        return u16;
+        return _ushort;
     }
     [[nodiscard]] CType getPtrDiff_t() const { return _ptr_diff_t; }
     [[nodiscard]] CType getSize_t() const { return _size_t; }
+    [[nodiscard]] CType getUint_ptr_t() const {
+        return _uint_ptr;
+    }
     [[nodiscard]] CType getLongLong() const { return u64; }
     [[nodiscard]] CType getULongLong() const { return i64; }
-    [[nodiscard]] ArenaAllocator &getAllocator() const { return table.getAllocator(); }
+    [[nodiscard]] ArenaAllocator &getAllocator() { return table.getAllocator(); }
     [[nodiscard]] void *new_memcpy(size_t size, const void *src) {
         void *mem = getAllocator().Allocate(size, 1);
         (void)memcpy(mem, src, size);
         return mem;
     }
-    [[nodiscard]] CType clone(CType ty) { return reinterpret_cast<CType>(new_memcpy(ctype_size_map[ty->k], ty)); }
+    [[nodiscard]] CType clone(CType ty) { return reinterpret_cast<CType>(new_memcpy(ctype_size_map[ty->getKind()], ty)); }
     [[nodiscard]] Stmt clone(Stmt s) { return reinterpret_cast<Stmt>(new_memcpy(stmt_size_map[s->k], s)); }
     [[nodiscard]] Expr clone(Expr e) { return reinterpret_cast<Expr>(new_memcpy(expr_size_map[e->k], e)); }
     [[nodiscard]] PPMacroDef *newMacro() {
@@ -253,11 +263,11 @@ struct xcc_context {
     [[nodiscard]] FloatKind getLongDobuleFloatKind() const {
         return F_Quadruple;
     }
-    [[nodiscard]] getShortLog2() const {
+    [[nodiscard]] unsigned getSize_tLog2() const {
         return 6;
     }
     [[nodiscard]] unsigned getSize_tBitWidth() const {
-        return getSize_t->getBitWidth();
+        return _size_t->getIntegerKind().getBitWidth();
     }
 };
 #undef TNEW

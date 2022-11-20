@@ -54,7 +54,7 @@ static enum TypeIndex getTypeIndex(CType ty) {
         bool s = ty->isSigned();
         auto k = ty->getIntegerKind();
         switch (k.asLog2()) {
-        case 1: return s ? i1ty : u1ty;
+        case 1: return s ? i1ty : i1ty;
         case 3: return s ? i8ty : u8ty;
         case 4: return s ? i16ty : u16ty;
         case 5: return s ? i32ty : u32ty;
@@ -67,8 +67,8 @@ static enum TypeIndex getTypeIndex(CType ty) {
     switch (k.asEnum()) {
         case F_Half: return halfty;
         case F_BFloat: return bfloatty;
-        case F_Float: return ffloatty;
-        case F_Double: return fdoublety;
+        case F_Float: return floatty;
+        case F_Double: return doublety;
         case F_x87_80: return fp80ty;
         case F_Quadruple: return fp128ty;
         case F_PPC128: return fp128ppcty;
@@ -102,8 +102,8 @@ static enum TypeIndex getTypeIndex(CType ty) {
         integer_types[6] = llvm::Type::getInt64Ty(ctx);
         integer_types[7] = llvm::Type::getInt128Ty(ctx);
 
-        float_types_array[F_Half] = llvm::Type::getHalfTy();
-        float_types_array[F_BFloat] = llvm::Type::getBFloatTy();
+        float_types_array[F_Half] = llvm::Type::getHalfTy(ctx);
+        float_types_array[F_BFloat] = llvm::Type::getBFloatTy(ctx);
         float_types_array[F_Float] = llvm::Type::getFloatTy(ctx);
         float_types_array[F_Double] = llvm::Type::getDoubleTy(ctx);
         float_types_array[F_Quadruple] = llvm::Type::getFP128Ty(ctx);
@@ -113,9 +113,9 @@ static enum TypeIndex getTypeIndex(CType ty) {
         intptrTy = layout->getIntPtrType(ctx);
         pointerSizeInBits = intptrTy->getBitWidth();
 
-        i32_n1 = llvm::ConstantInt::get(i32, -1);
-        i32_1 = llvm::ConstantInt::get(i32, 1);
-        i32_0 = llvm::ConstantInt::get(i32, 0);
+        i32_n1 = llvm::ConstantInt::get(integer_types[4], -1);
+        i32_1 = llvm::ConstantInt::get(integer_types[4], 1);
+        i32_0 = llvm::ConstantInt::get(integer_types[4], 0);
         i1_0 = llvm::ConstantInt::getFalse(ctx);
         i1_1 = llvm::ConstantInt::getTrue(ctx);
         _complex_double = llvm::StructType::get(float_types_array[F_Double], float_types_array[F_Double]);
@@ -145,7 +145,7 @@ static enum TypeIndex getTypeIndex(CType ty) {
     llvm::DIFile *lastFile = nullptr;
     OnceAllocator alloc{};
     llvm::IntegerType *integer_types_array[IntegerKind::MAX_KIND];
-    const llvm::IntegerType **integer_types = &(integer_types_array[-1]);
+    llvm::IntegerType **integer_types = integer_types_array - 1;
     llvm::Type *float_types_array[FloatKind::MAX_KIND];
     llvm::PointerType *pointer_type;
     llvm::Type *void_type;
@@ -161,18 +161,37 @@ static enum TypeIndex getTypeIndex(CType ty) {
     Location debugLoc;
     DenseMap<CType, llvm::FunctionType *> function_type_cache{};
 
-    llvm::DIBuilder &D() { return *di; }
-    void store(Value p, Value v, type_tag_t align = 0) {
-        llvm::StoreInst *s = B.CreateStore(v, p);
-        if (align)
-            s->setAlignment(llvm::Align(align));
+    inline void store(Value p, Value v) {
+        (void)B.CreateStore(v, p);
     }
-    llvm::LoadInst *load(Value p, Type t, type_tag_t align = 0) {
+    inline llvm::LoadInst *load(Value p, Type t) {
         assert(p);
         assert(t);
         llvm::LoadInst *i = B.CreateLoad(t, p, false);
-        if (align)
-            i->setAlignment(llvm::Align(align));
+        return i;
+    }
+    inline void store(Value p, Value v, llvm::Align align) {
+        llvm::StoreInst *s = B.CreateStore(v, p);
+        s->setAlignment(align);
+    }
+    inline llvm::LoadInst *load(Value p, Type t, llvm::Align align) {
+        assert(p);
+        assert(t);
+        llvm::LoadInst *i = B.CreateLoad(t, p, false);
+        i->setAlignment(align);
+        return i;
+    }
+    inline void store(Value p, Value v, llvm::MaybeAlign align) {
+        llvm::StoreInst *s = B.CreateStore(v, p);
+        if (align.hasValue())
+            s->setAlignment(*align);
+    }
+    inline llvm::LoadInst *load(Value p, Type t, llvm::MaybeAlign align) {
+        assert(p);
+        assert(t);
+        llvm::LoadInst *i = B.CreateLoad(t, p, false);
+        if (align.hasValue())
+            i->setAlignment(*align);
         return i;
     }
     const llvm::Instruction *getTerminator() { return B.GetInsertBlock()->getTerminator(); }
@@ -195,18 +214,19 @@ static enum TypeIndex getTypeIndex(CType ty) {
     }
     void after(Label loc) { B.SetInsertPoint(loc); }
     void emitDebugLocation() { B.SetCurrentDebugLocation(llvm::DebugLoc()); }
-    llvm::StructType *wrapComplex(CType ty) {
+    llvm::StructType *wrapComplex(const_CType ty) {
         if (ty->isFloating()) {
             FloatKind k = ty->getFloatKind();
-            if (k == F_Double) return _complex_double;
-            if (k == F_Float) return _complex_float;
-            auto T = float_types_array[k];
+            if (k.equals(F_Double)) return _complex_double;
+            if (k.equals(F_Float)) return _complex_float;
+            auto T = float_types_array[(uint64_t)k];
             return llvm::StructType::get(T, T);
         }
         return wrapComplexForInteger(ty);
     }
-    llvm::StructType *wrapComplexForInteger(CType ty) {
-        return integer_types[ty->getIntegerKind().asLog2()];
+    llvm::StructType *wrapComplexForInteger(const_CType ty) {
+        auto T = integer_types[ty->getIntegerKind().asLog2()];
+        return llvm::StructType::get(T, T);
     }
     Type wrap(CType ty) {
         // wrap a CType to LLVM Type
@@ -333,13 +353,13 @@ static enum TypeIndex getTypeIndex(CType ty) {
             ditypes[i128ty] = di->createBasicType("__int128", 128, llvm::dwarf::DW_ATE_unsigned);
             ditypes[u128ty] = di->createBasicType("unsigned __int128", 128, llvm::dwarf::DW_ATE_unsigned);
             ditypes[bfloatty] = di->createBasicType("__bf16", 16, llvm::dwarf::DW_ATE_float);
-            ditypes[halfty]  di->createBasicType("Half", 16, llvm::dwarf::DW_ATE_float);
+            ditypes[halfty] = di->createBasicType("Half", 16, llvm::dwarf::DW_ATE_float);
             ditypes[floatty] = di->createBasicType("float", 32, llvm::dwarf::DW_ATE_float);
             ditypes[doublety] = di->createBasicType("double", 64, llvm::dwarf::DW_ATE_float);
             ditypes[fdecimal32ty] = di->createBasicType("_Decimal32", 32, llvm::dwarf::DW_ATE_decimal_float);
             ditypes[fdecimal64ty] = di->createBasicType("_Decimal64", 64, llvm::dwarf::DW_ATE_decimal_float);
             ditypes[fdecimal128ty] = di->createBasicType("_Decimal128", 128, llvm::dwarf::DW_ATE_decimal_float);
-            ditypes[ptrty] = di->createNullPointerType();
+            ditypes[ptrty] = di->createNullPtrType();
             module->addModuleFlag(llvm::Module::Warning, "Debug Info Version", llvm::DEBUG_METADATA_VERSION);
             module->addModuleFlag(llvm::Module::Warning, "Dwarf Version", llvm::dwarf::DWARF_VERSION);
         }
@@ -376,7 +396,7 @@ static enum TypeIndex getTypeIndex(CType ty) {
         return B.CreateInsertValue(B.CreateInsertValue(PoisonValue::get(T), a, {0}), b, {1});
     }
     Value make_complex_pair(CType ty, Value a, Value b) {
-        return make_complex_pair(wrapComplex(ty->getTags()), a, b);
+        return make_complex_pair(wrapComplex(ty), a, b);
     }
     Value gen_cond(Expr e) {
         Value V = gen(e);
@@ -454,7 +474,7 @@ static enum TypeIndex getTypeIndex(CType ty) {
     DIType wrap3Noqualified(CType ty) {
         switch (ty->getKind()) {
         // TODO: complex!!
-        case TYPRIM: return ditypes[getTypeIndex(ty->getTags())];
+        case TYPRIM: return ditypes[getTypeIndex(ty)];
         case TYPOINTER:
             if (ty->hasTag(TYVOID))
                 return ditypes[ptrty];
@@ -620,9 +640,9 @@ static enum TypeIndex getTypeIndex(CType ty) {
                 if (options.g) {
                     unsigned tag;
                     switch (s->decl_ty->tag) {
-                    case TYSTRUCT: tag = llvm::dwarf::DW_TAG_structure_type; break;
-                    case TYENUM: tag = llvm::dwarf::DW_TAG_enumeration_type; break;
-                    case TYUNION: tag = llvm::dwarf::DW_TAG_union_type; break;
+                    case TagType_Struct: tag = llvm::dwarf::DW_TAG_structure_type; break;
+                    case TagType_Enum: tag = llvm::dwarf::DW_TAG_enumeration_type; break;
+                    case TagType_Union: tag = llvm::dwarf::DW_TAG_union_type; break;
                     default: llvm_unreachable("invalid type tag");
                     }
                     auto MD = di->createReplaceableCompositeType(tag, s->decl_ty->name->getKey(), getLexScope(),
@@ -744,7 +764,7 @@ static enum TypeIndex getTypeIndex(CType ty) {
                 auto varty = it.ty;
                 auto init = it.init;
                 auto idx = it.idx;
-                auto align = varty->align;
+                auto align = varty->getAlignAsMaybeAlign();
                 if (varty->hasTag(TYTYPEDEF)) {
                     /* nothing */
                 } else if (varty->getKind() == TYFUNCTION) {
@@ -772,10 +792,8 @@ static enum TypeIndex getTypeIndex(CType ty) {
                     Type ty = wrap(varty);
                     llvm::Constant *ginit = init ? cast<llvm::Constant>(gen(init)) : llvm::Constant::getNullValue(ty);
                     GV = new llvm::GlobalVariable(*module, ty, tags & TYCONST, ExternalLinkage, nullptr, name->getKey());
-                    if (align)
-                        GV->setAlignment(llvm::Align(align));
-                    else
-                        GV->setAlignment(layout->getPreferredAlign(GV));
+                    GV->setAlignment(align);
+                    GV->setAlignment(layout->getPreferredAlign(GV));
                     if (!(tags & TYEXTERN)) 
                         GV->setInitializer(ginit), GV->setDSOLocal(true);
                     if (tags & TYTHREAD_LOCAL)
@@ -802,18 +820,11 @@ static enum TypeIndex getTypeIndex(CType ty) {
                                                         wrap3(varty));
                         di->insertDeclare(val, v, di->createExpression(), wrap(s->loc), B.GetInsertBlock());
                     }
-                    if (align) {
-                        val->setAlignment(llvm::Align(align));
-                        if (init) {
-                            auto initv = gen(init);
-                            store(val, initv, align);
-                        }
-                    } else {
-                        if (init) {
-                            auto initv = gen(init);
-                            store(val, initv);
-                        }
-                        vars[idx] = val;
+                    if (align.hasValue())
+                        val->setAlignment(align.valueOrOne());
+                    if (init) {
+                        auto initv = gen(init);
+                        store(val, initv, align);
                     }
                 }
             }
@@ -883,7 +894,8 @@ static enum TypeIndex getTypeIndex(CType ty) {
         case EPostFix: {
             auto p = getAddress(e->poperand);
             auto ty = wrap(e->ty);
-            auto r = load(p, ty, e->poperand->ty->align);
+            auto a = e->poperand->ty->getAlignAsMaybeAlign();
+            auto r = load(p, ty, a);
             Value v;
             if (e->ty->getKind() == TYPOINTER) {
                 ty = wrap(e->poperand->ty->p);
@@ -892,7 +904,7 @@ static enum TypeIndex getTypeIndex(CType ty) {
                 v = (e->pop == PostfixIncrement) ? B.CreateAdd(r, llvm::ConstantInt::get(ty, 1))
                                                  : B.CreateSub(r, llvm::ConstantInt::get(ty, 1));
             }
-            store(p, v, e->poperand->ty->align);
+            store(p, v, a);
             return r;
         }
         case EArrToAddress: return getAddress(e->voidexpr);
@@ -908,9 +920,9 @@ static enum TypeIndex getTypeIndex(CType ty) {
             auto base = isVar ? getAddress(e->obj) : gen(e->obj);
             if (isVar || e->obj->ty->getKind() == TYPOINTER) {
                 auto pMember = B.CreateInBoundsGEP(ty, base, {llvm::ConstantInt::get(integer_types[context.getIntLog2()], e->idx)});
-                return load(pMember, wrap(e->ty), e->obj->ty->align);
+                return load(pMember, wrap(e->ty), e->obj->ty->getAlignAsMaybeAlign());
             }
-            return B.CreateExtractValue(load(base, ty, e->obj->ty->align), e->idx);
+            return B.CreateExtractValue(load(base, ty, e->obj->ty->getAlignAsMaybeAlign()), e->idx);
         }
         case EConstantArray: return e->array;
         case EBin: {
@@ -921,8 +933,7 @@ static enum TypeIndex getTypeIndex(CType ty) {
             if (e->bop == Assign) {
                 auto basep = getAddress(e->lhs);
                 auto rhs = gen(e->rhs);
-                auto s = B.CreateAlignedStore(rhs, basep,
-                                              e->lhs->ty->align ? llvm::Align(e->lhs->ty->align) : llvm::MaybeAlign());
+                auto s = B.CreateAlignedStore(rhs, basep, e->lhs->ty->getAlignAsMaybeAlign());
                 if (e->lhs->ty->hasTag(TYVOLATILE))
                     s->setVolatile(true);
                 if (e->lhs->ty->hasTag(TYATOMIC))
@@ -1334,7 +1345,7 @@ BINOP_SHIFT:
         }
         case EVar: {
             auto pvar = vars[e->sval];
-            auto r = load(pvar, wrap(e->ty), e->ty->align);
+            auto r = load(pvar, wrap(e->ty), e->ty->getAlignAsMaybeAlign());
             if (e->ty->hasTag(TYVOLATILE))
                 r->setVolatile(true);
             if (e->ty->hasTag(TYATOMIC))

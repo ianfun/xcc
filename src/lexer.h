@@ -7,7 +7,7 @@ struct Lexer : public DiagnosticHelper {
         PFNormal = 1,
         PFPP = 2
     };
-    static const char months[12][4] = {
+    static constexpr const char months[12][4] = {
         "Jan", // January
         "Feb", // February
         "Mar", // March
@@ -155,7 +155,7 @@ struct Lexer : public DiagnosticHelper {
         // C23
         // An integer character constant is a sequence of one or more multibyte characters enclosed in singlequotes, as in ’x’. A UTF-8 character constant is the same, except prefixed by u8. A wchar_t character constant is prefixed by the letter L. A UTF-16 character constant is prefixed by the letter u. A UTF-32 character constant is prefixed by the letter U.
         TokenV theTok = TokenV(ATokenVChar, TCharLit);
-        theTok.itag = I;
+        theTok.itag = enc;
         eat(); // eat '
         if (c == '\\') {
             auto codepoint = lexEscape();
@@ -179,7 +179,6 @@ struct Lexer : public DiagnosticHelper {
         if (c != '\'')
             lex_error(loc, "missing terminating " lquote "'" rquote " character in character literal");
         eat();
-        theTok.push_back(static_cast<char>(enc));
         return theTok;
     }
     // copy from utf-8.h
@@ -234,7 +233,7 @@ R:
                 eat();
             }
         }
-        if (!IsUTF8(lexIdnetBuffer.str()))
+        if (!enc::IsUTF8(lexIdnetBuffer.str()))
             warning(loc, "identfier is not UTF-8 encoded");
         theTok.s = context.table.get(lexIdnetBuffer.str(), PPIdent);
         theTok.tok = std::min(theTok.tok, theTok.s->second.getToken());
@@ -363,7 +362,7 @@ END:
             }
         }
         theTok.str = str;
-        theTok.enc = enc;
+        theTok.str.push_back(static_cast<char>(enc));
         return theTok;
     }
     void beginExpandMacro(PPMacroDef *M) {
@@ -796,35 +795,35 @@ STD_INCLUDE:
             case 'u':
                 eat();
                 if (c == '"')
-                    return lexStringLit(16);
+                    return lexStringLit(Prefix_u);
                 if (c == '\'')
-                    return lexCharLit(Ilong);
+                    return lexCharLit(Prefix_u);
                 if (c == '8') {
                     eat();
                     if (c != '"') {
                         if (c == '\'')
-                            return lexCharLit();
+                            return lexCharLit(Prefix_u8);
                         return lexIdent("u8");
                     }
-                    return lexStringLit(8);
+                    return lexStringLit(Prefix_u8);
                 }
                 return lexIdent("u");
             case 'U':
                 eat();
                 if (c != '"') {
                     if (c == '\'')
-                        return lexCharLit(Iulong);
+                        return lexCharLit(Prefix_U);
                     return lexIdent("U");
                 }
-                return lexStringLit(32);
+                return lexStringLit(Prefix_U);
             case 'L':
                 eat();
                 if (c != '"') {
                     if (c == '\'')
-                        return lexCharLit(Ilonglong);
+                        return lexCharLit(Prefix_L);
                     return lexIdent("L");
                 }
-                return lexStringLit(16);
+                return lexStringLit(Prefix_L);
             case '.':
                 eat(); // first
                 if (c == '.') {
@@ -847,7 +846,7 @@ STD_INCLUDE:
             case '7':
             case '8':
             case '9': return lexPPNumber();
-            case '\'': return lexCharLit();
+            case '\'': return lexCharLit(Prefix_none);
             case '(': eat(); return TLbracket;
             case ')': eat(); return TRbracket;
             case '~': eat(); return TBitNot;
@@ -860,7 +859,7 @@ STD_INCLUDE:
             case ';': eat(); return TSemicolon;
             case '@': eat(); return TMouse;
             case '"':
-                return lexStringLit(8);
+                return lexStringLit(Prefix_none);
                 TOK2('*', '=', TAsignMul, TMul)
                 TOK2('=', '=', TEq, TAssign)
                 TOK2('^', '=', TAsignBitXor, TXor)

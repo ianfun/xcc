@@ -13,7 +13,7 @@ struct StringPool {
     GV getAsUTF8(xstring &s) {
         auto it = interns.insert(std::make_pair(s.str(), nullptr));
         if (it.second) {
-            auto str = enc::getUTF8(s);
+            auto str = enc::getUTF8(s, irgen.ctx);
             auto GV =
                 new llvm::GlobalVariable(*irgen.module, str->getType(), true, IRGen::PrivateLinkage, str, ".cstr");
             GV->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
@@ -28,7 +28,7 @@ struct StringPool {
             SmallVector<uint32_t> data;
             uint32_t state = 0, codepoint;
             for (auto c : s) {
-                if (decode(&state, &codepoint, (uint32_t)(unsigned char)c))
+                if (enc::decode(&state, &codepoint, (uint32_t)(unsigned char)c))
                     continue;
                 if (codepoint <= 0xFFFF) {
                     data.push_back(codepoint);
@@ -54,7 +54,7 @@ struct StringPool {
         SmallVector<uint16_t> data;
         uint32_t state = 0, codepoint;
         for (auto c : s) {
-            if (decode(&state, &codepoint, (uint32_t)(unsigned char)c))
+            if (enc::decode(&state, &codepoint, (uint32_t)(unsigned char)c))
                 continue;
             if (codepoint <= 0xFFFF) {
                 data.push_back(codepoint);
@@ -81,7 +81,7 @@ struct StringPool {
         SmallVector<uint32_t> data;
         uint32_t state = 0, codepoint;
         for (const auto c : s)
-            if (!decode(&state, &codepoint, (uint32_t)(unsigned char)c))
+            if (!enc::decode(&state, &codepoint, (uint32_t)(unsigned char)c))
                 data.push_back(codepoint);
         data.push_back(0);
         auto array = makeArrayRef(data);

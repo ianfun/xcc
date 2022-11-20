@@ -1,18 +1,78 @@
 // CType - 64 bit unsigned integer
-struct OpacheCType
+struct OpaqueCType
 {
+private:
+    OpaqueCType(): tags{0} {}
+    OpaqueCType(uint64_t tags): tags{tags} {};
     uint64_t tags;
-    [[maybe_unused]] static void bin(uint64_t a) {
-        putchar(a & 1 ? '1' : '0');
-        putchar(a & 2 ? '1' : '0');
-        putchar(a & 4 ? '1' : '0');
-        putchar(a & 8 ? '1' : '0');
-        putchar(a & 16 ? '1' : '0');
-        putchar(a & 32 ? '1' : '0');
-        putchar(a & 64 ? '1' : '0');
-        putchar(a & 128 ? '1' : '0');
-        putchar(' ');
+    [[maybe_unused]] static void TEST1() {
+        OpaqueCType a = {};
+        for (unsigned i = 0;i < 64;++i) {
+            if (i < 16) a.setKind(i);
+            a.setAlignLog2Value(i);
+            assert(a.getAlignLog2Value()==i);
+            if (i < 16) assert(a.getKind()==i);
+            a.tags = 0;
+        }
+        a.setIntegerReprsentation();
+        assert(a.isInteger());
+        a.setFloatReprsentation();
+        assert(a.isFloating());
+        a.toogleReprsentation();
+        assert(a.isInteger());
+        assert(a.isUnsigned());
+        a.setSigned();
+        assert(a.isSigned());
+        a.toogleSign();
+        assert(a.isUnsigned());
+        puts("TEST 1: OK");
     }
+    [[maybe_unused]] static void TEST2() {
+        uint64_t s;
+        OpaqueCType a;
+        for (unsigned i = 0;i < 8;++i) {
+            a.setAlignLog2Value(i);
+            a.tags = build_integer(i);
+            if (rand() < 0xFFFF)
+                a.toogleSign();
+            s = a.isSigned();
+            a.setAlignLog2Value(i);
+            assert(a.isSigned()==s);
+            assert(a.isInteger());
+            assert((uint64_t)a.getIntegerKind()==i);
+            assert(a.getAlignLog2Value()==i);
+            a.clearIntegerAllBits();
+            assert(a.getAlignLog2Value()==i);
+            assert(!a.getIntegerKind());
+            assert(a.isSigned()==s);
+        }
+        puts("TEST 2: OK");
+    }
+    [[maybe_unused]] static void TEST3() {
+        OpaqueCType a;
+        for(unsigned i = 0;i < 16;++i)
+        {
+            a.tags = build_float(i);
+            assert(a.isFloating());
+            assert(static_cast<uint64_t>(a.getFloatKind()) == i);
+            a.setAlignLog2Value(i);
+            assert(a.getAlignLog2Value()==i);
+            a.clearFloatAllBits();
+            assert(!a.getFloatKind());
+            assert(a.getAlignLog2Value()==i);
+            a.clearAlignAllBits();
+            assert(!a.getAlignLog2Value());
+        }
+        puts("TEST 3: OK");
+    }
+    [[maybe_unused]] static void TEST_MAIN() {
+        puts("Running tests...\n");
+        TEST1();
+        TEST2();
+        TEST3();
+        puts("All tests passed.");
+    }
+public:
     uint64_t getTags() const { return tags; }
     uint64_t getTagsQualifiersOnly() const { return tags & type_qualifiers; }
     uint64_t getTagsStoragesOnly() const { return tags & storage_class_specifiers; }
@@ -26,14 +86,14 @@ struct OpacheCType
     bool isVoid() const { return tags & TYVOID; }
     bool isComplex() const { return tags & TYCOMPLEX; }
     bool isImaginary() const { return tags & TYIMAGINARY; }
-    bool isBool() const { return getKind() == YTPRIM && getIntegerKind().isBool(); }
+    bool isBool() const { return getKind() == TYPRIM && getIntegerKind().isBool(); }
     bool basic_equals(const_CType other) const {
         // two types are equal
         // the align are equal
         // if one is floating, the other must be floating
         // if one if integer, the other must be integer
         // two IntegerKinds or FloatKinds are equal
-        return getTagsNoStorages() == sother->getTagsNoStorages();
+        return getTagsNoStorages() == other->getTagsNoStorages();
     }
     bool ignoreSignIntegerEquals(const_CType other) const {
         if (isInteger()) {
@@ -47,7 +107,7 @@ struct OpacheCType
     bool isGlobalStorage() const {
         return tags & (TYSTATIC | TYEXTERN);
     }
-    void setTags(uint64_t new_tag) { tags = new_tag; }
+    void setTag(uint64_t new_tag) { tags = new_tag; }
     void setTags(const uint64_t new_tags) { tags = new_tags; }
     bool hasTag(const uint64_t theTag) const {
         return tags & theTag;
@@ -69,12 +129,15 @@ struct OpacheCType
         assert(k <= 15 && "invalid CTypeKind");
         tags |= (k << 60);
     }
+    void setKind(uint64_t kind) {
+        return setKind(static_cast<enum CTypeKind>(kind));
+    }
     uint64_t getAlignLog2Value() const {
         return (tags >> 53) & 63;
     }
     llvm::MaybeAlign getAlignAsMaybeAlign() const {
         uint64_t A = getAlignLog2Value();
-        if (A) return llvm::Align(llvm::Align::LogValue(A));
+        if (A) return llvm::Align(uint64_t(1) << A);
         return llvm::MaybeAlign();
     }
     void setAlignLog2Value(uint64_t Align) {
@@ -146,7 +209,7 @@ struct OpacheCType
     void clearIntegerAllBits() {
         tags &= ~(0b111ULL << 47);
     }
-    [[nodiscard]] void del(uint64_t tags_to_delete) const {
+    [[nodiscard]] uint64_t del(uint64_t tags_to_delete) const {
         return tags & tags_to_delete;
     }
     [[maybe_unused]] void dumpBits(){
@@ -166,30 +229,26 @@ struct OpacheCType
     uint64_t andTags(const uint64_t tag_to_clear) const {
         return tags & tag_to_clear;
     }
-    enum CTypeKind getKind() const {
-        return static_cast<enum CTypeKind>(this->tags >> 52);
-    }
     void noralize() {
-        const type_tag_t mask = ty_storages;
-        switch (k) {
+        switch (getKind()) {
         case TYFUNCTION:
         {
-            type_tag_t h = ret->del(mask);
-            ret->clearTags(mask);
+            type_tag_t h = ret->getTagsStoragesOnly();
+            ret->clearTags(storage_class_specifiers);
             addTags(h);
             break;
         }
         case TYARRAY:
         {
-            type_tag_t h = arrtype->del(mask);
-            arrtype->clearTags(mask);
+            type_tag_t h = arrtype->getTagsStoragesOnly();
+            arrtype->clearTags(storage_class_specifiers);
             addTags(h);
             break;
         }
         case TYPOINTER:
         {
-            type_tag_t h = p->del(mask);
-            p->clearTags(mask);
+            type_tag_t h = p->getTagsStoragesOnly();
+            p->clearTags(storage_class_specifiers);
             addTags(h);
             break;
         }
@@ -227,73 +286,7 @@ struct OpacheCType
         if (isImaginary())
             OS << "_Imaginary";
         if (isInteger())
-            return OS << getIntegerKind().show();
+            return OS << getIntegerKind().show(isSigned());
         return OS << getFloatKind().show();
     }
-    [[maybe_unused]] static void TEST1() {
-        CType a = {};
-        for (unsigned i = 0;i < 64;++i) {
-            if (i < 16) a.setKind(i);
-            a.setAlign(i);
-            assert(a.getAlign()==i);
-            if (i < 16) assert(a.getKind()==i);
-            a.tags = 0;
-        }
-        a.setIntegerReprsentation();
-        assert(a.isInteger());
-        a.setFloatReprsentation();
-        assert(a.isFloating());
-        a.toogleReprsentation();
-        assert(a.isInteger());
-        assert(a.isUnsigned());
-        a.setSigned();
-        assert(a.isSigned());
-        a.toogleSign();
-        assert(a.isUnsigned());
-        puts("TEST 1: OK");
-    }
-    [[maybe_unused]] static void TEST2() {
-        uint64_t s;
-        CType a;
-        for (unsigned i = 0;i < 8;++i) {
-            a.setAlign(i);
-            a.tags = CType::make_integer(i);
-            if (rand() < 0xFFFF)
-                a.toogleSign();
-            s = a.isSigned();
-            a.setAlign(i);
-            assert(a.isSigned()==s);
-            assert(a.isInteger());
-            assert(a.getInteger()==i);
-            assert(a.getAlign()==i);
-            a.clearIntegerAllBits();
-            assert(a.getAlign()==i);
-            assert(a.getInteger()==0);
-            assert(a.isSigned()==s);
-        }
-        puts("TEST 2: OK");
-    }
-    [[maybe_unused]] static void TEST3() {
-        CType a;
-        for(unsigned i = 0;i < 16;++i)
-        {
-            a.tags = CType::make_float(i);
-            assert(a.isFloating());
-            assert(a.getFloatKind() == i);
-            a.setAlign(i);
-            assert(a.getAlign()==i);
-            a.clearFloatAllBits();
-            assert(a.getFloatKind()==0);
-            assert(a.getAlign()==i);
-            a.clearAlignAllBits();
-            assert(a.getAlign()==0);
-        }
-        puts("TEST 3: OK");
-    }
-    [[maybe_unused]] static void TEST_MAIN() {
-        puts("Running tests...\n");
-        TEST1();
-        TEST2();
-        TEST3();
-        puts("All tests passed.");
-    }
+
