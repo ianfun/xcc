@@ -607,6 +607,16 @@ static enum TypeIndex getTypeIndex(CType ty) {
             auto cond = gen(s->itest);
             if (s->gnu_switchs.size()) {
                 for (const auto &it : s->gnu_switchs) {
+                    // Range is small enough to add multiple switch instruction cases.
+                    APInt range = it.range - *it.CaseStart;
+                    if (range.ult(CC_SITCH_RANGE_UNROLL_MAX)) {
+                        range = *it.CaseStart;
+                        for (unsigned i = 0, e = Range.getZExtValue() + 1; i != e; ++i) {
+                          SwitchInsn->addCase(ConstantInt::get(ctx, range), labels[it.label]);
+                          range++;
+                        }
+                        continue;
+                    }
                     auto diff = B.CreateSub(cond, ConstantInt::get(ctx, *it.CaseStart));
                     auto c = B.CreateICmpULE(diff, ConstantInt::get(ctx, it.range));
                     auto BB = llvm::BasicBlock::Create(ctx, "", currentfunction);

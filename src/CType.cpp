@@ -121,6 +121,10 @@ public:
     void addTags(const uint64_t tag) {
         return addTags(tag);
     }
+    bool isScalar() const {
+        auto k = getKind();
+        return k == TYPOINTER || (k == TYPRIM && isInteger());
+    }
     enum CTypeKind getKind() const {
         return static_cast<enum CTypeKind>(tags >> 60);
     }
@@ -157,18 +161,23 @@ public:
     }
     static constexpr uint64_t integer_bit = 1ULL << 52;
     void setFloatReprsentation() {
+        assert(getKind() == TYPRIM && "Please check getKind()==TYPRIM before calling setFloatReprsentation()");
         tags |= integer_bit;
     }
     void setIntegerReprsentation() {
+        assert(getKind() == TYPRIM && "Please check getKind()==TYPRIM before calling setIntegerReprsentation()");
         tags &= ~integer_bit;
     }
     bool isInteger() const {
+        assert(getKind() == TYPRIM && "Please check getKind()==TYPRIM before calling isInteger()");
         return !(tags & integer_bit);
     }
     bool isFloating() const {
+        assert(getKind() == TYPRIM && "Please check getKind()==TYPRIM before calling isFloating()");
         return (tags & integer_bit);
     }
     void toogleReprsentation() {
+        assert(getKind() == TYPRIM && "Please check getKind()==TYPRIM before calling toogleReprsentation()");
         tags ^= integer_bit;
     }
     static constexpr uint64_t sign_bit = 1ULL << 51;
@@ -203,6 +212,9 @@ public:
         assert(isFloating());
         return getRawData();
     }
+    uint64_t getBitWidth() const {
+        return isInteger() ? getIntegerKind().getBitWidth() : getFloatKind().getBitWidth();
+    }
     void clearFloatAllBits() {
         tags &= ~(0b1111ULL << 47);
     }
@@ -225,6 +237,9 @@ public:
     }
     void clearTags(const uint64_t tags_to_clear) {
         tags &= ~tags_to_clear;
+    }
+    void clearTag(const uint64_t tag_to_clear) {
+        tags &= ~tag_to_clear;
     }
     uint64_t andTags(const uint64_t tag_to_clear) const {
         return tags & tag_to_clear;

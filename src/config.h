@@ -97,3 +97,9 @@ template <unsigned long long n> static constexpr inline unsigned long long cstrl
      #define CC_STATICS 0
   #endif
 #endif
+
+// Range is small enough to add multiple switch instruction cases.
+// clang::CodeGenFunction::EmitCaseStmtRange use hardcoded 64.
+#ifndef CC_SITCH_RANGE_UNROLL_MAX
+  #define CC_SITCH_RANGE_UNROLL_MAX 64
+#endif

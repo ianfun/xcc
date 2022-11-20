@@ -204,10 +204,10 @@ private:
         auto r = sema.tags.getSym(Name, idx);
         if (r) {
             if (r->ty->getKind() != expected)
-                type_error(full_loc, "%s %I is not a %s", transform(r->ty->getKind()), Name, show(expected));
+                type_error(full_loc, "%s %I is not a %s", show2(r->ty->getKind()), Name, show2(expected));
             result = r->ty;
         } else {
-            result = TNEW(IncompleteType){.align = 0, .tag = transform(expected), .name = Name};
+            result = TNEW(IncompleteType){.tag = transform(expected), .name = Name};
             Type_info info = Type_info{.ty = result, .loc = full_loc};
             insertStmt(SNEW(DeclStmt){.loc = full_loc, .decl_idx = sema.tags.putSym(Name, info), .decl_ty = result});
         }
@@ -221,10 +221,10 @@ private:
             auto old = sema.tags.getSymInCurrentScope(Name, prev);
             if (old) {
                 if (old->ty->getKind() != TYINCOMPLETE) {
-                    type_error("%s %I redefined", show_transform(k), Name);
+                    type_error("%s %I redefined", show2(k), Name);
                     note(old->loc, "previous declaration is here");
-                } else if (old->ty->tag != transform(k)) {
-                    type_error("%s %I redeclared with different as different kind: %s", show(k), Name,
+                } else if (transform(old->ty->tag) != k) {
+                    type_error("%s %I redeclared with different as different kind: %s", show2(k), Name,
                                show(old->ty->tag));
                     note(old->loc, "previous declaration is here");
                 }
@@ -261,7 +261,7 @@ private:
     // function
     size_t putsymtype2(IdentRef Name, CType yt, Location full_loc) {
         CType base = yt->ret;
-        if (base->k == TYARRAY)
+        if (base->getKind() == TYARRAY)
             type_error(full_loc, "function cannot return array");
         if (base->hasTag(TYREGISTER))
             warning(full_loc, "'register' in function return type");
@@ -290,7 +290,7 @@ private:
     size_t putsymtype(IdentRef Name, CType yt, Location full_loc) {
         assert(Name && "missing a Name to put");
         assert(yt && "missing a type to put");
-        if (yt->k == TYFUNCTION)
+        if (yt->getKind() == TYFUNCTION)
             return putsymtype2(Name, yt, full_loc);
         size_t idx;
         auto it = sema.typedefs.getSymInCurrentScope(Name, idx);
@@ -351,8 +351,8 @@ private:
     static enum Cast_Status canBeSavelyCastTo(CType p, CType expected) {
         assert(p && "p is nullptr");
         assert(expected && "expected is nullptr");
-        assert(p->k == expected->k);
-        switch (p->k) {
+        assert(p->getKind() == expected->getKind());
+        switch (p->getKind()) {
         case TYPRIM:
             if (p->basic_equals(expected))
                 return Cast_Ok;
@@ -386,7 +386,23 @@ private:
         }
         llvm_unreachable("");
     }
-    Expr float_cast(enum FloatKindEnum k1, enum FloatKindEnum k2) {
+    Expr float_cast2(Expr e, CType to) {
+        assert(e && "cast from nullptr");
+        assert(e->ty && "cannot cast from expression with no type");
+        assert(to && "cast type is nullptr");
+        assert(e->ty->getKind() == TYPRIM && to->getKind() == TYPRIM);
+        assert(e->ty->isFloating() && to->isFloating());
+        return float_cast(e, to, to->getFloatKind().asEnum(), e->ty->getFloatKind().asEnum());
+    }
+    Expr float_cast(Expr e, CType to, enum FloatKindEnum k1, enum FloatKindEnum k2) {
+        assert(e && "cast from nullptr");
+        assert(e->ty && "cannot cast from expression with no type");
+        assert(to && "cast type is nullptr");
+        assert(e->ty->getKind() == TYPRIM && to->getKind() == TYPRIM);
+        assert(e->ty->isFloating() && to->isFloating());
+        // LLVM cannot cast between fp128 and ppc_fp128
+        //   => error: invalid cast opcode for cast from 'ppc_fp128' to 'fp128'
+        //   => error: invalid cast opcode for cast from 'fp128' to 'ppc_fp128'
         const unsigned 
             rA = k1,
             rB = k2;
@@ -403,18 +419,7 @@ private:
             type_error(e->loc, "unsupported floating fast");
         return e;
     }
-    Expr float_cast(Expr e, CType to) {
-        assert(e && "cast from nullptr");
-        assert(e->ty && "cannot cast from expression with no type");
-        assert(to && "cast type is nullptr");
-        // LLVM cannot cast between fp128 and ppc_fp128
-        //   => error: invalid cast opcode for cast from 'ppc_fp128' to 'fp128'
-        //   => error: invalid cast opcode for cast from 'fp128' to 'ppc_fp128'
-        auto k1 = to->getFloatKind();
-        auto k2 = e->ty->getFloatKind();
-        return float_cast(k1, k2);
-    }
-    Expr int_cast_promote(Expr a, bool isASigned, CType to) {
+    Expr int_cast_promote(Expr e, bool isASigned, CType to) {
         return
             e->k == EConstant ?
                     wrap(to, (e->ty->isSigned() ? &llvm::ConstantExpr::getSExt : &llvm::ConstantExpr::getZExt)(e->C, irgen.wrapNoComplexScalar(to), false), e->loc) :
@@ -444,7 +449,7 @@ private:
     Expr integer_to_ptr(Expr e, CType to) {
         assert(e->ty && "cannot cast from expression with no type");
         assert((e->ty->isInteger()) && "bad call to integer_to_ptr()");
-        assert((to->k == TYPOINTER) && "bad call to integer_to_ptr()");
+        assert((to->getKind() == TYPOINTER) && "bad call to integer_to_ptr()");
         if (e->k == EConstant) {
             auto CI = cast<ConstantInt>(e->C);
             if (CI->isZero()) // A interger constant expression with the value 0 is a *null pointer constant*
@@ -456,7 +461,7 @@ private:
     }
     Expr ptr_to_integer(Expr e, CType to) {
         assert(e->ty && "cannot cast from expression with no type");
-        assert((e->getKind() == TYPOINTER) && "bad call to ptr_to_integer()");
+        assert((e->ty->getKind() == TYPOINTER) && "bad call to ptr_to_integer()");
         assert((to->isInteger()) && "bad call to ptr_to_integer()");
         if (e->k == EConstant)
             return wrap(to, llvm::ConstantExpr::getPtrToInt(e->C, irgen.wrapNoComplexScalar(to)), e->loc);
@@ -490,7 +495,7 @@ private:
     }
     Expr ptr_cast(Expr e, CType to, enum Implict_Conversion_Kind implict = Implict_Cast) {
         assert(e->ty && "cannot cast from expression with no type");
-        assert((e->getKind() == TYPOINTER && to->k == TYPOINTER) && "bad call to ptr_cast()");
+        assert((e->ty->getKind() == TYPOINTER && to->getKind() == TYPOINTER) && "bad call to ptr_cast()");
         if (implict != Implict_Cast) {
             auto status = canBeSavelyCastTo(e->ty, to);
             if (status == Cast_Ok)
@@ -551,17 +556,19 @@ PTR_CAST:
         assert(e->ty && "cannot cast from expression with no type");
         assert(to && "cast type is nullptr");
         Location loc = getLoc();
+        auto k = to->getKind();
+        auto k0 = e->ty->getKind();
         if (type_equal(e->ty, to))
             return e;
         if (e->ty->hasTag(TYVOID))
             return type_error(loc, "cannot cast 'void' expression to type %T", to), e;
-        if (to->k == TYINCOMPLETE || e->getKind() == TYINCOMPLETE)
+        if (k == TYINCOMPLETE || k0 == TYINCOMPLETE)
             return type_error(loc, "cannot cast to incomplete type: %T", to), e;
-        if (to->k == TYSTRUCT || e->getKind() == TYSTRUCT || to->k == TYUNION || e->getKind() == TYUNION)
+        if (k == TYSTRUCT || k0 == TYSTRUCT || k == TYUNION || k0 == TYUNION)
             return type_error(loc, "cannot cast between different struct/unions"), e;
-        if (e->getKind() == TYENUM) // cast from enum: bit-cast e to int first, then do-cast to ty
+        if (k0 == TYENUM) // cast from enum: bit-cast e to int first, then do-cast to ty
             return castto(bit_cast(e, context.getInt()), to);
-        if (to->k == TYENUM) // cast to enum: do-cast e to int first, then bit-cast to enum
+        if (k == TYENUM) // cast to enum: do-cast e to int first, then bit-cast to enum
             return bit_cast(castto(e, context.getInt()), to);
         if (!(e->ty->isScalar() && to->isScalar()))
             return type_error(loc, "cast operand shall have scalar type"), e;
@@ -576,11 +583,11 @@ PTR_CAST:
                     return getCBool(!CI->isZero());
             return unary(e, ToBool, to);
         }
-        if (to->isFloating() && e->getKind() == TYPOINTER)
-            return type_error(loc, "A floating type shall not be converted to any pointer type"), e;
-        if (e->ty->isFloating() && to->k == TYPOINTER)
-            return type_error(loc, "A floating type shall not be converted to any pointer type"), e;
-        if (e->getKind() == TYPOINTER && to->k == TYPOINTER)
+        if (to->isFloating() && k0 == TYPOINTER)
+            return type_error(loc, "floating types convert to integer types are not allowed"), e;
+        if (e->ty->isFloating() && k == TYPOINTER)
+            return type_error(loc, "integers convert to floating types are not allowed"), e;
+        if (k0 == TYPOINTER && k == TYPOINTER)
             return ptr_cast(e, to, implict);
         // if e is a complex number
         if (e->ty->isComplex()) {
@@ -589,8 +596,8 @@ PTR_CAST:
             if (e->ty->isFloating()) {
                 if (to->isFloating())
                     return (to->isComplex()) ? 
-                        complex_pair(float_cast(lhs, to), float_cast(rhs, to), to) :
-                        float_cast(lhs, to);
+                        complex_pair(float_cast2(lhs, to), float_cast2(rhs, to), to) :
+                        float_cast2(lhs, to);
                 return (to->isComplex()) ? 
                     complex_pair(float_to_integer(lhs, to), float_to_integer(rhs, to), to) :
                     float_to_integer(lhs, to);
@@ -605,20 +612,20 @@ PTR_CAST:
         // than, e is not a complex number, and cast to complex
         if (to->isComplex()) {
             if (to->isFloating())
-                return complex_from_real((this->*(e->ty->isFloating() ? &Parser::float_cast : &Parser::integer_to_float))(e, to), to);
+                return complex_from_real((this->*(e->ty->isFloating() ? &Parser::float_cast2 : &Parser::integer_to_float))(e, to), to);
             if (e->ty->isFloating())
-                return complex_from_real((this->*(e->ty->isFloating() ? &Parser::float_cast : &Parser::float_to_integer))(e, to), to);
+                return complex_from_real((this->*(e->ty->isFloating() ? &Parser::float_cast2 : &Parser::float_to_integer))(e, to), to);
             return complex_from_real(int_cast(e, to), to);
         }
         if (e->ty->isFloating() && to->isFloating())
-            return float_cast(e, to);
+            return float_cast2(e, to);
         if (e->ty->isInteger() && to->isFloating())
             return integer_to_float(e, to);
         if (e->ty->isFloating() && to->isInteger())
             return float_to_integer(e, to);
-        if (e->getKind() == TYPOINTER && to->isInteger())
+        if (k0 == TYPOINTER && to->isInteger())
             return ptr_to_integer(e, to);
-        if (e->ty->isInteger() && to->k == TYPOINTER)
+        if (e->ty->isInteger() && k == TYPOINTER)
             return integer_to_ptr(e, to);
         return int_cast(e, to);
     }
@@ -631,7 +638,7 @@ PTR_CAST:
         const auto &T = sema.typedefs;
         if (!getNumErrors()) { // if we have parse errors, we may emit bad warnings about ununsed variables
             for (auto it = T.current_block(); it != T.end(); ++it) {
-                if (!(it->info.tags & USED) && !(it->info.ty->tags & TYTYPEDEF)) {
+                if (!(it->info.tags & USED) && !(it->info.ty->hasTag(TYTYPEDEF))) {
                     if (it->info.tags & ASSIGNED) {
                         (it->info.tags & PARAM) ? 
                             warning(it->info.loc, "unused parameter %I", it->sym) :
@@ -650,7 +657,7 @@ PTR_CAST:
             for (const auto &it : sema.typedefs) {
                 if (it.info.ty->hasTag(TYTYPEDEF))
                     continue;
-                if (it.info.getKind() == TYFUNCTION) {
+                if (it.info.ty->getKind() == TYFUNCTION) {
                     if (it.info.ty->ret->hasTag(TYSTATIC))
                         warning(it.info.loc, "static function %I' declared but not used", it.sym);
                 } else if (it.info.ty->hasTag(TYSTATIC)) {
@@ -664,16 +671,16 @@ PTR_CAST:
     void integer_promotions(Expr &e) {
         // XXX: should _BitInt be converted?
         // Since integer promotions are old thing. 
-        if (e->getKind() == TYPRIM && e->isInteger()) {
-            if (e->getIntegerKind().asLog2() < 5) {
+        if (e->ty->getKind() == TYPRIM && e->ty->isInteger()) {
+            if (e->ty->getIntegerKind().asLog2() < 5) {
                 e = (e->k == EConstant ?
-                        wrap(to, (e->ty->isSigned() ? &llvm::ConstantExpr::getSExt : &llvm::ConstantExpr::getZExt)(e->C, irgen.integer_types[4], false), e->loc) :
+                        wrap(context.getInt(), (e->ty->isSigned() ? &llvm::ConstantExpr::getSExt : &llvm::ConstantExpr::getZExt)(e->C, irgen.integer_types[4], false), e->loc) :
                         make_cast(e, e->ty->isSigned() ? SExt : ZExt, context.getInt()));
             }
         }
     }
     void complex_conv(Expr &a, Expr &b, CType at, CType bt) {
-        if (basic_equal(a, b))
+        if (at->basic_equals(bt))
             return;
         // C A Reference Manual Fifth Edition
         // Complex types and the usual binary conversions
@@ -683,14 +690,14 @@ PTR_CAST:
             unsigned rA = scalarRankNoComplex(at);
             unsigned rB = scalarRankNoComplex(bt);
             if (rA > rB)
-                b = castto(b, a->ty);
+                b = castto(b, at);
             else
-                a = castto(a, b->ty);
+                a = castto(a, bt);
             return;
         }
         // complex float has the highest rank
         if (at->isFloating()) {
-            b = castto(b, a->ty);
+            b = castto(b, at);
             return;
         }
         // complex integer + floatings
@@ -707,13 +714,10 @@ PTR_CAST:
         b = castto(b, resultTy);
         return;
     }
-    void to(Expr &a, enum FloatKindEnum k) {
-        a = float_cast(a, a->getFloatKind(), k);
-    }
     void conv(Expr &a, Expr &b) {
         CType at = a->ty;
         CType bt = b->ty;
-        if (a->getKind() != TYPRIM || b->getKind() != TYPRIM)
+        if (at->getKind() != TYPRIM || bt->getKind() != TYPRIM)
             return;
         if (at->isComplex())
             return complex_conv(a, b, at, bt);
@@ -723,9 +727,11 @@ PTR_CAST:
             // TOTO: Decimal Float
             auto k1 = at->getFloatKind().asEnum();
             auto k2 = bt->getFloatKind().asEnum();
+            if (k1 == k2)
+                return;
 #define HANDLE_FP_CAST(F) \
-if (k1 == F) return to(b, F); \
-if (k2 == F) return to(a, F);
+if (k1 == F) return (void)(b = float_cast(b, at, k1, F)); \
+if (k2 == F) return (void)(a = float_cast(a, bt, k2, F));
             HANDLE_FP_CAST(F_Decimal128);
             HANDLE_FP_CAST(F_Decimal64);
             HANDLE_FP_CAST(F_Decimal32);
@@ -735,11 +741,12 @@ if (k2 == F) return to(a, F);
             HANDLE_FP_CAST(F_Float);
             HANDLE_FP_CAST(F_Half);
             HANDLE_FP_CAST(F_BFloat);
+            llvm_unreachable("unhandled floating type");
         }
         auto sizeofa = at->getIntegerKind().asLog2();
         auto sizeofb = bt->getIntegerKind().asLog2();
-        bool is_a_unsigned = a->ty->isUnsigned();
-        bool is_b_unsigned = b->ty->isUnsigned();
+        bool is_a_unsigned = at->isUnsigned();
+        bool is_b_unsigned = bt->isUnsigned();
         integer_promotions(a);
         integer_promotions(b);
         if (sizeofa == sizeofb) {
@@ -759,14 +766,15 @@ if (k2 == F) return to(a, F);
     }
     // clang::Sema::DefaultArgumentPromotion
     void default_argument_promotions(Expr &e) {
-        if (e->getKind() == TYENUM || e->getKind() == TYUNION || e->getKind() == TYSTRUCT || e->getKind() == TYPOINTER)
+        if (e->ty->getKind() != TYPRIM)
             return;
         if (e->ty->isFloating()) {
             // https://clang.llvm.org/docs/LanguageExtensions.html#half-precision-floating-point
-            switch (e->ty->getFloatKind().asEnum()) {
+            const auto k0 = e->ty->getFloatKind().asEnum();
+            switch (k0) {
             case F_Half:
             case F_BFloat:
-            case F_Float: return (void)(e = float_cast(e, context.getDobule()));
+            case F_Float: return (void)(e = float_cast(e, context.getDobule(), F_Double, k0));
             default: return;
             }
         }
@@ -778,13 +786,13 @@ if (k2 == F) return to(a, F);
         if (!(checkInteger(a->ty) && checkInteger(b->ty)))
             type_error(getLoc(), "integer types expected");
     }
-    static int checkArithmetic(CType ty) { return getKind() == TYPRIM; }
+    static int checkArithmetic(CType ty) { return ty->getKind() == TYPRIM; }
     void checkArithmetic(Expr a, Expr b) {
         if (!(checkArithmetic(a->ty) && checkArithmetic(b->ty)))
             type_error(getLoc(), "arithmetic types expected");
     }
     void checkSpec(Expr &a, Expr &b) {
-        if (a->getKind() != b->getKind())
+        if (a->ty->getKind() != b->ty->getKind())
             return type_error(
                 getLoc(),
                 "bad operands to binary expression:\n    operands type mismatch: %E(has type %T) and %E(has type %T)",
@@ -858,8 +866,8 @@ if (k2 == F) return to(a, F);
         llvm_unreachable("bad expr kind");
     }
     void make_ptr_arith(Expr &e) {
-        assert(e->getKind() == TYPOINTER && "expect a pointer");
-        if (e->ty->p->hasTag(TYVOID) || (e->k == EUnary && e->uop == AddressOf && e->ty->p->k == TYFUNCTION)) {
+        assert(e->ty->getKind() == TYPOINTER && "expect a pointer");
+        if (e->ty->p->hasTag(TYVOID) || (e->k == EUnary && e->uop == AddressOf && e->ty->p->getKind() == TYFUNCTION)) {
             e = context.clone(e);
             e->ty = context.getChar();
         }
@@ -867,7 +875,7 @@ if (k2 == F) return to(a, F);
     Expr make_add_pointer(Expr rhs, Expr lhs) {
         Expr ptrPart = lhs;
         Expr intPart = rhs;
-        if (rhs->getKind() == TYPOINTER) {
+        if (rhs->ty->getKind() == TYPOINTER) {
             ptrPart = rhs;
             intPart = lhs;
         }
@@ -890,7 +898,7 @@ if (k2 == F) return to(a, F);
                                                                    .carray = ptrPart->array,
                                                                    .cidx = offset.uadd_ov(ptrPart->cidx, overflow)};
                     if (overflow)
-                        warning("overflow when doing addition on pointers, the result is %A", &result->cidx);
+                        warning(ptrPart->loc, "overflow when doing addition on pointers, the result is %A", &result->cidx);
                     return result;
                 }
             }
@@ -898,8 +906,8 @@ if (k2 == F) return to(a, F);
         return binop(ptrPart, SAddP, intPart, ptrPart->ty);
     }
     void make_add(Expr &result, Expr &r) {
-        if (result->getKind() == TYPOINTER || r->getKind() == TYPOINTER) {
-            if (result->getKind() == r->getKind())
+        if (result->ty->getKind() == TYPOINTER || r->ty->getKind() == TYPOINTER) {
+            if (result->ty->getKind() == r->ty->getKind())
                 return type_error("adding two pointers are not allowed");
             result = make_add_pointer(result, r);
             return;
@@ -926,7 +934,7 @@ if (k2 == F) return to(a, F);
                             APFloat IMAG = b;
                             handleOpStatus(IMAG.add(d, APFloat::rmNearestTiesToEven));
         
-                            result = wrap(r->ty, llvm::ConstantStruct::get(irgen.wrapComplex(r->ty->tags),  ConstantFP::get(irgen.ctx, REAL), ConstantFP::get(irgen.ctx, IMAG)), result->loc);
+                            result = wrap(r->ty, llvm::ConstantStruct::get(irgen.wrapComplex(r->ty),  ConstantFP::get(irgen.ctx, REAL), ConstantFP::get(irgen.ctx, IMAG)), result->loc);
                             return;
                         }
                     }
@@ -948,7 +956,7 @@ if (k2 == F) return to(a, F);
                         const auto &d = cast<ConstantInt>(Y->getOperand(1))->getValue();
         
                         result = wrap(r->ty, llvm::ConstantStruct::get(
-                            irgen.wrapComplex(r->ty->tags), 
+                            irgen.wrapComplex(r->ty), 
                             ConstantInt::get(irgen.ctx, a + c), 
                             ConstantInt::get(irgen.ctx, b + d)),
                             result->loc
@@ -998,8 +1006,8 @@ if (k2 == F) return to(a, F);
         result = binop(result, r->ty->isSigned() ? SAdd : UAdd, r, r->ty);
     }
     void make_sub(Expr &result, Expr &r) {
-        bool p1 = result->getKind() == TYPOINTER;
-        bool p2 = r->getKind() == TYPOINTER;
+        bool p1 = result->ty->getKind() == TYPOINTER;
+        bool p2 = r->ty->getKind() == TYPOINTER;
         if (p1 && p2) {
             if (!compatible(result->ty->p, r->ty->p))
                 warning(getLoc(), "incompatible type when substract two pointers");
@@ -1028,11 +1036,11 @@ if (k2 == F) return to(a, F);
                     const auto CS = cast<ConstantStruct>(r->C);
                     if (auto CI = dyn_cast<ConstantInt>(CS->getOperand(0))) {
                         auto CI2 = cast<ConstantInt>(CS->getOperand(1));
-                        return (void)(result = wrap(r->ty, llvm::ConstantStruct::get(irgen.wrapComplexForInteger(r->ty->tags), {ConstantInt::get(irgen.ctx, -CI->getValue()), ConstantInt::get(irgen.ctx, -CI2->getValue())}), result->loc));
+                        return (void)(result = wrap(r->ty, llvm::ConstantStruct::get(irgen.wrapComplexForInteger(r->ty), {ConstantInt::get(irgen.ctx, -CI->getValue()), ConstantInt::get(irgen.ctx, -CI2->getValue())}), result->loc));
                     }
                     auto CF = cast<ConstantFP>(CS->getOperand(0));
                     auto CF2 = cast<ConstantFP>(CS->getOperand(1));
-                    return (void)(result = wrap(r->ty, llvm::ConstantStruct::get(irgen.wrapComplex(r->ty->tags), {ConstantFP::get(irgen.ctx, -CF->getValue()), ConstantFP::get(irgen.ctx, -CF2->getValue())}), result->loc));
+                    return (void)(result = wrap(r->ty, llvm::ConstantStruct::get(irgen.wrapComplex(r->ty), {ConstantFP::get(irgen.ctx, -CF->getValue()), ConstantFP::get(irgen.ctx, -CF2->getValue())}), result->loc));
                 }
                 if (isa<ConstantAggregateZero>(r->C))
                     return /* (void)(result = result) */;
@@ -1051,7 +1059,7 @@ if (k2 == F) return to(a, F);
                             APFloat IMAG = b;
                             handleOpStatus(IMAG.subtract(d, APFloat::rmNearestTiesToEven));
         
-                            result = wrap(r->ty, llvm::ConstantStruct::get(irgen.wrapComplex(r->ty->tags), {ConstantFP::get(irgen.ctx, REAL), ConstantFP::get(irgen.ctx, IMAG)}), result->loc);
+                            result = wrap(r->ty, llvm::ConstantStruct::get(irgen.wrapComplex(r->ty), {ConstantFP::get(irgen.ctx, REAL), ConstantFP::get(irgen.ctx, IMAG)}), result->loc);
                             return;
                         }
                     }
@@ -1069,7 +1077,7 @@ if (k2 == F) return to(a, F);
                         const auto &d = cast<ConstantInt>(Y->getOperand(1))->getValue();
         
                         result = wrap(r->ty, llvm::ConstantStruct::get(
-                            irgen.wrapComplex(r->ty->tags), 
+                            irgen.wrapComplex(r->ty), 
                             ConstantInt::get(irgen.ctx, a - c), 
                             ConstantInt::get(irgen.ctx, b - d)),
                             result->loc
@@ -1125,7 +1133,7 @@ if (k2 == F) return to(a, F);
         if (r->k != EConstant)
             goto NOT_CONSTANT;
         if (const auto CI = dyn_cast<ConstantInt>(r->C)) {
-            auto width = result->ty->getBitWidth();
+            auto width = result->ty->getIntegerKind().getBitWidth();
             const APInt &shift = CI->getValue();
             if (r->ty->isSigned() && shift.isNegative()) {
                 warning(r->loc, "negative shift count is undefined");
@@ -1169,7 +1177,7 @@ NOT_CONSTANT:
         if (r->k != EConstant)
             goto NOT_CONSTANT;
         if (const auto CI = dyn_cast<ConstantInt>(r->C)) {
-            auto width = result->ty->getBitWidth();
+            auto width = result->ty->getIntegerKind().getBitWidth();
             const APInt &shift = CI->getValue();
             if (r->ty->isSigned() && shift.isNegative()) {
                 warning(r->loc, "negative shift count is undefined");
@@ -1248,7 +1256,7 @@ ZERO : {
     else
         msg = "'bitwise xor' to zero is always itself";
     warning(result->loc, msg);
-    result = wrap(result->ty, ConstantInt::get(irgen.ctx, APInt::getZero(result->ty->getBitWidth())), result->loc);
+    result = wrap(result->ty, ConstantInt::get(irgen.ctx, result->ty->getIntegerKind().getZero()), result->loc);
     return;
 }
 ONE : {
@@ -1256,7 +1264,7 @@ ONE : {
     if (op == Or) {
         warning(result->loc, "'bitsize or' to %R is always all ones", allOnes);
         result = result =
-            wrap(result->ty, ConstantInt::get(irgen.ctx, APInt::getAllOnes(result->ty->getBitWidth())), result->loc);
+            wrap(result->ty, ConstantInt::get(irgen.ctx, APInt::getAllOnes(result->ty->getIntegerKind().getBitWidth())), result->loc);
         return;
     }
     warning(result->loc, "'bitsize and' to %R is always itself", allOnes);
@@ -1281,7 +1289,7 @@ ONE : {
                             const auto &c = cast<ConstantFP>(Y->getOperand(0))->getValue();
                             const auto &d = cast<ConstantFP>(Y->getOperand(1))->getValue();
                             result = wrap(r->ty, llvm::ConstantStruct::get(
-                                irgen.wrapComplex(r->ty->tags),  
+                                irgen.wrapComplex(r->ty),  
                                 ConstantFP::get(irgen.ctx, a * c - b * d), 
                                 ConstantFP::get(irgen.ctx, b * c + a * d)), 
                                 result->loc
@@ -1302,7 +1310,7 @@ ONE : {
                         const auto &d = cast<ConstantInt>(Y->getOperand(1))->getValue();
         
                         result = wrap(r->ty, llvm::ConstantStruct::get(
-                            irgen.wrapComplex(r->ty->tags), 
+                            irgen.wrapComplex(r->ty), 
                             ConstantInt::get(irgen.ctx, a * c - b * d), 
                             ConstantInt::get(irgen.ctx, b * c + a * d)),
                             result->loc
@@ -1388,7 +1396,7 @@ ZERO:
                         const auto &d = cast<ConstantFP>(Y->getOperand(1))->getValue();
                         APFloat tmp = c * c + d * d;
                         result = wrap(r->ty, llvm::ConstantStruct::get(
-                            irgen.wrapComplex(r->ty->tags),  
+                            irgen.wrapComplex(r->ty),  
                             ConstantFP::get(irgen.ctx, (a * c + b * d) / tmp), 
                             ConstantFP::get(irgen.ctx, (b * c - a * d) / tmp)
                             ), 
@@ -1413,7 +1421,7 @@ ZERO:
                         APInt tmp1 = a * c + b * d;
                         APInt tmp2 = b * c - a * d;
                         result = wrap(r->ty, llvm::ConstantStruct::get(
-                            irgen.wrapComplex(r->ty->tags), 
+                            irgen.wrapComplex(r->ty), 
                             ConstantInt::get(irgen.ctx, isSigned ? tmp1.sdiv(tmp0) : tmp1.udiv(tmp0)), 
                             ConstantInt::get(irgen.ctx, isSigned ? tmp2.sdiv(tmp0) : tmp2.udiv(tmp0))),
                             result->loc
@@ -1781,15 +1789,15 @@ NO_REPEAT:
             if (L > 1)
                 type_error(loc, "too many 'long's for 'double'");
             if (F)
-                type_error(loc, "cannot merge with previous %R", F->show());
+                type_error(loc, "cannot merge with previous %R", F.show());
             F = F_Double;
         } else if (s) {
             if (s > 1)
                 type_error(loc, "duplicate 'short'");
-            I = context.getShortBits();
+            I = context.getShortLog2();
         } else if (L) {
             if (I)
-                type_error(loc, "cannot merge with previous %R", I->show());
+                type_error(loc, "cannot merge with previous %R", I.show(numunsigned == 0));
             switch (L) {
             case 1: I = context.getLongLog2(); break;
             case 2: I = context.getLongLongLog2(); break;
@@ -1821,16 +1829,16 @@ NO_REPEAT:
         }
         if (!eat_typedef) {
             if (F)
-                return make_floating(F);
+                return context.make_floating(F);
             assert(I);
             if (numsigned)
-                return make_unsigned(I);
-            return make_signed(I);
+                return context.make_unsigned(I);
+            return context.make_signed(I);
         }
 MERGE:
         if (
             (tags & ~type_qualifiers_and_storage_class_specifiers) && 
-            (eat_typedef->getTagsNoQualifiersAndStorages() || eat_typedef->k != TYPRIM)
+            (eat_typedef->getTagsNoQualifiersAndStorages() || eat_typedef->getKind() != TYPRIM)
         ) {
             type_error(loc, "bad declaration specifier: cannot merge %T with %T", eat_typedef, context.make(tags));
             tags &= type_qualifiers_and_storage_class_specifiers;
@@ -1851,7 +1859,7 @@ MERGE:
             auto ty = sema.currentInitTy;
             if (!ty)
                 return assignment_expression();
-            auto k = getKind();
+            auto k = ty->getKind();
             if (k == TYARRAY && l.tok.tok == TStringLit) {
                 xstring s = l.tok.str;
                 auto enc = l.tok.getStringPrefix();
@@ -1870,19 +1878,19 @@ MERGE:
                     case Prefix_u8:
                         if (!(ty->arrtype->isInteger() && ty->arrtype->getIntegerKind().asLog2() == 3))
                             type_error(loc1, "initializing %T array with string literal", ty->arrtype);
-                        return wrap(context.getFixArrayType(enc == Prefix_none ? context.getChar() : context.getChar8_t(), s.size() + 1), enc::getUTF8(s), loc1);
+                        return wrap(context.getFixArrayType(enc == Prefix_none ? context.getChar() : context.getChar8_t(), s.size() + 1), enc::getUTF8(s, irgen.ctx), loc1);
                     case Prefix_L:
                         if (!(ty->arrtype->isInteger() && ty->arrtype->getIntegerKind().asLog2() == 5))
                             type_error(loc1, "initializing %T array with wide string literal", ty->arrtype);
-                        return wrap(context.getFixArrayType(context.getWChar_t(), s.size() + 1), context.getWCharLog2() == 5 ? enc::getUTF16As32Bit(s) : enc::getUTF16As16Bit(s), loc1);
+                        return wrap(context.getFixArrayType(context.getWChar(), s.size() + 1), context.getWCharLog2() == 5 ? enc::getUTF16As32Bit(s, irgen.ctx) : enc::getUTF16As16Bit(s, irgen.ctx), loc1);
                     case Prefix_u:
                         if (!(ty->arrtype->isInteger() && ty->arrtype->getIntegerKind().asLog2() == 5))
                             type_error(loc1, "initializing %T array with UTF-16 string literal", ty->arrtype);
-                        return wrap(context.getFixArrayType(context.getChar16_t(), s.size() + 1), enc::getUTF16As16Bit(s), loc1);
+                        return wrap(context.getFixArrayType(context.getChar16_t(), s.size() + 1), enc::getUTF16As16Bit(s, irgen.ctx), loc1);
                     case Prefix_U:
                         if (!(ty->arrtype->isInteger() && ty->arrtype->getIntegerKind().asLog2() == 5))
                             type_error(loc1, "initializing %T array with UTF-32 string literal", ty->arrtype);
-                        return wrap(context.getFixArrayType(context.getUChar(), s.size() + 1), enc::getUTF32(s), loc1);
+                        return wrap(context.getFixArrayType(context.getUChar(), s.size() + 1), enc::getUTF32(s, irgen.ctx), loc1);
                     default: llvm_unreachable("bad string encoding");
                 }
             }
@@ -1892,18 +1900,19 @@ MERGE:
                 return nullptr;
             return castto(e, ty, Implict_Init);
         }
-        result = sema.currentInitgetKind() == TYSTRUCT
+        auto k = sema.currentInitTy->getKind();
+         result = k == TYSTRUCT
                      ? ENEW(StructExpr){.ty = sema.currentInitTy, .arr2 = xvector<Expr>::get()}
                      : ENEW(ArrayExpr){.ty = sema.currentInitTy, .arr = xvector<Expr>::get()};
         result->loc = getLoc();
         consume();
-        if (sema.currentInitgetKind() == TYARRAY) {
+        if (k == TYARRAY) {
             if (sema.currentInitTy->hassize) {
                 m = sema.currentInitTy->arrsize;
             } else {
                 result->ty->hassize = true, result->ty->arrsize = 0, m = -1;
             }
-        } else if (sema.currentInitgetKind() == TYSTRUCT) {
+        } else if (k == TYSTRUCT) {
             m = sema.currentInitTy->selems.size();
         } else {
             // braces around scalar initializer
@@ -1915,9 +1924,9 @@ MERGE:
                 consume();
                 break;
             }
-            if (sema.currentInitgetKind() == TYSTRUCT) {
+            if (k == TYSTRUCT) {
                 ty = i < (unsigned)m ? sema.currentInitTy->selems[i].ty : nullptr;
-            } else if (sema.currentInitgetKind() == TYARRAY) {
+            } else if (k == TYARRAY) {
                 ty = sema.currentInitTy->arrtype;
             } else {
                 ty = sema.currentInitTy;
@@ -1940,7 +1949,6 @@ MERGE:
             if (l.tok.tok == TComma)
                 consume();
         }
-        auto k = sema.currentInitgetKind();
         if (k == TYPRIM || k == TYPOINTER || k == TYENUM)
             result = result->arr.front();
         return result;
@@ -1969,7 +1977,7 @@ MERGE:
             st2 = direct_declarator_end(base, st.name);
             if (!st2.ty)
                 return Declator();
-            memcpy(reinterpret_cast<void *>(dummy), reinterpret_cast<const void *>(st2.ty), ctype_size_map[st2.getKind()]);
+            memcpy(reinterpret_cast<void *>(dummy), reinterpret_cast<const void *>(st2.ty), ctype_size_map[st2.ty->getKind()]);
             return st;
         }
         default:
@@ -2204,7 +2212,7 @@ MERGE:
             if (!nt.ty)
                 return expect(full_loc, "abstract-declarator"), false;
             params.push_back(nt);
-            if (nt.getKind() == TYINCOMPLETE)
+            if (nt.ty->getKind() == TYINCOMPLETE)
                 type_error(full_loc, "parameter %u has imcomplete type %T", i, nt.ty), ok = false;
             if (nt.name) {
                 if (sema.typedefs.getSymInCurrentScope(nt.name))
@@ -2218,7 +2226,7 @@ MERGE:
         for (size_t i = 0; i < params.size(); ++i) {
             if (i == 0 && (params[0].ty->hasTag(TYVOID)))
                 zero = true;
-            if (params[i].getKind() == TYARRAY)
+            if (params[i].ty->getKind() == TYARRAY)
                 params[i].ty = context.getPointerType(params[i].ty->arrtype);
         }
         if (zero) {
@@ -2358,8 +2366,8 @@ MERGE:
             }
             return true;
         }
-        if (e->getKind() == TYPOINTER) {
-            if ((e->ty->tags.hasTag(TYLVALUE)) && e->ty->p->k == TYARRAY)
+        if (e->ty->getKind() == TYPOINTER) {
+            if ((e->ty->hasTag(TYLVALUE)) && e->ty->p->getKind() == TYARRAY)
                 return type_error(getLoc(), "array is not assignable"), false;
             return true;
         }
@@ -2388,12 +2396,12 @@ MERGE:
             if (sema.currentAlign < m) {
                 type_error(loc, "requested alignment is less than minimum alignment of %Z for type %T", m, base);
             } else {
-                base->align = sema.currentAlign;
+                base->setAlignInBytes(sema.currentAlign);
             }
         }
         if (l.tok.tok == TSemicolon) {
             consume();
-            if (base->align)
+            if (base->getAlignLog2Value())
                 warning(loc, "'_Alignas' can only used in variables");
             return insertStmt(SNEW(DeclOnlyStmt){.loc = loc, .decl = base});
         }
@@ -2404,18 +2412,18 @@ MERGE:
             if (!st.ty)
                 return;
             if (l.tok.tok == TLcurlyBracket) {
-                if (st.getKind() != TYFUNCTION)
+                if (st.ty->getKind() != TYFUNCTION)
                     return type_error(full_loc, "unexpected function definition");
                 // function definition
                 if (st.name->second.getToken() == PP_main) {
                     if (st.ty->params.size()) {
-                        if (!(st.ty->params.front().isInteger() && ty->params.front().getInteger().asLog2() != context.getIntLog2())) {
+                        if (!(st.ty->params.front().ty->isInteger() && st.ty->params.front().ty->getIntegerKind().asLog2() != context.getIntLog2())) {
                             type_error(full_loc, "first parameter of main is not 'int'");
                         }
                         if (st.ty->params.size() >= 2) {
                             if (!(
-                                st.ty->params[1].getKind() == TYPOINTER && 
-                                st.ty->params[1].ty->p->k == TYPOINTER &&
+                                st.ty->params[1].ty->getKind() == TYPOINTER && 
+                                st.ty->params[1].ty->p->getKind() == TYPOINTER &&
                                 st.ty->params[1].ty->p->p->isInteger() &&
                                 st.ty->params[1].ty->p->p->getIntegerKind().asLog2() != context.getCharLog2()
                                   )) {
@@ -2454,21 +2462,21 @@ MERGE:
             result->vars.push_back(VarDecl{.name = st.name, .ty = st.ty, .init = nullptr, .idx = idx});
             if (st.ty->hasTag(TYINLINE))
                 warning(full_loc, "inline can only used in function declaration");
-            if (!(st.ty->tags & TYEXTERN)) {
-                if ((st.ty->tags & TYVOID) && !(st.ty->hasTag(TYTYPEDEF)))
+            if (!(st.ty->hasTag(TYEXTERN))) {
+                if ((st.ty->isVoid()) && !(st.ty->hasTag(TYTYPEDEF)))
                     return type_error(full_loc, "variable %I declared void", st.name);
-                if (st.getKind() == TYINCOMPLETE)
+                if (st.ty->getKind() == TYINCOMPLETE)
                     return type_error(full_loc, "variable %I has imcomplete type %T", st.name);
             }
             if (l.tok.tok == TAssign) {
                 Expr init;
                 auto &var_info = sema.typedefs.getSym(idx);
                 var_info.tags |= ASSIGNED;
-                if (st.getKind() == TYARRAY && st.ty->vla) {
+                if (st.ty->getKind() == TYARRAY && st.ty->vla) {
                     return type_error(full_loc, "variable length array may not be initialized");
-                } else if (st.getKind() == TYFUNCTION)
+                } else if (st.ty->getKind() == TYFUNCTION)
                     return type_error(full_loc, "function may not be initialized");
-                if (st.ty->tags & TYTYPEDEF)
+                if (st.ty->hasTag(TYTYPEDEF))
                     return type_error(full_loc, "'typedef' may not be initialized");
                 consume();
                 {
@@ -2478,7 +2486,7 @@ MERGE:
                 if (!init)
                     return expect(full_loc, "initializer-list");
                 result->vars.back().init = init;
-                if (st.getKind() == TYARRAY && !st.ty->hassize && !st.ty->vla) 
+                if (st.ty->getKind() == TYARRAY && !st.ty->hassize && !st.ty->vla) 
                     result->vars.back().ty = init->ty;
                 if (init->k == EConstant && st.ty->hasTag(TYCONST))
                     var_info.val = init->C; // for const and constexpr, their value can be fold to constant
@@ -2497,7 +2505,7 @@ MERGE:
                     }
                 }
             } else {
-                if (st.getKind() == TYARRAY) {
+                if (st.ty->getKind() == TYARRAY) {
                     if (st.ty->vla && isTopLevel())
                         type_error(full_loc, "variable length array declaration not allowed at file scope");
                     else if (st.ty->hassize == false && !st.ty->vla && (st.ty->tag & TYEXTERN)) {
@@ -2577,7 +2585,7 @@ MERGE:
             consume();
             if (!(e = cast_expression()))
                 return nullptr;
-            if (e->getKind() != TYPOINTER)
+            if (e->ty->getKind() != TYPOINTER)
                 return type_error(loc, "pointer expected"), nullptr;
             make_deref(e, loc);
             return e;
@@ -2590,7 +2598,7 @@ MERGE:
             if (!(checkInteger(e->ty) || (e->ty->isComplex())))
                 return type_error(loc, "integer type expected"), nullptr;
             integer_promotions(e);
-            if (e->ty->tags->isComplex()) {
+            if (e->ty->isComplex()) {
                 if (e->k == EConstant) {
                     if (auto CS = dyn_cast<llvm::ConstantStruct>(e->C)) {
                         if (auto REAL = dyn_cast<ConstantFP>(CS->getOperand(0))) {
@@ -2620,18 +2628,18 @@ MERGE:
             if (!(e = expression()))
                 return nullptr;
             if (e->k == EConstantArray) {
-                assert(e->getKind() == TYPOINTER);
+                assert(e->ty->getKind() == TYPOINTER);
                 e->ty = context.getPointerType(context.getFixArrayType(
                     e->ty->p, cast<llvm::ArrayType>(e->array->getValueType())->getNumElements()));
                 return e;
             }
             if (e->k == EArrToAddress)
                 return e->ty = context.getPointerType(e->arr3->ty), e;
-            if (e->getKind() == TYBITFIELD)
+            if (e->ty->getKind() == TYBITFIELD)
                 return type_error(loc, "cannot take address of bit-field"), e;
             if (e->ty->hasTag(TYREGISTER))
                 return type_error(loc, "take address of register variable"), e;
-            if (e->k == EUnary && e->uop == AddressOf && e->ty->p->k == TYFUNCTION)
+            if (e->k == EUnary && e->uop == AddressOf && e->ty->p->getKind() == TYFUNCTION)
                 return e->ty->clearTags(TYLVALUE), e;
             if (!assignable(e))
                 return e;
@@ -2689,9 +2697,13 @@ MERGE:
                 return nullptr;
             if (!assignable(e))
                 return e;
-            CType ty = e->getKind() == TYPOINTER ? context.getSize_t() : e->ty;
+            if (e->ty->isScalar())
+                return type_error("expect scalar operand to '++'/'--'"), e;
+            CType ty = e->ty->getKind() == TYPOINTER ? context.getSize_t() : e->ty;
             Expr obj = e;
-            Expr one = wrap(ty, ConstantInt::get(irgen.ctx, APInt(ty->getBitWidth(), 1)), e->loc);
+            Expr one = wrap(ty, ConstantInt::get(irgen.ctx, APInt(
+                 ty->getBitWidth(), 1)
+            ), e->loc);
             (tok == TAddAdd) ? make_add(e, one) : make_sub(e, one);
             return binop(obj, Assign, e, e->ty);
         }
@@ -2913,7 +2925,8 @@ NEXT:
                 ty = context.getFloat128();
             else if (su.isFloat) 
                 ty = context.getFloat();
-            APFloat F(ty->getFltSemantics());
+            const auto &Format = ty->getFloatKind().getFltSemantics();
+            APFloat F(Format);
             auto it = F.convertFromString(fstr, APFloat::rmNearestTiesToEven);
             if (auto err = it.takeError()) {
                 std::string msg = llvm::toString(std::move(err));
@@ -2924,10 +2937,10 @@ NEXT:
                 if ((status & APFloat::opOverflow) || ((status & APFloat::opUnderflow) && F.isZero())) {
                     const char *diag;
                     if (status & APFloat::opOverflow) {
-                        APFloat::getLargest(*Format).toString(buffer);
+                        APFloat::getLargest(Format).toString(buffer);
                         diag = "floating point constant overflow: %R";
                     } else {
-                        APFloat::getSmallest(*Format).toString(buffer);
+                        APFloat::getSmallest(Format).toString(buffer);
                         diag = "float point constant opUnderflow: %R";
                     }
                     lex_error(loc, diag, buffer.str());
@@ -2956,11 +2969,11 @@ NEXT:
         uint64_t H = bigVal.high(), L = bigVal.low();
         if (su.isLongLong) {
             ty = su.isUnsigned ? context.getULongLong() : context.getLongLong();
-            if (bigVal >> ty->getIntegerKind.getBitWidth())
+            if (bigVal >> static_cast<unsigned>(ty->getIntegerKind().getBitWidth()))
                 warning("integer constant is too large with 'll' suffix");
         } else if (su.isLong) {
             ty = su.isUnsigned ? context.getULong() : context.getLong();
-            if (bigVal >> ty->getIntegerKind.getBitWidth())
+            if (bigVal >> static_cast<unsigned>(ty->getIntegerKind().getBitWidth()))
                 warning("integer constant is too large with 'l' suffix");
         } else {
             if (H) {
@@ -2987,8 +3000,8 @@ NEXT:
         }
         auto bit_width = ty->getIntegerKind().getBitWidth();
         ConstantInt *CI = H ? 
-                ConstantInt::get(irgen.ctx, APInt(ty->bit_width, {H, L})) :
-                ConstantInt::get(irgen.ctx, APInt(ty->bit_width, L));
+                ConstantInt::get(irgen.ctx, APInt(bit_width, {H, L})) :
+                ConstantInt::get(irgen.ctx, APInt(bit_width, L));
         if (su.isImaginary)
             ty->addTag(TYIMAGINARY);
         return wrap(ty, CI, loc);
@@ -3086,7 +3099,7 @@ NEXT:
                 consume();
                 if (!it)
                     return type_error(loc, "use of undeclared identifier %I", sym), getIntZero();
-                if (it->hasTag(TYTYPEDEF))
+                if (it->ty->hasTag(TYTYPEDEF))
                     return type_error("typedefs are not allowed here %I", sym), getIntZero();
                 it->tags |= USED;
                 CType ty = context.clone(it->ty);
@@ -3094,7 +3107,7 @@ NEXT:
                 ty->lvalue_cast();
                 if (it->val)
                     return wrap(ty, it->val, loc);
-                switch (getKind()) {
+                switch (ty->getKind()) {
                 case TYFUNCTION:
                     result =
                         unary(ENEW(VarExpr){.loc = loc, .ty = ty, .sval = idx}, AddressOf, context.getPointerType(ty));
@@ -3192,21 +3205,22 @@ ADD:
                 isarrow = false;
 DOT:
                 CType ty = result->ty;
+                auto k = ty->getKind();
                 bool isLvalue = false;
                 consume();
                 if (l.tok.tok != TIdentifier)
                     return expect(getLoc(), "identifier"), nullptr;
                 if (isarrow) {
-                    if (result->getKind() != TYPOINTER)
+                    if (k != TYPOINTER)
                         return type_error(getLoc(), "member reference type %T is not a pointer; did you mean to use '.'"), result;
                     ty = result->ty->p;
                     isLvalue = true;
                 } else {
-                    if (result->getKind() == TYPOINTER) {
+                    if (k == TYPOINTER) {
                         return type_error("member reference type %T is a pointer; did you mean to use '->'", result->ty), result;
                     }
                 }
-                if (getKind() != TYSTRUCT && getKind() != TYUNION)
+                if (k != TYSTRUCT && k != TYUNION)
                     return type_error(getLoc(), "member access is not struct or union"), result;
                 for (size_t i = 0; i < ty->selems.size(); ++i) {
                     Declator pair = ty->selems[i];
@@ -3215,7 +3229,7 @@ DOT:
                             .loc = result->loc, .ty = pair.ty, .obj = result, .idx = (unsigned)i};
                         if (isLvalue) {
                             result->ty = context.clone(result->ty);
-                            result->addTag(TYLVALUE);
+                            result->ty->addTag(TYLVALUE);
                         }
                         consume();
                         goto CONTINUE;
@@ -3228,11 +3242,11 @@ CONTINUE:;
             {
                 CType ty = (result->k == EUnary && result->uop == AddressOf)
                                ? result->ty->p
-                               : ((result->getKind() == TYPOINTER) ? result->ty->p : result->ty);
+                               : ((result->ty->getKind() == TYPOINTER) ? result->ty->p : result->ty);
                 Expr f = result;
                 result =
                     ENEW(CallExpr){.loc = result->loc, .ty = ty->ret, .callfunc = f, .callargs = xvector<Expr>::get()};
-                if (getKind() != TYFUNCTION)
+                if (ty->getKind() != TYFUNCTION)
                     return type_error(getLoc(), "expect function or function pointer, but the expression has type %T",
                                       ty),
                            nullptr;
@@ -3290,7 +3304,7 @@ CONTINUE:;
                 consume();
                 if (!(rhs = expression()))
                     return result;
-                if (result->getKind() != TYPOINTER && rhs->getKind() != TYPOINTER) {
+                if (result->ty->getKind() != TYPOINTER && rhs->ty->getKind() != TYPOINTER) {
                     type_error(getLoc(), "subscripted value is not an array, pointer, or vector");
                 } else {
                     result = make_add_pointer(result, rhs);
@@ -3306,8 +3320,8 @@ CONTINUE:;
         }
     }
     void make_deref(Expr &e, Location loc) {
-        assert(e->getKind() == TYPOINTER && "bad call to make_deref: expect a pointer");
-        if ((e->ty->p->k == TYINCOMPLETE) || e->ty->p->hasTag(TYVOID)) {
+        assert(e->ty->getKind() == TYPOINTER && "bad call to make_deref: expect a pointer");
+        if ((e->ty->p->getKind() == TYINCOMPLETE) || e->ty->p->hasTag(TYVOID)) {
             type_error(loc, "dereference from incomplete/void type: %T", e->ty);
             return;
         }
@@ -3388,16 +3402,26 @@ CONTINUE:;
         }
     }
     const APInt *want_integer_constant() {
-        Location loc = getLoc();
         Expr e = constant_expression();
+        Location loc = e->loc;
         if (!e)
             return nullptr;
-        if (sema.currentswitch)
-            e = castto(e, sema.currentswitch->itest->ty);
         if (e->k != EConstant)
             return type_error(loc, "case value is not a integer constant expression"), nullptr;
-        if (auto CI = dyn_cast<ConstantInt>(e->C))
+        if (auto CI = dyn_cast<ConstantInt>(e->C)) {
+            CType to = sema.currentswitch->itest->ty;
+            auto rA = to->getIntegerKind().getBitWidth();
+            auto rB = e->ty->getIntegerKind().getBitWidth();
+            if (rA < rB) {
+                auto NEW_CI = ConstantInt::get(irgen.ctx, CI->getValue().trunc(rA));
+                if (NEW_CI->getValue() != CI->getValue())
+                    warning(loc, "overflow converting case value to switch condition type (%A to %A)", CI->getValue(), NEW_CI->getValue());
+                CI = NEW_CI;
+            } else if (rA > rB) {
+                CI = ConstantInt::get(irgen.ctx, e->ty->isSigned() ? CI->getValue().sext(rA) : CI->getValue().zext(rA));
+            }
             return &CI->getValue();
+        }
         return type_error(loc, "statement requires expression of integer type (%T invalid)", e->ty), nullptr;
     }
     void valid_condition(Expr &e, bool reverse = false) {
@@ -3513,20 +3537,25 @@ NEXT:
             else
                 consume();
             if (!sema.currentswitch)
-                parse_error(loc, "'default' statement not in switch statement");
+                parse_error(loc, "'case' statement not in switch statement");
             else {
                 if (CaseStart) {
                     label_t L = jumper.createLabel();
                     insertLabel(L);
-                    if (!CaseEnd)
+                    if (!CaseEnd) {
                         sema.currentswitch->switchs.push_back(SwitchCase(loc, L, CaseStart));
+                    }
                     else {
-                        if (*CaseStart == *CaseEnd)
+                        if (*CaseStart == *CaseEnd) {
+                            ONE_CASE:
                             sema.currentswitch->switchs.push_back(SwitchCase(loc, L, CaseStart));
+                        }
                         else {
                             if (CaseStart->ugt(*CaseEnd))
                                 warning(loc, "empty case range specified");
-                            else {
+                            else if (CaseStart == *CaseEnd) {
+                                goto ONE_CASE;
+                            } else {
                                 sema.currentswitch->gnu_switchs.push_back(GNUSwitchCase(loc, L, CaseStart, CaseEnd));
                             }
                         }
@@ -3538,7 +3567,7 @@ NEXT:
             else
                 statement();
         }
-            return;
+        return;
         case Kdefault: {
             consume();
             if (l.tok.tok != TColon)
@@ -3620,8 +3649,10 @@ NEXT:
             if (!(test = Bexpression()))
                 return;
             if (tok == Kswitch) {
+                if (test->isBool()) 
+                    warning(test->loc, "switch condition has boolean value");
                 integer_promotions(test);
-                if (test->getKind() != TYPRIM && !(test->ty->hasTags(intergers_or_bool))) {
+                if (test->ty->getKind() != TYPRIM && !test->ty->isInteger()) {
                     type_error("switch requires expression of integer type (%T invalid)", test->ty);
                     test->ty = context.getInt();
                 }
@@ -3644,6 +3675,8 @@ NEXT:
                     insertLabel(sema.currentswitch->sw_default);
                 }
                 insertLabel(LEAVE);
+                // clang::Sema::ActOnFinishSwitchStmt
+                std::stable_sort(CaseVals.begin(), CaseVals.end(), CmpCaseVals);
                 return;
             }
             label_t BODY = jumper.createLabel();

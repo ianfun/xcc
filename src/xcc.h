@@ -714,7 +714,6 @@ static constexpr uint64_t build_float(FloatKind kind) {
     const uint64_t k = kind;
     return (k << 47) | OpaqueCType::integer_bit;
 }
-
 static enum CTypeKind transform(enum TagType tag) {
     switch (tag) {
     case TagType_Union: return TYUNION;
@@ -723,12 +722,28 @@ static enum CTypeKind transform(enum TagType tag) {
     }
     llvm_unreachable("bad TagType");
 }
-static const char *show_transform(enum CTypeKind k) {
+static enum TagType transform(enum CTypeKind k) {
+    switch (k) {
+    case TYSTRUCT: return TagType_Struct;
+    case TYUNION: return TagType_Union;
+    case TYENUM: return TagType_Enum;
+    default: llvm_unreachable("invalid argument to transform()");
+    }
+}
+static const char *show2(enum CTypeKind k) {
     switch (k) {
     case TYENUM: return "enum";
     case TYUNION: return "union";
     case TYSTRUCT: return "struct";
-    default: llvm_unreachable("bad call to show_transform");
+    default: llvm_unreachable("invalid argument to show_transform()");
+    }
+}
+static const char *show2(enum TagType k) {
+    switch (k) {
+    case TagType_Enum: return "enum";
+    case TagType_Union: return "union";
+    case TagType_Struct: return "struct";
+    default: llvm_unreachable("invalid argument to show_transform()");
     }
 }
 static const char hexs[] = "0123456789ABCDEF";
