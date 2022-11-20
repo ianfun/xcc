@@ -6,8 +6,8 @@ struct xcc_context {
     xcc_context(const xcc_context &) = delete;
     xcc_context(): table{}
     {
-        constint = make_signed(5, TYCONST);
-        b = make_unsigned(1);
+        constint = make_signed(getIntLog2(), TYCONST);
+        b = make_unsigned(getBoolLog2());
         i8 = make_signed(3);
         i16 = make_signed(4);
         i32 = make_signed(5);
@@ -29,15 +29,26 @@ struct xcc_context {
         fdecimal64 = make_floating(F_Decimal64);
         fdecimal128 = make_floating(F_Decimal128);
 
-        _wchar = u16;
-        _long = i64;
-        _ulong = u64;
-        _uchar = u32;
-        str32ty = getPointerType(_uchar);
-        str16ty = getPointerType(_wchar);
-        str8ty = getPointerType(getChar());
+        _wchar = isWChar_tSigned() ? (getWCharLog2() == 5 ? i32 : i16) : (getWCharLog2() == 5 ? u32 : u16);
+        _long = getLongLog2() == 5 ? i32 : i64;
+        _ulong =  getLongLog2() == 5 ? u32 : u64;
+        assert(getUCharLog2() == 5);
+        _uchar = isUChar_tSigned() ? i32 :  u32;
+        _size_t = make_unsigned(getSize_tLog2());
+        _ptr_diff_t = make_signed(getSize_tLog2());
+        _uint_ptr = make_unsigned();
 
-        _longdouble = getFloat128();
+        // For wide string literals prefixed by the letter u or U, the array elements have type char16_t or char32_t
+        str32ty = getPointerType(getChar32_t());
+        str16ty = getPointerType(getChar16_t());
+        // For wide string literals prefixed by the letter L, the array elements have type wchar_t
+        wstringty = getPointerType(getWChar());
+        // For character string literals, the array elements have type char,
+        stringty = getPointerType(getChar());
+        // For UTF-8 string literals, the array elements have type char8_t, and are initialized with the characters of the multibyte character sequence
+        str8ty = getPointerType(getChar8_t());
+
+        _longdouble = make_floating(getLongDobuleFloatKind());
         _complex_double = make_complex_float(fdoublety->getTags());
         _complex_float = make_complex_float(ffloatty->getTags());
         _complex_longdouble = make_complex_float(_longdouble->getTags());
@@ -45,8 +56,8 @@ struct xcc_context {
     IdentifierTable table; // contains allocator!
     Expr intzero;
     CType constint, b, v, i8, u8, i16, u16, i32, u32, i64, u64, i128, u128, 
-    ffloatty, fdoublety, fhalfty, f128ty, ppc_f128, f80ty, str8ty, str16ty, str32ty, _complex_float, _complex_double, 
-    _complex_longdouble, _wchar, _long, _ulong, _longlong, _ulonglong, _longdouble, _uchar;
+    ffloatty, fdoublety, fhalfty, f128ty, ppc_f128, f80ty, str8ty, str16ty, str32ty, stringty, wstringty, _complex_float, _complex_double, 
+    _complex_longdouble, _wchar, _long, _ulong, _longlong, _ulonglong, _longdouble, _uchar, _size_t, _ptr_diff_t;
     [[nodiscard]] CType make(uint64_t tags) {
         return TNEW(PrimType)(tags);
     }
@@ -62,6 +73,18 @@ struct xcc_context {
     [[nodiscard]] CType make_complex_float(FloatKind kind) {
         return make(build_float(kind) | TYCOMPLEX);
     }
+    [[nodiscard]] CType tryGetComplexTypeFromNonComplex(const_CType ty) {
+        if (ty->isFloating()) {
+            const auto k = ty->getFloatKind();
+            switch (k.asEnum()) {
+            case F_Double: return context.getComplexDouble();
+            case F_Float: return context.getComplexFloat();
+            default: break;
+            }
+            return make_complex_float(k);
+        }
+        return make(ty->getTags() | TYCOMPLEX);
+    }
     [[nodiscard]] CType getPointerType(CType base) {
         CType result = TNEW(PointerType){.tags = 0, .p = base};
         result->setKind(TYPOINTER);
@@ -71,6 +94,11 @@ struct xcc_context {
         CType result = TNEW(ArrayType){.tags = 0, .arrtype = elementType, .hassize = true, .arrsize = size};
         result->setKind(TYARRAY);
         return result;
+    }
+    [[nodiscard]] CType createDummyType() {
+        CType res = reinterpret_cast<CType>(getAllocator().Allocate(ctype_max_size, 1));
+        res->setTags(0);
+        res->setKind(TYPRIM);
     }
     [[nodiscard]] CType getComplexFloat() const {
         return _complex_float;
@@ -111,24 +139,20 @@ struct xcc_context {
     [[nodiscard]] CType getVoid() const {
         return v;
     }
+    // https://stackoverflow.com/questions/15533115/why-dont-the-c-or-c-standards-explicitly-define-char-as-signed-or-unsigned
     [[nodiscard]] CType getChar() const {
         return i8;
     }
-    [[nodiscard]] type_tag_t getLongDoubleTag() const {
-        return _longdouble->tags;
-    }
-    [[nodiscard]] type_tag_t getLongTag() const {
-        return _long->tags;
-    }
-    [[nodiscard]] type_tag_t getULongTag() const {
-        return _ulong->tags;
-    }
-    [[nodiscard]] type_tag_t getUCharTag() const {
-        return _uchar->tags;
-    }
-    [[nodiscard]] type_tag_t getWcharTag() const {
-        return _uchar->tags;
-    }
+    // C23
+    // The types declared are mbstate_t (described in 7.31.1) and size_t (described in 7.21);
+    //     char8_t
+    // which is an unsigned integer type used for 8-bit characters and is the same type as unsigned char;
+    //     char16_t
+    // which is an unsigned integer type used for 16-bit characters and is the same type as uint_least16_t
+    // (described in 7.22.1.2); and
+    //     char32_t
+    // which is an unsigned integer type used for 32-bit characters and is the same type as uint_least32_t
+    // (also described in 7.22.1.2).
     [[nodiscard]] CType getChar8_t() const {
         return u8;
     }
@@ -138,13 +162,22 @@ struct xcc_context {
     [[nodiscard]] CType getChar32_t() const {
         return u32;
     }
+    [[nodiscard]] unsigned getChar8_tLog2() const {
+        return 3;
+    }
+    [[nodiscard]] unsigned getChar16_tLog2() const {
+        return 4;
+    }
+    [[nodiscard]] unsigned getChar32_tLog2() const {
+        return 5;
+    }
     [[nodiscard]] CType getLong() const {
         return _long;
     }
     [[nodiscard]] CType getULong() const {
         return _ulong;
     }
-    [[nodiscard]] CType getWchar() const {
+    [[nodiscard]] CType getWChar() const {
         return _wchar;
     }
     [[nodiscard]] CType getUChar() const {
@@ -156,9 +189,8 @@ struct xcc_context {
     [[nodiscard]] CType getUShort() const {
         return u16;
     }
-    [[nodiscard]] CType getIntPtr() const { return i64; }
-    [[nodiscard]] CType getPtrDiff() const { return getIntPtr(); }
-    [[nodiscard]] CType getSize_t() const { return u64; }
+    [[nodiscard]] CType getPtrDiff_t() const { return _ptr_diff_t; }
+    [[nodiscard]] CType getSize_t() const { return _size_t; }
     [[nodiscard]] CType getLongLong() const { return u64; }
     [[nodiscard]] CType getULongLong() const { return i64; }
     [[nodiscard]] ArenaAllocator &getAllocator() const { return table.getAllocator(); }
@@ -172,6 +204,60 @@ struct xcc_context {
     [[nodiscard]] Expr clone(Expr e) { return reinterpret_cast<Expr>(new_memcpy(expr_size_map[e->k], e)); }
     [[nodiscard]] PPMacroDef *newMacro() {
         return new (getAllocator()) PPMacroDef();
+    }
+    [[nodiscard]] unsigned getBoolLog2() const {
+        return 1;
+    }
+    [[nodiscard]] unsigned getCharLog2() const {
+        return 3;
+    }
+    [[nodiscard]] unsigned getShortLog2() const {
+        return 4;
+    }
+    [[nodiscard]] unsigned getIntLog2() const {
+        return 5;
+    }
+    [[nodiscard]] unsigned getLongLog2() const {
+        return 6;
+    }
+    [[nodiscard]] unsigned getLongLongLog2() const {
+        return 6;
+    }
+    // https://learn.microsoft.com/en-us/cpp/cpp/string-and-character-literals-cpp?view=msvc-170
+    // Linux's wchar(L prefix) is int, Windows is unsigned short
+    // they are system APIs, so we must follow.
+    /*
+    C23
+    Prefix | Corresponding Type
+    none | unsigned char
+    u8 | char8_t
+    L | the unsigned type corresponding to wchar_t
+    u | char16_t
+    U | char32_t
+    */ 
+    [[nodiscard]] unsigned getWCharLog2() const {
+        return 5;
+    }
+    [[nodiscard]] bool isWChar_tSigned() const {
+        // unsigned in Win32(unsigned short)
+        // signed int Linux(int)
+        return true;
+    }
+    [[nodiscard]] unsigned getUCharLog2() const {
+        return 5;
+    }
+    [[nodiscard]] bool isUChar_tSigned() const {
+        // always unsigned since char32_t is unsigned
+        return false;
+    }
+    [[nodiscard]] FloatKind getLongDobuleFloatKind() const {
+        return F_Quadruple;
+    }
+    [[nodiscard]] getShortLog2() const {
+        return 6;
+    }
+    [[nodiscard]] unsigned getSize_tBitWidth() const {
+        return getSize_t->getBitWidth();
     }
 };
 #undef TNEW

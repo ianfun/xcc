@@ -151,15 +151,26 @@ struct Lexer : public DiagnosticHelper {
         }
         }
     }
-    TokenV lexCharLit(enum ITag I = Iint) {
+    TokenV lexCharLit(enum StringPrefix enc = Prefix_none) {
+        // C23
+        // An integer character constant is a sequence of one or more multibyte characters enclosed in singlequotes, as in ’x’. A UTF-8 character constant is the same, except prefixed by u8. A wchar_t character constant is prefixed by the letter L. A UTF-16 character constant is prefixed by the letter u. A UTF-32 character constant is prefixed by the letter U.
         TokenV theTok = TokenV(ATokenVChar, TCharLit);
         theTok.itag = I;
         eat(); // eat '
         if (c == '\\') {
             auto codepoint = lexEscape();
-            if (codepoint > 0xFF) {
-                warning(loc, "character constant too large");
+            // C23
+            // If an integer character constant contains a single character or escape sequence, its value is the one that results when an object with type char whose value is that of the single character or escape sequence is converted to type int.
+            if (codepoint > 0xFF && (enc == Prefix_none || enc == Prefix_u8))
+                warning(loc, "character constant exceeds 8 bit");
+            else if (codepoint > 0xFFFF && (enc == Prefix_L || enc == Prefix_u)) {
+                if (enc == Prefix_L)
+                    warning(loc, "A wchar_t character constant exceeds 16 bit is not portable");
+                else
+                    warning(loc, "UTF-16 character constant exceeds 16 bit");
             }
+            // C23
+            // In an implementation in which type char has the same range of values as signed char, the integer character constant ’\xFF’ has the value −1; if type char has the same range of values as unsigned char, the character constant ’\xFF’ has the value +255.
             theTok.i = codepoint;
         } else {
             theTok.i = (unsigned char)c;
@@ -168,6 +179,7 @@ struct Lexer : public DiagnosticHelper {
         if (c != '\'')
             lex_error(loc, "missing terminating " lquote "'" rquote " character in character literal");
         eat();
+        theTok.push_back(static_cast<char>(enc));
         return theTok;
     }
     // copy from utf-8.h
@@ -331,7 +343,7 @@ END:
         xstring s = xstring::get_with_capacity(13);
         return lexPPNumberDigits(s);
     }
-    TokenV lexStringLit(uint8_t enc) {
+    TokenV lexStringLit(enum StringPrefix enc = Prefix_none) {
         xstring str = xstring::get();
         eat(); // eat "
         TokenV theTok = TokenV(ATokenVStrLit, TStringLit);

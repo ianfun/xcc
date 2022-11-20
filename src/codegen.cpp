@@ -1,9 +1,9 @@
-/*
- *  codegen.cpp - Code generation to LLVM IR
- *  Ast(Stmt, Expr) => llvm IR(or LLVM Module)
- *
-*/
-
+/* 
+ * codegen.cpp
+ * 
+ * Code generation to LLVM IR, and Debug Info
+ * implements getAlignof() and getsizeof() method(used by Sema and constant folding).
+ */
 struct IRGen: public DiagnosticHelper {
 
     using Type = llvm::Type *;
@@ -75,6 +75,7 @@ static enum TypeIndex getTypeIndex(CType ty) {
         case F_Decimal32: return fdecimal32ty;
         case F_Decimal64: return fdecimal64ty;
         case F_Decimal128: return fdecimal128ty;
+        case F_Invalid: break;
     }
     llvm_unreachable("invalid FloatKind");
 }
@@ -176,7 +177,7 @@ static enum TypeIndex getTypeIndex(CType ty) {
     }
     const llvm::Instruction *getTerminator() { return B.GetInsertBlock()->getTerminator(); }
     llvm::ValueAsMetadata *mdNum(uint64_t num) {
-        Value v = llvm::ConstantInt::get(integer_types[5], num);
+        Value v = llvm::ConstantInt::get(integer_types[context.getIntLog2()], num);
         return llvm::ValueAsMetadata::get(v);
     }
     DIScope getLexScope() { return lexBlocks.back(); }
@@ -212,12 +213,7 @@ static enum TypeIndex getTypeIndex(CType ty) {
         assert(ty && "wrap a nullptr");
         switch (ty->getKind()) {
         case TYPRIM: 
-        {
-            const type_tag_t tags = ty->getTags();
-            if (tags & TYCOMPLEX) 
-                return wrapComplex(ty);
-            return wrapNoComplexScalar(tags);
-        }
+            return wrapPrim(ty);
         case TYPOINTER: return pointer_type;
         case TYFUNCTION: {
             // fast case: search cached
@@ -235,13 +231,13 @@ static enum TypeIndex getTypeIndex(CType ty) {
             return T;
         }
         case TYARRAY: return llvm::ArrayType::get(wrap(ty->arrtype), ty->arrsize);
-        case TYENUM: return integer_types[5];
+        case TYENUM: return integer_types[context.getIntLog2()];
         case TYINCOMPLETE:
             switch (ty->tag) {
-            case TYSTRUCT: 
-            case TYUNION: return tags[ty->iidx];
-            case TYENUM: return integer_types[5];
-            default: llvm_unreachable("");
+            case TagType_Struct: 
+            case TagType_Union: return tags[ty->iidx];
+            case TagType_Enum: return integer_types[context.getIntLog2()];
+            default: llvm_unreachable("bad TagType");
             }
         case TYBITFIELD:
         case TYSTRUCT:
@@ -384,9 +380,9 @@ static enum TypeIndex getTypeIndex(CType ty) {
     }
     Value gen_cond(Expr e) {
         Value V = gen(e);
-        if (e->ty->hasTag(TYBOOL))
+        if (e->ty->isBool())
             return V;
-        if (e->ty->hasTag(TYCOMPLEX)) {
+        if (e->ty->isComplex()) {
             Value a = gen_complex_real(V);
             Value b = gen_complex_imag(V);
             if (e->ty->isFloating()) {
@@ -403,20 +399,26 @@ static enum TypeIndex getTypeIndex(CType ty) {
         return B.CreateIsNotNull(V);
     }
     Type wrapNoComplexScalar(CType ty) {
-        return types[getNoSignTypeIndex(ty->getTags())];
+        assert(ty->getKind() == TYPRIM);
+        if (ty->isInteger()) {
+            return integer_types[ty->getIntegerKind().asLog2()];
+        }
+        return float_types_array[static_cast<uint64_t>(ty->getFloatKind())];
     }
-    Type wrapNoComplexScalar(type_tag_t tags) {
-        return types[getNoSignTypeIndex(tags)];
+    llvm::Type *wrapPrim(const_CType ty) {
+        assert(ty->getKind() == TYPRIM);
+        if (LLVM_UNLIKELY(ty->isComplex()))
+            return wrapComplex(ty);
+        // for _Imaginary types, they are just reprsentationed as floating types(or interger types as a extension).
+        if (ty->isInteger()) {
+            return integer_types[ty->getIntegerKind().asLog2()];
+        }
+        return float_types_array[static_cast<uint64_t>(ty->getFloatKind())];
     }
     Type wrap2(CType ty) {
         switch (ty->getKind()) {
         case TYPRIM:
-        {
-            const type_tag_t tags = ty->getTags();
-            if (tags & TYCOMPLEX) 
-                return wrapComplex(ty);
-            return wrapNoComplexScalar(tags);
-        }
+            return wrapPrim(ty);
         case TYPOINTER: return pointer_type;
         case TYSTRUCT:
         case TYUNION: {
@@ -427,7 +429,7 @@ static enum TypeIndex getTypeIndex(CType ty) {
             return llvm::StructType::create(ctx, ArrayRef<Type>(buf, L));
         }
         case TYARRAY: return llvm::ArrayType::get(wrap(ty->arrtype), ty->arrsize);
-        case TYENUM: return integer_types[5];
+        case TYENUM: return integer_types[context.getIntLog2()];
         default: llvm_unreachable("");
         }
     }
@@ -905,7 +907,7 @@ static enum TypeIndex getTypeIndex(CType ty) {
             auto ty = wrap(e->obj->ty);
             auto base = isVar ? getAddress(e->obj) : gen(e->obj);
             if (isVar || e->obj->ty->getKind() == TYPOINTER) {
-                auto pMember = B.CreateInBoundsGEP(ty, base, {llvm::ConstantInt::get(integer_types[5], e->idx)});
+                auto pMember = B.CreateInBoundsGEP(ty, base, {llvm::ConstantInt::get(integer_types[context.getIntLog2()], e->idx)});
                 return load(pMember, wrap(e->ty), e->obj->ty->align);
             }
             return B.CreateExtractValue(load(base, ty, e->obj->ty->align), e->idx);

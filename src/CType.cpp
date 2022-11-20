@@ -2,7 +2,7 @@
 struct OpacheCType
 {
     uint64_t tags;
-    static void bin(uint64_t a) {
+    [[maybe_unused]] static void bin(uint64_t a) {
         putchar(a & 1 ? '1' : '0');
         putchar(a & 2 ? '1' : '0');
         putchar(a & 4 ? '1' : '0');
@@ -14,6 +14,39 @@ struct OpacheCType
         putchar(' ');
     }
     uint64_t getTags() const { return tags; }
+    uint64_t getTagsQualifiersOnly() const { return tags & type_qualifiers; }
+    uint64_t getTagsStoragesOnly() const { return tags & storage_class_specifiers; }
+    uint64_t getTagsQualifiersAndStoragesOnly() const { return tags & type_qualifiers_and_storage_class_specifiers;}
+    uint64_t getTagsNoQualifiersAndStorages() const { return tags & ~type_qualifiers_and_storage_class_specifiers; }
+    uint64_t getTagsNoQualifiers() const { return tags & ~type_qualifiers; }
+    uint64_t getTagsNoStorages() const { return tags & ~storage_class_specifiers; }
+    void lvalue_cast() {
+        tags = getTagsNoQualifiersAndStorages() | TYLVALUE;
+    }
+    bool isVoid() const { return tags & TYVOID; }
+    bool isComplex() const { return tags & TYCOMPLEX; }
+    bool isImaginary() const { return tags & TYIMAGINARY; }
+    bool isBool() const { return getKind() == YTPRIM && getIntegerKind().isBool(); }
+    bool basic_equals(const_CType other) const {
+        // two types are equal
+        // the align are equal
+        // if one is floating, the other must be floating
+        // if one if integer, the other must be integer
+        // two IntegerKinds or FloatKinds are equal
+        return getTagsNoStorages() == sother->getTagsNoStorages();
+    }
+    bool ignoreSignIntegerEquals(const_CType other) const {
+        if (isInteger()) {
+            if (other->isInteger()) {
+                if (getIntegerKind() == other->getIntegerKind())
+                    return true;
+            }
+        }
+        return false;
+    }
+    bool isGlobalStorage() const {
+        return tags & (TYSTATIC | TYEXTERN);
+    }
     void setTags(uint64_t new_tag) { tags = new_tag; }
     void setTags(const uint64_t new_tags) { tags = new_tags; }
     bool hasTag(const uint64_t theTag) const {
@@ -96,13 +129,16 @@ struct OpacheCType
         assert(isInteger());
         tags ^= sign_bit;
     }
+    uint64_t getRawData() const {
+        return (tags >> 47) & 0b111;
+    }
     IntegerKind getIntegerKind() const {
         assert(isInteger());
-        return IntegerKind::fromLog2((tags >> 47) & 0b111);
+        return getRawData();
     }
     FloatKind getFloatKind() const {
         assert(isFloating());
-        return (tags >> 47) & 0b1111;
+        return getRawData();
     }
     void clearFloatAllBits() {
         tags &= ~(0b1111ULL << 47);
@@ -113,7 +149,7 @@ struct OpacheCType
     [[nodiscard]] void del(uint64_t tags_to_delete) const {
         return tags & tags_to_delete;
     }
-    void dumpBits(){
+    [[maybe_unused]] void dumpBits(){
         bin(tags);
         bin(tags >> 8);
         bin(tags >> 16);
@@ -159,6 +195,40 @@ struct OpacheCType
         }
         default: break;
         }
+    }
+    StringRef get_pointer_qual_str() const {
+        if (hasTag(TYCONST))
+            return "const";
+        if (hasTag(TYVOLATILE))
+            return "volatile";
+        if (hasTag(TYRESTRICT))
+            return "restrict";
+        return StringRef();
+    }
+    StringRef get_storage_str() const {
+        if (hasTag(TYSTATIC))
+            return "static";
+        if (hasTag(TYEXTERN))
+            return "extern";
+        if (hasTag(TYTHREAD_LOCAL))
+            return "_Thread_local";
+        if (hasTag(TYTYPEDEF))
+            return "typedef";
+        if (hasTag(TYREGISTER))
+            return "register";
+        if (hasTag(TYATOMIC))
+            return "_Atomic";
+        return StringRef();
+    }
+    // clang::BuiltinType::getName
+    raw_ostream &print_basic(raw_ostream &OS) const {
+        if (isComplex())
+            OS << "_Complex ";
+        if (isImaginary())
+            OS << "_Imaginary";
+        if (isInteger())
+            return OS << getIntegerKind().show();
+        return OS << getFloatKind().show();
     }
     [[maybe_unused]] static void TEST1() {
         CType a = {};

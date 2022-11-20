@@ -1,6 +1,6 @@
 // Copyright (c) 2008-2009 Bjoern Hoehrmann <bjoern@hoehrmann.de>
 // See http://bjoern.hoehrmann.de/utf-8/decoder/dfa/ for details.
-
+namespace enc {
 // clang-format off
 
 #define UTF8_ACCEPT 0
@@ -46,3 +46,41 @@ IsUTF8(StringRef str) {
 }
 
 // clang-format on
+
+llvm::ConstantDataArray *getUTF8(xstring s, LLVMContext &ctx) {
+  return llvm::ConstantDataArray::getString(ctx, s, false);
+}
+
+template <typename T>
+llvm::ConstantDataArray *getUTF16AsNBit(xstring s, LLVMContext &ctx) {
+  SmallVector<T> data;
+  uint32_t state = 0, codepoint;
+  for (auto c : s) {
+      if (decode(&state, &codepoint, (uint32_t)(unsigned char)c))
+          continue;
+      if (codepoint <= 0xFFFF) {
+          data.push_back(codepoint);
+          continue;
+      }
+      data.push_back(0xD7C0 + (codepoint >> 10));
+      data.push_back(0xDC00 + (codepoint & 0x3FF));
+  }
+  return llvm::ConstantDataArray::get(ctx, data);
+}
+// in Linux, wchar_t are 32 bit(int)
+llvm::ConstantDataArray *getUTF16As32Bit(xstring s, LLVMContext &ctx) {
+  return getUTF16AsNBit<uint32_t>(s, ctx);
+}
+// in Windows, wchar_t are 16 bit(unsigned short)
+llvm::ConstantDataArray *getUTF16As32Bit(xstring s, LLVMContext &ctx) {
+  return getUTF16AsNBit<uint16_t>(s, ctx);
+}
+llvm::ConstantDataArray *getUTF32(xstring s, LLVMContext &ctx) {
+  for (const auto c : s)
+      if (!decode(&state, &codepoint, (uint32_t)(unsigned char)c))
+          data.push_back(codepoint);
+  return llvm::ConstantDataArray::get(ctx, data);
+}
+
+}
+

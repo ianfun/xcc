@@ -178,6 +178,7 @@ using llvm::sys::ProcessInfo;
 using llvm::MutableArrayRef;
 using llvm::None;
 using llvm::Optional;
+using llvm::LLVMContext;
 using llvm::OwningArrayRef;
 using llvm::SaveAndRestore;
 using llvm::VersionTuple;
@@ -192,6 +193,13 @@ enum TagType: uint8_t {
     TagType_Enum,
     TagType_Struct,
     TagType_Union
+};
+enum StringPrefix: uint8_t {
+    Prefix_none, // An integer character constant has type int.
+    Prefix_u8, // A UTF-8 character constant has type char8_t. (unsigned)
+    Prefix_L,  // A wchar_t character constant prefixed by the letter L has type wchar_t
+    Prefix_u,  // A UTF-16 character constant has type char16_t (unsigned)
+    Prefix_U,  // A UTF-32 character constant has type char32_t (unsigned)
 };
 const char *show(enum TagType tag) {
     switch (tag) {
@@ -426,6 +434,7 @@ static const char *show(enum PostFixOp o) {
 // TODO: Decimal Float
 // https://discourse.llvm.org/t/rfc-decimal-floating-point-support-iso-iec-ts-18661-2-and-c23/62152
 enum FloatKindEnum: uint8_t {
+    F_Invalid,
     F_Half, // https://en.wikipedia.org/wiki/Half-precision_floating-point_format
     F_BFloat, // https://en.wikipedia.org/wiki/Bfloat16_floating-point_format
     F_Float, // https://en.wikipedia.org/wiki/Single-precision_floating-point_format
@@ -438,15 +447,16 @@ enum FloatKindEnum: uint8_t {
     F_Decimal128
 };
 struct FloatKind {
-    static constexpr size_t MAX_KIND = static_cast<size_t>(F_Decimal128) - static_cast<size_t>(F_Half) + 1;
+    static constexpr size_t MAX_KIND = static_cast<size_t>(F_Decimal128) - static_cast<size_t>(F_Half);
     enum FloatKindEnum e;
-    constexpr FloatKind(enum FloatKindEnum k) e{k} { }
+    FloatKind(enum FloatKindEnum k) e{k} { }
     FloatKind(uint64_t k) e{static_cast<enum FloatKindEnum>(k)} { assert(k < 16 && "invalid kind(max is 15)"); }
     enum FloatKindEnum getKind() { return e; }
-    constexpr operator enum FloatKindEnum() const { return e; }
-    constexpr operator uint64_t() const { return static_cast<uint64_t>(e); }
-    constexpr enum FloatKindEnum asEnum() const { return e; }
+    operator enum FloatKindEnum() const { return e; }
+    operator uint64_t() const { return static_cast<uint64_t>(e); }
+    enum FloatKindEnum asEnum() const { return e; }
     bool isValid() const { return e != F_Invalid && e <= F_PPC128; }
+    operator bool() const { return e != F_Invalid; }
     uint64_t getBitWidth() const {
         switch (e) {
         case F_Half:
@@ -459,6 +469,7 @@ struct FloatKind {
         case F_Decimal32: return 32;
         case F_Decimal64: return 64;
         case F_Decimal128: return 128;
+        case F_Invalid: break;
         }
         llvm_unreachable("broken type: invalid FloatKindEnum");
     };
@@ -471,10 +482,12 @@ struct FloatKind {
         case F_x87_80: return llvm::Type::getX86_FP80Ty(ctx);
         case F_Quadruple: return llvm::Type::getFP128Ty(ctx);
         case F_PPC128: return llvm::Type::getPPC_FP128Ty(ctx);
-        default: llvm_unreachable("Decimal floating are not supported now!");
+        case F_Invalid: break;
+        default: break;
         }
+        llvm_unreachable("Decimal floating are not supported now!");
     }
-    llvm::fltSemantics &llvm::getFltSemantics() const {
+    llvm::fltSemantics &getFltSemantics() const {
         switch (e) {
         case F_Half: return APFloat::IEEEhalf();
         case F_BFloat: return APFloat::BFloat();
@@ -483,8 +496,26 @@ struct FloatKind {
         case F_x87_80: return APFloat::x87DoubleExtended();
         case F_Quadruple: return APFloat::IEEEquad();
         case F_PPC128: return APFloat::PPCDoubleDouble();
-        default: llvm_unreachable("Decimal floating are not supported now!");
+        case F_Invalid: break;
+        default: break;
         }
+        llvm_unreachable("Decimal floating are not supported now!");
+    }
+    StringRef show() const {
+        switch (e) {
+            case F_Half: return "half";
+            case F_BFloat: return "__bf16";
+            case F_Float: return "float";
+            case F_Double: return "double";
+            case F_x87_80: return "__float80";
+            case F_Quadruple: return "__float128";
+            case F_PPC128: return "__ibm128";
+            case F_Decimal32: return "_Decimal32";
+            case F_Decimal64: return "_Decimal64";
+            case F_Decimal128: return "_Decimal128";
+            case F_Invalid: break;
+        }
+        return "(invalid FloatKind)";
     }
     bool isIEEE() const {
         return APFloat::getZero(getFltSemantics()).isIEEE();
@@ -499,15 +530,32 @@ struct FloatKind {
 struct IntegerKind {
     static constexpr size_t MAX_KIND = 7;
     uint8_t shift;
-    constexpr IntegerKind(uint8_t shift): shift{shift} {
-        // assert(shift != 2 && "4 bit integer is invalid");
-        // assert(shift <= MAX_KIND && "integer width more than 128 bit is invalid");
+    IntegerKind(uint8_t shift): shift{shift} {
+        assert(shift != 2 && );
     }
-    constexpr uint8_t asLog2() const {
+    const char *isValid() const {
+        return shift != 2 && shift <= MAX_KIND;
+    }
+    operator bool() const {
         return shift;
     }
-    constexpr uint64_t asBits() const {
+    uint8_t asLog2() const {
+        return shift;
+    }
+    uint64_t asBits() const {
         return uint64_t(1) << shift;
+    }
+    StringRef show(bool Signed) const {
+        switch (shift) {
+            case 1: return "_Bool"; // XXX: C23 is bool
+            case 3: return Signed ? StringRef("char") : StringRef("unsigned char");
+            case 4: return Signed ? StringRef("short") : StringRef("unsigned short");
+            case 5: return Signed ? StringRef("int") : StringRef("unsigned int"); // XXX: 'unsigned' is ok
+            case 6: return Signed ? StringRef("long long") : StringRef("unsigned long long");
+            case 7: return Signed ? StringRef("__int128") : StringRef("unsigned __int128");
+            default: break;
+        }
+        return "(invalid IntegerKind)";
     }
     uint64_t getBitWidth() const { return asBits(); }
     uint64_t asBytes() const {
@@ -515,7 +563,10 @@ struct IntegerKind {
         assert((bits % 8) == 0 && "invalid call to asBytes(): loss information!");
         return bits / 8;
     }
-    static constexpr IntegerKind fromLog2(uint8_t Value) {
+    bool operator==(const IntegerKind &other) const {
+        return asLog2() == other.asLog2();
+    }
+    static IntegerKind fromLog2(uint8_t Value) {
         return IntegerKind(Value);
     }
     static IntegerKind fromBytes(uint64_t Bytes) {
@@ -555,21 +606,9 @@ static constexpr uint64_t build_float(FloatKind kind) {
     return (k << 47) | OpaqueCType::integer_bit;
 }
 constexpr type_tag_t
-  ty_basic = ty_prim | TYCOMPLEX | TYIMAGINARY,
-  ty_storages = TYTYPEDEF | TYEXTERN | TYSTATIC | TYTHREAD_LOCAL | TYREGISTER | TYCONSTEXPR;
-
-// hard writtened type tags
-static constexpr type_tag_t
-  TYINT = TYINT32,
-  TYUINT = TYUINT32,
-  TYCHAR = TYINT8,
-  TYUCHAR = TYUINT8,
-  TYLONGLONG = TYINT64,
-  TYULONGLONG = TYUINT64,
-  TYSHORT = TYINT16,
-  TYUSHORT = TYUINT16;
-
-constexpr auto type_qualifiers = TYCONST | TYRESTRICT | TYVOLATILE | TYATOMIC;
+  storage_class_specifiers = TYTYPEDEF | TYEXTERN | TYSTATIC | TYTHREAD_LOCAL | TYREGISTER | TYCONSTEXPR| TYAUTO,
+  type_qualifiers = TYCONST | TYRESTRICT | TYVOLATILE | TYATOMIC,
+  type_qualifiers_and_storage_class_specifiers = type_qualifiers | storage_class_specifiers;
 
 #define kw_start Kextern
 #define kw_end K_Generic
@@ -673,8 +712,6 @@ static const char *show_transform(enum CTypeKind k) {
     case TYSTRUCT: return "struct";
     }
 }
-constexpr type_tag_t storage_class_specifiers = 
- TYSTATIC | TYEXTERN | TYREGISTER | TYTHREAD_LOCAL | TYTYPEDEF | TYAUTO;
 
 static const char hexs[] = "0123456789ABCDEF";
 static char hexed(unsigned a) { return hexs[a & 0b1111]; }
@@ -686,26 +723,23 @@ static bool type_equal(CType a, CType b) {
     assert(b && "type_equal: b is nullptr");
     if (a->getKind() != b->getKind())
         return false;
-    else {
-        switch (a->getKind()) {
+    switch (a->getKind()) {
         case TYPRIM:
-            return a->andTags(ty_prim | TYCOMPLEX) == b->andTags(ty_prim | TYCOMPLEX);
+            return a->basic_equals(b);
         case TYPOINTER: return type_equal(a->p, b->p);
         case TYENUM:
         case TYSTRUCT:
         case TYUNION: return a == b;
         case TYINCOMPLETE: return a->name == b->name;
         default: return false;
-        }
     }
 }
 static bool compatible(CType p, CType expected) {
     // https://en.cppreference.com/w/c/language/type
     if (p->getKind() != expected->getKind())
         return false;
-    else {
-        switch (p->getKind()) {
-        case TYPRIM: return p->andTags(ty_prim | TYCOMPLEX) == expected->andTags(ty_prim | TYCOMPLEX);
+    switch (p->getKind()) {
+        case TYPRIM: return p->basic_equals(expected);
         case TYFUNCTION:
             if (!compatible(p->ret, expected->ret) || p->params.size() != expected->params.size())
                 return false;
@@ -732,9 +766,8 @@ static bool compatible(CType p, CType expected) {
             if (p->hassize && (p->arrsize != expected->arrsize))
                 return false;
             return compatible(p->arrtype, expected->arrtype);
-        }
     }
-    llvm_unreachable("");
+    llvm_unreachable("bad CTypeKind");
 }
 
 // TokenV: A Token with a value, and a macro is a sequence of TokenVs
@@ -752,22 +785,27 @@ struct TokenV {
     Token tok;                       // 8 bits
     union {
         // containing the encoding, .e.g: 8, 16, 32
-        struct {
-            xstring str; // 64 bits
-            uint8_t enc;
-        };
+        xstring str;
         IdentRef s; // 64 bits
         struct {
-            unsigned char i; // 8 bits
-            enum ITag itag;  // 8 bits
+            uint8_t i;
+            uint8_t itag;
         };
         struct LocTree *tree;
     };
-    TokenV() : k{ATokenVBase}, tok{TNul} {};
+    TokenV(): k{ATokenVBase}, tok{TNul} {};
     TokenV(enum TokenVKind k, Token tok) : k{k}, tok{tok} { }
     TokenV(Token tok) : k{ATokenVBase}, tok{tok} { }
     TokenV(struct LocTree *tree) : k{ATokenVLoc}, tok{PPMacroTraceLoc} { this->tree = tree; } 
-    void dump(raw_ostream &OS) {
+    enum StringPrefix getStringPrefix() {
+        auto r = static_cast<enum StringPrefix>(static_cast<unsigned char>(str.back()));
+        str.pop_back();
+        return r;
+    }
+    enum StringPrefix getCharPrefix() const {
+        return static_cast<enum StringPrefix>(itag);
+    }
+    void dump(raw_ostream &OS) const {
         switch (k) {
         case ATokenVBase: OS << show(tok); break;
         case ATokenIdent:
@@ -844,7 +882,8 @@ static unsigned scalarRankNoComplex(const_CType ty) {
     return intRank(ty);
 }
 static unsigned scalarRank(const_CType ty) {
-    if (ty->hasTag(TYCOMPLEX))
+    // _Imaginary' Rank types as floating type's
+    if (ty->isComplex())
         return scalarRankNoComplex(ty) + 1000; // a dummy number
     return scalarRank(ty);
 }
