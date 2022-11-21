@@ -99,6 +99,9 @@ enum Token: unsigned char {
   Kconst,
   Krestrict,
   Kvolatile,
+  K__extension__,
+  K__real,
+  K__imag,
   Kasm,
   K__asm__,
   Kreturn,
@@ -175,6 +178,9 @@ static const char *show(Token o){
     case Kconst: return "const";
     case Krestrict: return "restrict";
     case Kvolatile: return "volatile";
+    case K__extension__: return "__extension__";
+    case K__real: return "__real";
+    case K__imag: return "__imag";
     case Kasm: return "asm";
     case K__asm__: return "__asm__";
     case Kreturn: return "return";

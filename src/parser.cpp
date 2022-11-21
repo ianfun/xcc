@@ -600,20 +600,22 @@ PTR_CAST:
                     complex_pair(float_to_integer(lhs, to), float_to_integer(rhs, to), to) :
                     float_to_integer(lhs, to);
             }
-            if (to->isFloating())
+            if (to->isFloating()){
                 return to->isComplex() ? complex_pair(integer_to_float(lhs, to), integer_to_float(rhs, to), to) :
                   integer_to_float(lhs, to);
+            }
             return to->isComplex() ?
                 complex_pair(int_cast(lhs, to), int_cast(rhs, to), to) :
                 int_cast(lhs, to);
         }
         // than, e is not a complex number, and cast to complex
         if (to->isComplex()) {
+            CType realTy = context.getComplexElementType(to);
             if (to->isFloating())
-                return complex_from_real((this->*(e->ty->isFloating() ? &Parser::float_cast2 : &Parser::integer_to_float))(e, to), to);
+                return complex_from_real((this->*(e->ty->isFloating() ? &Parser::float_cast2 : &Parser::integer_to_float))(e, realTy), to);
             if (e->ty->isFloating())
-                return complex_from_real((this->*(e->ty->isFloating() ? &Parser::float_cast2 : &Parser::float_to_integer))(e, to), to);
-            return complex_from_real(int_cast(e, to), to);
+                return complex_from_real(float_to_integer(e, realTy), to);
+            return complex_from_real(int_cast(e, realTy), to);
         }
         if (e->ty->isFloating() && to->isFloating())
             return float_cast2(e, to);
@@ -2743,6 +2745,31 @@ MERGE:
                 return expectRB(getLoc()), nullptr;
             consume();
             return result;
+        }
+        case K__real:
+        case K__imag:
+        {
+            consume();
+            // lvalue if the expression has lvalue type
+            Expr e = expression();
+            if (!e)
+                return parse_error(loc, "expect expression after '__real'/'__imag' operator"), nullptr;
+            CType ty = context.getComplexElementType(e->ty);
+            if (!checkArithmetic(e->ty))
+                type_error("expect arithmetic type to '__real'/'__imag' operator");
+            if (e->ty->isComplex())
+                return unary(e, tok == K__imag ? C__imag__ : C__real__, ty);
+            if (e->ty->isImaginary())
+                return tok == K__real ? wrap(ty, llvm::Constant::getNullValue(irgen.wrapNoComplexScalar(ty)), e->loc) : e;
+            return tok == K__real ? e : wrap(ty, llvm::Constant::getNullValue(irgen.wrapNoComplexScalar(ty)), e->loc);
+        }
+        case K__extension__:
+        {
+            consume();
+            Expr e = cast_expression();
+            if (!e)
+                parse_error(loc, "expect expression after '__extension__'");
+            return e;
         }
         default: return postfix_expression();
         }

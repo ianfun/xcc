@@ -52,6 +52,9 @@ struct xcc_context {
         str8ty = getPointerType(make(getChar8_t()->getTags() | TYCONST));
 
         _longdouble = make_floating(getLongDobuleFloatKind());
+
+        // There are three complex types, designated as float _Complex, double _Complex, and long double _Complex.
+        
         _complex_double = make_complex_float(fdoublety->getFloatKind());
         _complex_float = make_complex_float(ffloatty->getFloatKind());
         _complex_longdouble = make_complex_float(_longdouble->getFloatKind());
@@ -76,6 +79,10 @@ struct xcc_context {
     }
     [[nodiscard]] CType make_complex_float(FloatKind kind, uint64_t tags = 0) {
         return make(build_float(kind) | TYCOMPLEX | tags);
+    }
+    [[nodiscard]] CType getComplexElementType(const_CType ty) {
+        // For each floating type there is a corresponding real type, which is always a real floating type. For real floating types, it is the same type. For complex types, it is the type given by deleting the keyword _Complex from the type name.
+        return make(ty->del(TYCOMPLEX));
     }
     [[nodiscard]] CType tryGetComplexTypeFromNonComplex(const_CType ty) {
         if (ty->isFloating()) {

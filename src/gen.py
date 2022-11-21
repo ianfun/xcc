@@ -36,7 +36,6 @@ keywords = (
 	"typedef",
 	"_Noreturn",
 
-
 	"_Decimal32",
 	"_Decimal128",
 	"_Decimal64",
@@ -62,6 +61,9 @@ keywords = (
 	"restrict",
 	"volatile",
 
+	"__extension__",
+  "__real",
+  "__imag",
 	"asm",
 	"__asm__",
 	"return",

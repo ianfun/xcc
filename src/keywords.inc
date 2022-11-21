@@ -531,6 +531,85 @@ Token getKeyword(const char *s){
 			}
 			case '_':
 			switch(*s++){
+				case 'e':
+				switch(*s++){
+					case 'x':
+					switch(*s++){
+						case 't':
+						switch(*s++){
+							case 'e':
+							switch(*s++){
+								case 'n':
+								switch(*s++){
+									case 's':
+									switch(*s++){
+										case 'i':
+										switch(*s++){
+											case 'o':
+											switch(*s++){
+												case 'n':
+												switch(*s++){
+													case '_':
+													switch(*s++){
+														case '_':
+														switch(*s++){
+															case '\0': return K__extension__;
+															default: return TNul;
+														}
+														default: return TNul;
+													}
+													default: return TNul;
+												}
+												default: return TNul;
+											}
+											default: return TNul;
+										}
+										default: return TNul;
+									}
+									default: return TNul;
+								}
+								default: return TNul;
+							}
+							default: return TNul;
+						}
+						default: return TNul;
+					}
+					default: return TNul;
+				}
+				case 'r':
+				switch(*s++){
+					case 'e':
+					switch(*s++){
+						case 'a':
+						switch(*s++){
+							case 'l':
+							switch(*s++){
+								case '\0': return K__real;
+								default: return TNul;
+							}
+							default: return TNul;
+						}
+						default: return TNul;
+					}
+					default: return TNul;
+				}
+				case 'i':
+				switch(*s++){
+					case 'm':
+					switch(*s++){
+						case 'a':
+						switch(*s++){
+							case 'g':
+							switch(*s++){
+								case '\0': return K__imag;
+								default: return TNul;
+							}
+							default: return TNul;
+						}
+						default: return TNul;
+					}
+					default: return TNul;
+				}
 				case 'a':
 				switch(*s++){
 					case 's':

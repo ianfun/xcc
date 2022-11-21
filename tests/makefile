@@ -25,7 +25,7 @@ LLDFLAGS= \
 -llldWasm
 
 # debug on/off
-DEBUG=-g -Wextra -Wno-unused-parameter -Wno-c++20-extensions
+DEBUG=-g -Wextra -Wno-unused-parameter -Wno-c++20-extensions # -fsanitize=address
 
 # XCC driver with LLD disabled
 mainNoLLD:

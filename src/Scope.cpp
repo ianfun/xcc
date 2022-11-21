@@ -55,12 +55,12 @@ template <typename T> struct BlockScope : public ScopeBase<T> {
     void push() { blocks.push_back(this->data.size()); }
     void pop() {
         assert(blocks.size() && "mismatched push/pop: no stack to pop()!");
-        maxSyms = std::max(maxSyms, blocks.back());
+        maxSyms = std::max(maxSyms, this->data.size());
         this->data.resize(blocks.back());
         blocks.pop_back();
     }
     void finalizeGlobalScope() {
-        maxSyms = std::max(this->data.size(), maxSyms);
+        maxSyms = std::max(maxSyms, this->data.size());
     }
     bool isInGlobalScope(IdentRef Name) {
         assert(blocks.size() && "no global scope");

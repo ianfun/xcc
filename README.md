@@ -88,9 +88,21 @@ $ make all -j
 
 ## Features
 
+cdecl syntax
+
 ![](cdecl.png)
 
+Expressive diagnostics
+
 ![](diagnostic.png)
+
+Supports Windows, WSL, Linux ...
+
+![](run.png)
+
+`_Complex`, `_Imaginary` support.
+
+![](complex.png)
 
 ## Author
 

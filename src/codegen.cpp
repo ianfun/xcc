@@ -711,8 +711,7 @@ static enum TypeIndex getTypeIndex(CType ty) {
                     di->insertDeclare(p, meta, di->createExpression(), wrap(s->loc), entry);
                 }
                 store(p, arg);
-                vars[s->args[arg_no]] = p;
-                ++arg_no;
+                vars[s->args[arg_no++]] = p;
             }
             for (Stmt ptr = s->funcbody->next; ptr; ptr = ptr->next)
                 gen(ptr);
@@ -871,6 +870,12 @@ static enum TypeIndex getTypeIndex(CType ty) {
             switch (e->uop) {
             case AddressOf: return getAddress(e->uoperand);
             case Dereference: return gen(e->uoperand);
+            case C__real__:
+            case C__imag__:
+            {
+                auto ty = wrap(e->uoperand->ty);
+                return B.CreateInBoundsGEP(ty, getAddress(e->uoperand), {i32_0, e->uop == C__real__ ? i32_0 : i32_1});
+            }
             default: llvm_unreachable("");
             }
         case ESubscript: {
@@ -1089,6 +1094,7 @@ BINOP_ATOMIC_RMW:
                     LibCallI = gen_complex_imag(LibCallRes);
                 }
                 B.CreateBr(ContBB);
+                append(ContBB);
                 auto RealPHI = B.CreatePHI(ResR->getType(), 3);
                 RealPHI->addIncoming(ResR, OrigBB);
                 RealPHI->addIncoming(ResR, INaNBB);

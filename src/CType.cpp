@@ -222,7 +222,7 @@ public:
         tags &= ~(0b111ULL << 47);
     }
     [[nodiscard]] uint64_t del(uint64_t tags_to_delete) const {
-        return tags & tags_to_delete;
+        return tags & ~tags_to_delete;
     }
     [[maybe_unused]] void dumpBits(){
         bin(tags);
