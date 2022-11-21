@@ -47,6 +47,12 @@ testCpp:
 testLexer:
 	$(CC) $(CXXINCS) testLexer.cpp $(DEBUG) $(CXXFLAGS) -o lexer $(LDFLAGS)
 
+# test CType
+testCType:
+	$(CC) $(CXXINCS) testCType.cpp $(DEBUG) $(CXXFLAGS) -o ctype $(LDFLAGS)
+	echo "> running test program"
+	./ctype
+
 # test C parser
 testParser:
 	$(CC) $(CXXINCS) testParser.cpp $(DEBUG) $(CXXFLAGS) -o parser $(LDFLAGS)

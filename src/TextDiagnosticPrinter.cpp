@@ -100,8 +100,9 @@ void TextDiagnosticPrinter::write_loc(const LocationBase &loc) {
     OS << SM->getFileName(loc.id) << ':' << loc.line << ':' << loc.col << ": ";
     OS.changeColor(llvm::raw_ostream::Colors::SAVEDCOLOR, false);
 }
-void TextDiagnosticPrinter::realHandleDiagnostic(enum DiagnosticLevel level, const Diagnostic &Info) {
-    LocTree *begin_macro = Info.loc.getParent();
+void TextDiagnosticPrinter::realHandleDiagnostic(const Diagnostic &Diag) {
+    enum DiagnosticLevel level = Diag.level;
+    LocTree *begin_macro = Diag.loc.getParent();
     if (SM) { 
         LocTree *ptr = begin_macro;
         if (ptr && ptr->isAInclude) {
@@ -115,8 +116,8 @@ void TextDiagnosticPrinter::realHandleDiagnostic(enum DiagnosticLevel level, con
             }
         }
         begin_macro = ptr;
-        if (Info.loc.isValid()) {
-            write_loc(Info.loc);
+        if (Diag.loc.isValid()) {
+            write_loc(Diag.loc);
             goto OK;
         }
     }
@@ -152,13 +153,13 @@ void TextDiagnosticPrinter::realHandleDiagnostic(enum DiagnosticLevel level, con
     OS.resetColor();
     {
         SmallString<64> OutStr;
-        Info.FormatDiagnostic(OutStr);
+        Diag.FormatDiagnostic(OutStr);
         OutStr.push_back('\n');
         OS << OutStr.str();
     }
     if (SM) {
-        if (Info.loc.isValid()) {
-            printSource(Info.loc);
+        if (Diag.loc.isValid()) {
+            printSource(Diag.loc);
             for (LocTree *ptr = begin_macro;ptr;ptr = ptr->getParent()) {
                 PPMacroDef *def = ptr->macro;
                 write_loc(def->loc);

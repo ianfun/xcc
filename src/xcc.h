@@ -126,10 +126,6 @@
 
 #include <cctype>
 
-#if __cplusplus > 201402L
-#include <string_view>
-#endif
-
 #if CC_DEBUG
   #define dbgprint(msg, ...) fprintf(stderr, "\33[01;33m[DEBUG]\33[0m: " msg, ##__VA_ARGS__) 
 #else
@@ -461,12 +457,12 @@ struct FloatKind {
     static constexpr size_t MAX_KIND = static_cast<size_t>(F_Decimal128) - static_cast<size_t>(F_Half);
     enum FloatKindEnum e;
     constexpr FloatKind(enum FloatKindEnum k): e{k} { }
-    constexpr FloatKind(uint64_t k): e{static_cast<enum FloatKindEnum>(k)} { assert(k < 16 && "invalid kind(max is 15)"); }
+    constexpr FloatKind(uint64_t k): e{static_cast<enum FloatKindEnum>(k)} { }
     constexpr enum FloatKindEnum getKind() { return e; }
-    constexpr operator uint64_t() const { return static_cast<uint64_t>(e); }
+    explicit constexpr operator uint64_t() const { return static_cast<uint64_t>(e); }
     constexpr enum FloatKindEnum asEnum() const { return e; }
     constexpr bool isValid() const { return e != F_Invalid && e <= F_PPC128; }
-    constexpr operator bool() const { return e != F_Invalid; }
+    explicit constexpr operator bool() const { return e != F_Invalid; }
     constexpr bool equals(const enum FloatKindEnum other) const {
         return e == other;
     }
@@ -547,7 +543,10 @@ struct IntegerKind {
     constexpr bool isValid() const {
         return shift != 2 && shift <= MAX_KIND;
     }
-    constexpr operator bool() const {
+    explicit constexpr operator bool() const {
+        return shift;
+    }
+    explicit constexpr operator uint64_t() const {
         return shift;
     }
     constexpr uint8_t asLog2() const {
@@ -558,6 +557,7 @@ struct IntegerKind {
     }
     constexpr StringRef show(bool Signed) const {
         switch (shift) {
+            case 0:
             case 1: return "_Bool"; // XXX: C23 is bool
             case 3: return Signed ? StringRef("char") : StringRef("unsigned char");
             case 4: return Signed ? StringRef("short") : StringRef("unsigned short");
@@ -639,6 +639,18 @@ struct LocationBase {
     fileid_t id;
     bool isValid() const { return line != 0; }
     LocationBase(line_t line = 0, column_t col = 0, fileid_t fd = 0): line{line}, col{col}, id{fd} {}
+    bool operator >(const LocationBase &rhs) {
+        return line > rhs.line && col > rhs.col;
+    }
+    bool operator <(const LocationBase &rhs) {
+        return line < rhs.line && col < rhs.col;
+    }
+    bool operator >=(const LocationBase &rhs) {
+        return line >= rhs.line && col >= rhs.col;
+    }
+    bool operator <=(const LocationBase &rhs) {
+        return line <= rhs.line && col <= rhs.col;
+    }
 };
 struct Include_Info {
     unsigned line; // the line where #include occurs
@@ -693,11 +705,31 @@ struct SwitchCase {
     const APInt *CaseStart;
     label_t label;
     SwitchCase(Location loc, label_t label, const APInt *CastStart) : loc{loc}, CaseStart{CastStart}, label{label} { }
+    static bool equals(const SwitchCase &lhs, const SwitchCase &rhs) {
+        return *lhs.CaseStart == *rhs.CaseStart;
+    }
 };
 struct GNUSwitchCase : public SwitchCase {
     APInt range;
     GNUSwitchCase(Location loc, label_t label, const APInt *CastStart, const APInt *CaseEnd)
         : SwitchCase(loc, label, CastStart), range{*CaseEnd - *CastStart} { }
+    bool contains(const APInt &C) const {
+        return (C - *CaseStart).ule(range);
+    }
+    bool contains(const SwitchCase &G) const {
+        return contains(*G.CaseStart);
+    }
+    bool overlaps(const GNUSwitchCase &G) const {
+        // https://stackoverflow.com/questions/3269434/whats-the-most-efficient-way-to-test-if-two-ranges-overlap
+        // G   :  [xxxxxxx]
+        // this:     [yyyyyyy]
+        if (G.CaseStart->ult(*CaseStart)) {
+            return (*G.CaseStart + G.range).uge(*CaseStart);
+        }
+        // G   :      [xxxxxxx]
+        // this: [yyyyyyy]
+        return (*CaseStart + range).ule(*G.CaseStart);
+    }
 };
 
 #include "ctypes.inc"
@@ -711,7 +743,7 @@ static constexpr uint64_t build_integer(IntegerKind kind, bool Signed) {
     return (log2size << 47) | (Signed ? OpaqueCType::sign_bit : 0ULL);
 }
 static constexpr uint64_t build_float(FloatKind kind) {
-    const uint64_t k = kind;
+    const uint64_t k = static_cast<uint64_t>(kind);
     return (k << 47) | OpaqueCType::integer_bit;
 }
 static enum CTypeKind transform(enum TagType tag) {

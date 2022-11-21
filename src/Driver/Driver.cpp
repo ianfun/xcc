@@ -9,8 +9,8 @@ using namespace options;
 struct Driver: public DiagnosticHelper
 {
 std::string TargetTriple;
-Driver(DiagnosticConsumer &Diags, StringRef TargetTriple = llvm::sys::getDefaultTargetTriple()): 
-  DiagnosticHelper(Diags),
+Driver(DiagnosticsEngine &Diag, StringRef TargetTriple = llvm::sys::getDefaultTargetTriple()): 
+  DiagnosticHelper(Diag),
   TargetTriple{TargetTriple} {}
 std::unique_ptr<InputArgList> inputArgs;
 static const llvm::opt::OptTable &getOpts() {

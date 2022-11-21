@@ -84,7 +84,7 @@ struct SourceMgr : public DiagnosticHelper {
         tree = tree->getParent();
     }
     bool is_tty;
-    SourceMgr(DiagnosticConsumer &Diag) : DiagnosticHelper{Diag}, buf{}, tree{nullptr} {
+    SourceMgr(DiagnosticsEngine &Diag) : DiagnosticHelper{Diag}, buf{}, tree{nullptr} {
         buf.resize_for_overwrite(STREAM_BUFFER_SIZE);
 #if WINDOWS
         DWORD dummy;
@@ -361,7 +361,7 @@ REPEAT:
     }
     void addStdin(const char *Name = "<stdin>") {
         if (hasStdinAdded)
-            return pp_error("stdardard input (%s) cannot be added as file more than once", Name);
+            return (void)pp_error("stdardard input (%s) cannot be added as file more than once", Name);
         Stream x = Stream{.name = Name, .k = AStdinStream};
         x.i = 0;
         x.readed = 0;

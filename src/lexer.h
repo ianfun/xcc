@@ -2,25 +2,12 @@
 
 struct Parser;
 
-struct Lexer : public DiagnosticHelper {
+struct Lexer : public EvalHelper {
     enum PPFlags : uint8_t {
         PFNormal = 1,
         PFPP = 2
     };
-    static constexpr const char months[12][4] = {
-        "Jan", // January
-        "Feb", // February
-        "Mar", // March
-        "Apr", // April
-        "May", // May
-        "Jun", // June
-        "Jul", // July
-        "Aug", // August
-        "Sep", // September
-        "Oct", // October
-        "Nov", // November
-        "Dec"  // December
-    };
+    static const char months[12][4];
     static bool isCSkip(char c) {
         // space, tab, new line, form feed are translate into ' '
         return c == ' ' || c == '\t' || c == '\f' || c == '\v';
@@ -41,7 +28,7 @@ struct Lexer : public DiagnosticHelper {
     Location loc;
     xcc_context &context;
 
-    Lexer(SourceMgr &SM, Parser &parser, xcc_context &context, DiagnosticConsumer &Diag) : DiagnosticHelper{Diag}, parser{parser}, SM{SM}, context{context} { }
+    Lexer(SourceMgr &SM, Parser &parser, xcc_context &context, DiagnosticsEngine &Diag) : EvalHelper{Diag}, parser{parser}, SM{SM}, context{context} { }
     Location getLoc() { return loc; }
     Expr constant_expression();
     void updateLoc() { loc = SM.getLoc(); }
@@ -57,19 +44,6 @@ struct Lexer : public DiagnosticHelper {
             lex_error(loc, "universal character %U in surrogate range", codepoint);
     }
     void eat() { c = SM.skip_read(); }
-    uint64_t force_eval(Expr e, Location cloc) {
-        if (e->k != EConstant) {
-            pp_error(cloc, "not a constant expression: %E", e);
-            return 0;
-        }
-        if (auto CI = dyn_cast<ConstantInt>(e->C)) {
-            if (CI->getValue().getActiveBits() > 64)
-                warning(cloc, "integer constant expression larger exceeds 64 bit, the result is truncated");
-            return CI->getValue().getLimitedValue();
-        }
-        pp_error("not a integer constant: %E", e);
-        return 0;
-    }
     Codepoint lexHexChar() {
         Codepoint n = 0;
         for (;;) {
@@ -574,10 +548,9 @@ RUN:
                     want_expr = true;
                     e = constant_expression();
                     want_expr = false;
-                    ok = true;
-                    // TODO
+                    ok = force_eval(e, e->loc);
                     dbgprint("#if: %s\n", ok ? "true" : "false");
-                    ppstack.push_back(ok ? 1 : 0);
+                    ppstack.push_back(ok);
                     (void)e;
                 } break;
                 case PPifdef:

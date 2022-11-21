@@ -31,7 +31,6 @@ private:
         uint64_t s;
         OpaqueCType a;
         for (unsigned i = 0;i < 8;++i) {
-            a.setAlignLog2Value(i);
             a.tags = build_integer(i);
             if (rand() < 0xFFFF)
                 a.toogleSign();
@@ -39,7 +38,7 @@ private:
             a.setAlignLog2Value(i);
             assert(a.isSigned()==s);
             assert(a.isInteger());
-            assert((uint64_t)a.getIntegerKind()==i);
+            assert((uint64_t)a.getIntegerKind().asLog2()==i);
             assert(a.getAlignLog2Value()==i);
             a.clearIntegerAllBits();
             assert(a.getAlignLog2Value()==i);
@@ -65,6 +64,7 @@ private:
         }
         puts("TEST 3: OK");
     }
+public:
     [[maybe_unused]] static void TEST_MAIN() {
         puts("Running tests...\n");
         TEST1();
@@ -72,7 +72,6 @@ private:
         TEST3();
         puts("All tests passed.");
     }
-public:
     uint64_t getTags() const { return tags; }
     uint64_t getTagsQualifiersOnly() const { return tags & type_qualifiers; }
     uint64_t getTagsStoragesOnly() const { return tags & storage_class_specifiers; }
@@ -86,23 +85,29 @@ public:
     bool isVoid() const { return tags & TYVOID; }
     bool isComplex() const { return tags & TYCOMPLEX; }
     bool isImaginary() const { return tags & TYIMAGINARY; }
-    bool isBool() const { return getKind() == TYPRIM && getIntegerKind().isBool(); }
+    bool isBool() const { return getKind() == TYPRIM && isInteger() && getIntegerKind().isBool(); }
     bool basic_equals(const_CType other) const {
         // two types are equal
         // the align are equal
         // if one is floating, the other must be floating
         // if one if integer, the other must be integer
         // two IntegerKinds or FloatKinds are equal
-        return getTagsNoStorages() == other->getTagsNoStorages();
-    }
-    bool ignoreSignIntegerEquals(const_CType other) const {
-        if (isInteger()) {
-            if (other->isInteger()) {
-                if (getIntegerKind() == other->getIntegerKind())
-                    return true;
+        assert(getKind() == TYPRIM);
+        assert(other->getKind() == TYPRIM);
+        constexpr auto mask = TYCOMPLEX | TYIMAGINARY | TYVOID;
+        if ((getTags() & mask) != (other->getTags() & mask))
+            return false;
+        bool A = isInteger();
+
+        if (A != other->isInteger()) return false;
+
+        if (A) {
+            if (getIntegerKind().asLog2() == other->getIntegerKind().asLog2()) {
+                return isSigned() == other->isSigned();
             }
+            return false;
         }
-        return false;
+        return getFloatKind().asEnum() == other->getFloatKind().asEnum();
     }
     bool isGlobalStorage() const {
         return tags & (TYSTATIC | TYEXTERN);
@@ -118,12 +123,12 @@ public:
     void addTag(const uint64_t tag) {
         tags |= tag;
     }
-    void addTags(const uint64_t tag) {
-        return addTags(tag);
+    void addTags(const uint64_t tags) {
+        return addTag(tags);
     }
     bool isScalar() const {
         auto k = getKind();
-        return k == TYPOINTER || (k == TYPRIM && isInteger());
+        return k == TYPOINTER || (k == TYPRIM && !(tags & TYVOID));
     }
     enum CTypeKind getKind() const {
         return static_cast<enum CTypeKind>(tags >> 60);
@@ -161,23 +166,18 @@ public:
     }
     static constexpr uint64_t integer_bit = 1ULL << 52;
     void setFloatReprsentation() {
-        assert(getKind() == TYPRIM && "Please check getKind()==TYPRIM before calling setFloatReprsentation()");
         tags |= integer_bit;
     }
     void setIntegerReprsentation() {
-        assert(getKind() == TYPRIM && "Please check getKind()==TYPRIM before calling setIntegerReprsentation()");
         tags &= ~integer_bit;
     }
     bool isInteger() const {
-        assert(getKind() == TYPRIM && "Please check getKind()==TYPRIM before calling isInteger()");
         return !(tags & integer_bit);
     }
     bool isFloating() const {
-        assert(getKind() == TYPRIM && "Please check getKind()==TYPRIM before calling isFloating()");
         return (tags & integer_bit);
     }
     void toogleReprsentation() {
-        assert(getKind() == TYPRIM && "Please check getKind()==TYPRIM before calling toogleReprsentation()");
         tags ^= integer_bit;
     }
     static constexpr uint64_t sign_bit = 1ULL << 51;
@@ -202,15 +202,15 @@ public:
         tags ^= sign_bit;
     }
     uint64_t getRawData() const {
-        return (tags >> 47) & 0b111;
+        return tags >> 47;
     }
     IntegerKind getIntegerKind() const {
         assert(isInteger());
-        return getRawData();
+        return getRawData() & 0b111;
     }
     FloatKind getFloatKind() const {
         assert(isFloating());
-        return getRawData();
+        return getRawData() & 0b1111;
     }
     uint64_t getBitWidth() const {
         return isInteger() ? getIntegerKind().getBitWidth() : getFloatKind().getBitWidth();
@@ -296,6 +296,8 @@ public:
     }
     // clang::BuiltinType::getName
     raw_ostream &print_basic(raw_ostream &OS) const {
+        if (hasTag(TYVOID))
+            return OS << "void";
         if (isComplex())
             OS << "_Complex ";
         if (isImaginary())

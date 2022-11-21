@@ -222,9 +222,9 @@ void print_cdecl(const CType ty, raw_ostream &OS) {
         }
         OS << ") returning ";
         if (ty->hasTag(TYINLINE))
-            OS << "inline" << ' ';
+            OS << "inline ";
         if (ty->hasTag(TYNORETURN))
-            OS << "_Noreturn" << ' ';
+            OS << "_Noreturn ";
         if (str.size())
             OS << str;
         print_cdecl(ty->ret, OS);

@@ -7,6 +7,7 @@ struct xcc_context {
     xcc_context(): table{}
     {
         constint = make_signed(getIntLog2(), TYCONST);
+        v = make_unsigned(0, TYVOID);
         b = make_unsigned(getBoolLog2());
         i8 = make_signed(3);
         i16 = make_signed(4);
@@ -23,6 +24,7 @@ struct xcc_context {
         bfloatty = make_floating(F_BFloat);
         ffloatty = make_floating(F_Float);
         fdoublety = make_floating(F_Double);
+
         f80ty = make_floating(F_x87_80);
         f128ty = make_floating(F_Quadruple);
         ppc_f128 = make_floating(F_PPC128);
@@ -40,22 +42,21 @@ struct xcc_context {
         _uint_ptr = make_unsigned(6);
 
         // For wide string literals prefixed by the letter u or U, the array elements have type char16_t or char32_t
-        str32ty = getPointerType(getChar32_t());
-        str16ty = getPointerType(getChar16_t());
+        str32ty = getPointerType(make(getChar()->getTags() | TYCONST));
+        str16ty = getPointerType(make(getChar8_t()->getTags() | TYCONST));
         // For wide string literals prefixed by the letter L, the array elements have type wchar_t
-        wstringty = getPointerType(getWChar());
+        wstringty = getPointerType(make(getWChar()->getTags() | TYCONST));
         // For character string literals, the array elements have type char,
-        stringty = getPointerType(getChar());
+        stringty = getPointerType(make(getChar()->getTags() | TYCONST));
         // For UTF-8 string literals, the array elements have type char8_t, and are initialized with the characters of the multibyte character sequence
-        str8ty = getPointerType(getChar8_t());
+        str8ty = getPointerType(make(getChar8_t()->getTags() | TYCONST));
 
         _longdouble = make_floating(getLongDobuleFloatKind());
-        _complex_double = make_complex_float(fdoublety->getTags());
-        _complex_float = make_complex_float(ffloatty->getTags());
-        _complex_longdouble = make_complex_float(_longdouble->getTags());
+        _complex_double = make_complex_float(fdoublety->getFloatKind());
+        _complex_float = make_complex_float(ffloatty->getFloatKind());
+        _complex_longdouble = make_complex_float(_longdouble->getFloatKind());
     }
     IdentifierTable table; // contains allocator!
-    Expr intzero;
     CType constint, b, v, i8, u8, i16, u16, i32, u32, i64, u64, i128, u128, 
     ffloatty, fdoublety, bfloatty, fhalfty, f128ty, ppc_f128, f80ty, str8ty, str16ty, str32ty, stringty, wstringty, _complex_float, _complex_double, 
     _complex_longdouble, 
@@ -70,11 +71,11 @@ struct xcc_context {
     [[nodiscard]] CType make_signed(uint8_t shift, uint64_t tags = 0) {
         return make(build_integer(IntegerKind::fromLog2(shift), true) | tags);
     }
-    [[nodiscard]] CType make_floating(FloatKind kind) {
-        return make(build_float(kind));
+    [[nodiscard]] CType make_floating(FloatKind kind, uint64_t tags = 0) {
+        return make(build_float(kind) | tags);
     }
-    [[nodiscard]] CType make_complex_float(FloatKind kind) {
-        return make(build_float(kind) | TYCOMPLEX);
+    [[nodiscard]] CType make_complex_float(FloatKind kind, uint64_t tags = 0) {
+        return make(build_float(kind) | TYCOMPLEX | tags);
     }
     [[nodiscard]] CType tryGetComplexTypeFromNonComplex(const_CType ty) {
         if (ty->isFloating()) {
@@ -88,8 +89,8 @@ struct xcc_context {
         }
         return make(ty->getTags() | TYCOMPLEX);
     }
-    [[nodiscard]] CType getPointerType(CType base) {
-        CType result = TNEW(PointerType){.tags = 0, .p = base};
+    [[nodiscard]] CType getPointerType(CType base, uint64_t tags = 0) {
+        CType result = TNEW(PointerType){.tags = tags, .p = base};
         result->setKind(TYPOINTER);
         return result;
     }

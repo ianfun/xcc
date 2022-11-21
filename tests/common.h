@@ -6,14 +6,17 @@
 
 int main(int argc_, const char **argv_)
 {
+    // create a DiagnosticsEngine for diagnostics
+    xcc::DiagnosticsEngine engine;
+
     // make our text printer that print to stderr
     xcc::TextDiagnosticPrinter printer(llvm::errs()); 
 
-    // create xcc_context
-    xcc::xcc_context ctx;
+    // add the printer to engine
+    engine.addConsumer(&printer);
 
     // create a crash report info
-    XInitLLVM crashReport(printer, argc_, argv_);
+    XInitLLVM crashReport(engine, argc_, argv_);
 
     // init args
     llvm::SmallVector<const char *, 8> argv(argv_, argv_ + argc_);
@@ -22,13 +25,13 @@ int main(int argc_, const char **argv_)
     llvm::InitializeAllTargets();
 
     // create the Driver
-    xcc::driver::Driver theDriver(printer);
+    xcc::driver::Driver theDriver(engine);
 
     // XCC options
     xcc::Options options;
 
     // create SourceMgr for mangement source files
-    xcc::SourceMgr SM(printer);
+    xcc::SourceMgr SM(engine);
 
     // set SourceMgr to the printer for printing source lines
     printer.setSourceMgr(&SM);
@@ -45,15 +48,20 @@ int main(int argc_, const char **argv_)
 
     // create LLVMContext - this will delete all modules when it deleted(dtor)
     llvm::LLVMContext llvmcontext;
+
     llvmcontext.setDiscardValueNames(true);
     llvmcontext.setOpaquePointers(true);
+
     // set our DiagnosticHandler
     llvmcontext.setDiagnosticHandler(std::make_unique<xcc::XCCDiagnosticHandler>()); 
 
+    // create xcc_context
+    xcc::xcc_context ctx;
+
     // preparing target information and ready for code generation to LLVM IR
-    xcc::IRGen ig(ctx, printer, SM, llvmcontext, options);
+    xcc::IRGen ig(ctx, engine, SM, llvmcontext, options);
 
     // create parser
-    xcc::Parser parser(SM, ig, printer, ctx);
+    xcc::Parser parser(SM, ig, engine, ctx);
 
     // now, parsing source files ...

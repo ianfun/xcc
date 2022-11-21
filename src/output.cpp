@@ -4,7 +4,7 @@ struct IRModuleOutputFileHelper : public DiagnosticHelper {
     std::error_code EC;
     raw_fd_ostream OS;
     // the outputPath may be '-', will print to stdout
-    IRModuleOutputFileHelper(DiagnosticConsumer &Diag, llvm::Module *M, StringRef outputPath)
+    IRModuleOutputFileHelper(DiagnosticsEngine &Diag, llvm::Module *M, StringRef outputPath)
         : DiagnosticHelper{Diag}, M{M}, outputPath{outputPath}, EC{}, OS{outputPath, EC} {
         if (EC) {
             error("open output(%R): %R", outputPath, StringRef(EC.message()));

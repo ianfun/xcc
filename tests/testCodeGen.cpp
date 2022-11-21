@@ -9,7 +9,7 @@
 
     ig.run(ast, num_typedefs, num_tags);
 
-    xcc::IRModuleOutputFileHelper output(printer, ig.module, "example.ll");
+    xcc::IRModuleOutputFileHelper output(engine, ig.module, "example.ll");
 
     output.verify();
 

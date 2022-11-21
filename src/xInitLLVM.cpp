@@ -3,8 +3,8 @@ struct XInitLLVM : public xcc::DiagnosticHelper {
         reinterpret_cast<XInitLLVM *>(user_data)->fatal("LLVM ERROR: %s\n", reason);
     }
     llvm::InitLLVM LLVM;
-    XInitLLVM(xcc::DiagnosticConsumer &Diags, int &Argc, const char **&Argv, bool InstallPipeSignalExitHandler = true)
-        : DiagnosticHelper{Diags}, LLVM(Argc, Argv, InstallPipeSignalExitHandler) {
+    XInitLLVM(xcc::DiagnosticsEngine &Diag, int &Argc, const char **&Argv, bool InstallPipeSignalExitHandler = true)
+        : DiagnosticHelper{Diag}, LLVM(Argc, Argv, InstallPipeSignalExitHandler) {
         llvm::install_fatal_error_handler(handle_llvm_error, this);
         llvm::install_bad_alloc_error_handler(handle_llvm_error, this);
         llvm::setBugReportMsg("This is " CC_VERSION_FULL "\nPLEASE submit a bug report to " CC_URL

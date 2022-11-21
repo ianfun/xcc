@@ -79,7 +79,7 @@ static enum TypeIndex getTypeIndex(CType ty) {
     }
     llvm_unreachable("invalid FloatKind");
 }
-    IRGen(xcc_context &context, DiagnosticConsumer &Diag, SourceMgr &SM, LLVMContext &ctx, const Options &options)
+    IRGen(xcc_context &context, DiagnosticsEngine &Diag, SourceMgr &SM, LLVMContext &ctx, const Options &options)
         : DiagnosticHelper{Diag}, context{context}, SM{SM}, ctx{ctx}, B{ctx}, options{options} {
         auto CPU = "generic";
         auto Features = "";
@@ -232,7 +232,7 @@ static enum TypeIndex getTypeIndex(CType ty) {
         // wrap a CType to LLVM Type
         assert(ty && "wrap a nullptr");
         switch (ty->getKind()) {
-        case TYPRIM: 
+        case TYPRIM:
             return wrapPrim(ty);
         case TYPOINTER: return pointer_type;
         case TYFUNCTION: {
@@ -429,6 +429,7 @@ static enum TypeIndex getTypeIndex(CType ty) {
         assert(ty->getKind() == TYPRIM);
         if (LLVM_UNLIKELY(ty->isComplex()))
             return wrapComplex(ty);
+        if (ty->isVoid()) return void_type;
         // for _Imaginary types, they are just reprsentationed as floating types(or interger types as a extension).
         if (ty->isInteger()) {
             return integer_types[ty->getIntegerKind().asLog2()];
@@ -605,15 +606,14 @@ static enum TypeIndex getTypeIndex(CType ty) {
         switch (s->k) {
         case SSwitch: {
             auto cond = gen(s->itest);
+            llvm::SwitchInst *sw = llvm::SwitchInst::Create(cond, labels[s->sw_default], s->switchs.size());
             if (s->gnu_switchs.size()) {
                 for (const auto &it : s->gnu_switchs) {
                     // Range is small enough to add multiple switch instruction cases.
-                    APInt range = it.range - *it.CaseStart;
-                    if (range.ult(CC_SITCH_RANGE_UNROLL_MAX)) {
-                        range = *it.CaseStart;
-                        for (unsigned i = 0, e = Range.getZExtValue() + 1; i != e; ++i) {
-                          SwitchInsn->addCase(ConstantInt::get(ctx, range), labels[it.label]);
-                          range++;
+                    if (it.range.ult(CC_SITCH_RANGE_UNROLL_MAX)) {
+                        const uint64_t range_end = it.CaseStart->getZExtValue() + it.range.getZExtValue();
+                        for (uint64_t i = it.CaseStart->getZExtValue(); i <= range_end;) {
+                            sw->addCase(ConstantInt::get(ctx, APInt(it.CaseStart->getBitWidth(), i++)), labels[it.label]);
                         }
                         continue;
                     }
@@ -628,9 +628,9 @@ static enum TypeIndex getTypeIndex(CType ty) {
                 B.CreateBr(labels[s->sw_default]);
                 return;
             }
-            llvm::SwitchInst *sw = B.CreateSwitch(cond, labels[s->sw_default], s->switchs.size());
             for (const auto &it : s->switchs)
                 sw->addCase(ConstantInt::get(ctx, *it.CaseStart), labels[it.label]);
+            B.Insert(sw);
         } break;
         case SHead: llvm_unreachable("");
         case SCompound: {
@@ -779,7 +779,7 @@ static enum TypeIndex getTypeIndex(CType ty) {
                     /* nothing */
                 } else if (varty->getKind() == TYFUNCTION) {
                     newFunction(cast<llvm::FunctionType>(wrap(varty)), name, varty->getTags(), idx);
-                } else if (!currentfunction || varty->hasTag(TYEXTERN | TYSTATIC)) {
+                } else if (!currentfunction || varty->isGlobalStorage()) {
                     auto GV = module->getGlobalVariable(name->getKey(), true);
                     if (GV) {
                         auto L = GV->getLinkage();
@@ -824,7 +824,8 @@ static enum TypeIndex getTypeIndex(CType ty) {
                     }
                 } else {
                     Type ty = wrap(varty);
-                    auto val = B.CreateAlloca(ty, nullptr, name->getKey());
+                    llvm::AllocaInst *val = B.CreateAlloca(ty, nullptr, name->getKey());
+                    vars[idx] = val;
                     if (options.g) {
                         auto v = di->createAutoVariable(getLexScope(), name->getKey(), getFile(s->loc.id), s->loc.line,
                                                         wrap3(varty));
@@ -1248,9 +1249,8 @@ BINOP_ATOMIC_RMW:
             }
             case SAddP:
                 // getelementptr treat operand as signed, so we need to prmote to intptr type
-                if (!e->rhs->ty->isSigned()) {
-                    lhs = B.CreateZExt(lhs, intptrTy);
-                }
+                if (!e->rhs->ty->isSigned())
+                    rhs = B.CreateZExt(rhs, intptrTy);
                 return B.CreateInBoundsGEP(wrap(e->ty->p), lhs, {rhs});
             case Complex_CMPLX:
                 return make_complex_pair(e->ty, lhs, rhs);

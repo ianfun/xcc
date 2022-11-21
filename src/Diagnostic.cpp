@@ -15,9 +15,11 @@ struct Diagnostic {
     using storage_type = uintmax_t;
 
     const char *fmt;
-    llvm::SmallVector<storage_type, 5> data;
+    SmallVector<storage_type, 5> data;
     Location loc;
-
+    enum DiagnosticLevel level;
+    // default constructor - construct a invalid Diagnostic
+    Diagnostic(): fmt{nullptr}, data{}, loc{Location()}, level{Ignored} {}
     Diagnostic(const char *fmt, Location loc = Location()) : fmt{fmt}, data{}, loc{loc} { }
     template <typename T> void write_impl(const T *ptr) { data.push_back(reinterpret_cast<storage_type>(ptr)); }
     void write_impl(const StringRef &str) {
@@ -77,6 +79,7 @@ struct Diagnostic {
                 case 'd':
                 case 'i': OS << static_cast<int>(data[idx++]); break;
                 case 'I': OS << lquote << get<IdentRef>(idx++)->getKey() << rquote; break;
+                case 'Z': OS << static_cast<uint64_t>(data[idx++]); break;
                 case 'z': OS << static_cast<size_t>(data[idx++]); break;
                 case 'u': OS << static_cast<unsigned>(data[idx++]); break;
                 case 'U': {
@@ -156,7 +159,7 @@ struct DiagnosticConsumer {
     unsigned getNumErrors() const { return NumErrors; }
     unsigned getNumWarnings() const { return NumWarnings; }
     void clear() { NumWarnings = NumErrors = 0; }
-    typedef void (*PHandleDiagnosticTy)(void *self, enum DiagnosticLevel level, const Diagnostic &Info);
+    typedef void (*PHandleDiagnosticTy)(void *self, const Diagnostic &Info);
     typedef void (*PFinalizeTy)(void *self);
     PHandleDiagnosticTy PHandleDiagnostic;
     PFinalizeTy PFinalize;
@@ -164,33 +167,14 @@ struct DiagnosticConsumer {
         if (PFinalize)
             PFinalize(this);
     }
-    void HandleDiagnostic(enum DiagnosticLevel level, const Diagnostic &Info) {
-        if (level == Warning)
+    void HandleDiagnostic(const Diagnostic &Diag) {
+        if (Diag.level == Warning)
             ++NumWarnings;
-        else if (level >= Error)
+        else if (Diag.level >= Error)
             ++NumErrors;
-        PHandleDiagnostic(this, level, Info);
+        PHandleDiagnostic(this, Diag);
     }
     DiagnosticConsumer(PHandleDiagnosticTy impl, PFinalizeTy f = nullptr) : PHandleDiagnostic{impl}, PFinalize{f} {};
-    void emitDiagnostic(const char *msg, enum DiagnosticLevel level) {
-        Diagnostic Diag(msg);
-        HandleDiagnostic(level, Diag);
-    }
-    void emitDiagnostic(Location loc, const char *msg, enum DiagnosticLevel level) {
-        Diagnostic Diag(msg, loc);
-        HandleDiagnostic(level, Diag);
-    }
-    template <typename... Args> void emitDiagnostic(const char *msg, enum DiagnosticLevel level, const Args &...args) {
-        Diagnostic Diag(msg);
-        Diag.write(args...);
-        HandleDiagnostic(level, Diag);
-    }
-    template <typename... Args>
-    void emitDiagnostic(Location loc, const char *msg, enum DiagnosticLevel level, const Args &...args) {
-        Diagnostic Diag(msg, loc);
-        Diag.write(args...);
-        HandleDiagnostic(level, Diag);
-    }
 };
 struct TextDiagnosticPrinter : public DiagnosticConsumer {
     static constexpr auto noteColor = raw_ostream::GREEN, remarkColor = raw_ostream::BLUE,
@@ -203,9 +187,9 @@ struct TextDiagnosticPrinter : public DiagnosticConsumer {
     struct SourceMgr *SM;
     TextDiagnosticPrinter(llvm::raw_ostream &OS = llvm::errs(), struct SourceMgr *SM = nullptr)
         : DiagnosticConsumer{&HandleDiagnosticImpl, &finalizeImpl}, OS{OS}, ShowColors{OS.has_colors()}, SM{SM} { }
-    void realHandleDiagnostic(enum DiagnosticLevel level, const Diagnostic &Info);
-    static void HandleDiagnosticImpl(void *self, enum DiagnosticLevel level, const Diagnostic &Info) {
-        return reinterpret_cast<TextDiagnosticPrinter *>(self)->realHandleDiagnostic(level, Info);
+    void realHandleDiagnostic(const Diagnostic &Info);
+    static void HandleDiagnosticImpl(void *self, const Diagnostic &Info) {
+        return reinterpret_cast<TextDiagnosticPrinter *>(self)->realHandleDiagnostic(Info);
     }
     bool hasSourceMgr() const { return SM != nullptr; }
     void setSourceMgr(struct SourceMgr *SM) { this->SM = SM; }
@@ -224,23 +208,86 @@ struct TextDiagnosticPrinter : public DiagnosticConsumer {
     void printSource(const LocationBase &loc);
     void write_loc(const LocationBase &loc);
 };
+struct DiagnosticsEngine {
+    unsigned ErrorLimit = 0;
+    Diagnostic CurrentDiagnostic;
+    SmallVector<DiagnosticConsumer*, 1> consumers;
+    void addConsumer(DiagnosticConsumer *C) {
+        consumers.push_back(C);
+    }
+    unsigned getNumConsumers() {
+        return consumers.size();
+    }
+    DiagnosticConsumer *getFirstConsumer() {
+        return consumers.front();
+    }
+    DiagnosticConsumer *getLastConsumer() {
+        return consumers.back();
+    }
+    void EmitCurrentDiagnostic() {
+        for (const auto C: consumers)
+            C->HandleDiagnostic(CurrentDiagnostic);
+    }
+    unsigned getNumWarnings() const {
+        unsigned total = 0;
+        for (const auto C: consumers)
+            total += C->getNumWarnings();
+        return total;
+    }
+    unsigned getNumErrors() const {
+        unsigned total = 0;
+        for (const auto C: consumers)
+            total += C->getNumErrors();
+        return total;
+    }
+};
+struct DiagnosticBuilder {
+    DiagnosticsEngine &engine;
+    inline DiagnosticBuilder(DiagnosticsEngine &engine) : engine{engine} {}
+    ~DiagnosticBuilder() { engine.EmitCurrentDiagnostic(); }
+    void addFixHint();
+};
 // A helper class to emit Diagnostics
 // such as parse_error(), lex_error(), warning() functions
 struct DiagnosticHelper {
-    DiagnosticConsumer &printer;
-    DiagnosticHelper(DiagnosticConsumer &consumer): printer{consumer} {}
-    unsigned getNumErrors() {
-        return printer.getNumErrors();
+    DiagnosticsEngine &engine;
+    DiagnosticHelper(DiagnosticsEngine &engine): engine{engine} {}
+    unsigned getNumErrors() const {
+        return engine.getNumErrors();
     }
-    unsigned getNumWarnings() {
-        return printer.getNumWarnings();
+    unsigned getNumWarnings() const {
+        return engine.getNumWarnings();
     }
 #define DIAGNOSTIC_HANDLER(HANDLER, LEVEL) \
-    template <typename... Args> void HANDLER(const char *msg, const Args &...args) { \
-        printer.emitDiagnostic(msg, DiagnosticLevel::LEVEL, args...); \
+    template <typename... Args> DiagnosticBuilder HANDLER(const char *msg, const Args &...args) { \
+        engine.CurrentDiagnostic.loc = Location(); \
+        engine.CurrentDiagnostic.data.clear(); \
+        engine.CurrentDiagnostic.fmt = msg; \
+        engine.CurrentDiagnostic.write(args...); \
+        engine.CurrentDiagnostic.level = LEVEL; \
+        return DiagnosticBuilder(engine);\
     } \
-    template <typename... Args> void HANDLER(Location loc, const char *msg, const Args &...args) { \
-        printer.emitDiagnostic(loc, msg, DiagnosticLevel::LEVEL, args...); \
+    DiagnosticBuilder HANDLER(const char *msg) { \
+        engine.CurrentDiagnostic.loc = Location(); \
+        engine.CurrentDiagnostic.data.clear(); \
+        engine.CurrentDiagnostic.fmt = msg; \
+        engine.CurrentDiagnostic.level = LEVEL; \
+        return DiagnosticBuilder(engine);\
+    } \
+    template <typename... Args> DiagnosticBuilder HANDLER(Location loc, const char *msg, const Args &...args) { \
+        engine.CurrentDiagnostic.loc = loc; \
+        engine.CurrentDiagnostic.data.clear(); \
+        engine.CurrentDiagnostic.fmt = msg; \
+        engine.CurrentDiagnostic.write(args...); \
+        engine.CurrentDiagnostic.level = LEVEL; \
+        return DiagnosticBuilder(engine);\
+    }\
+    template <typename... Args> DiagnosticBuilder HANDLER(Location loc, const char *msg) { \
+        engine.CurrentDiagnostic.loc = loc; \
+        engine.CurrentDiagnostic.data.clear(); \
+        engine.CurrentDiagnostic.fmt = msg; \
+        engine.CurrentDiagnostic.level = LEVEL; \
+        return DiagnosticBuilder(engine);\
     }
     DIAGNOSTIC_HANDLER(note, Note)
     DIAGNOSTIC_HANDLER(remark, Remark)
@@ -251,9 +298,46 @@ struct DiagnosticHelper {
     DIAGNOSTIC_HANDLER(type_error, TypeError)
     DIAGNOSTIC_HANDLER(error, Error)
     DIAGNOSTIC_HANDLER(fatal, Fatal)
-    void expect(Location loc, const char *item) { parse_error(loc, "%s expected", item); }
-    void expectExpression(Location loc) { parse_error(loc, "%s", "expected expression"); }
-    void expectStatement(Location loc) { parse_error(loc, "%s", "expected statement"); }
-    void expectLB(Location loc) { parse_error(loc, "%s", "missing " lquote "(" rquote); }
-    void expectRB(Location loc) { parse_error(loc, "%s", "missing " lquote ")" rquote); }
+    void expect(Location loc, const char *item) {  parse_error(loc, "%s expected", item); }
+    void expectExpression(Location loc) {  parse_error(loc, "%s", "expected expression"); }
+    void expectStatement(Location loc) {  parse_error(loc, "%s", "expected statement"); }
+    void expectLB(Location loc) {  parse_error(loc, "%s", "missing " lquote "(" rquote); }
+    void expectRB(Location loc) {  parse_error(loc, "%s", "missing " lquote ")" rquote); }
+};
+struct EvalHelper: public DiagnosticHelper {
+    EvalHelper(DiagnosticsEngine &engine): DiagnosticHelper(engine) {}
+    uint64_t force_eval(Expr e, Location cloc) {
+        if (e->k != EConstant) {
+            type_error(cloc, "not a constant expression: %E", e);
+            return 0;
+        }
+        if (const auto CI = dyn_cast<ConstantInt>(e->C)) {
+            if (CI->getValue().getActiveBits() > 64)
+                warning(cloc, "integer constant expression larger exceeds 64 bit, the result is truncated");
+            return CI->getValue().getLimitedValue();
+        }
+        type_error(cloc, "not a integer constant: %E", e);
+        return 0;
+    }
+    uint64_t try_eval(Expr e, Location cloc, bool &ok) {
+        if (e->k == EConstant) {
+            if (const auto CI = dyn_cast<ConstantInt>(e->C)) {
+                if (CI->getValue().getActiveBits() > 64)
+                    warning(cloc, "integer constant expression larger exceeds 64 bit, the result is truncated");
+                ok = true;
+                return CI->getValue().getLimitedValue();
+            }
+        }
+        ok = false;
+        return 0;
+    }
+    bool try_eval_as_bool(Expr e, bool &res) {
+        if (e->k == EConstant) {
+            if (const auto CI = dyn_cast<ConstantInt>(e->C)) {
+                res = !CI->isZero();
+                return true;
+            }
+        }
+        return false;
+    }
 };
