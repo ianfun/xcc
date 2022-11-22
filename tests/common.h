@@ -41,6 +41,8 @@ int main(int argc_, const char **argv_)
     if (theDriver.BuildCompilation(argv, options, SM, ret))
         return ret;
 
+    SM.setTrigraphsEnabled(options.trigraphs);
+
     llvm::InitializeAllAsmParsers();
     llvm::InitializeAllAsmPrinters();
     llvm::InitializeAllTargetMCs();

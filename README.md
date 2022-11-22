@@ -104,6 +104,10 @@ Supports Windows, WSL, Linux ...
 
 ![](complex.png)
 
+* trigraphs
+
+Support trigraphs(both two and three charactors) in command line option `-trigraphs`.
+
 ## Author
 
 ianfun

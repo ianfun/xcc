@@ -67,10 +67,10 @@ struct Parser : public EvalHelper {
     template <typename T> auto getsizeof(T a) { return irgen.getsizeof(a); }
     template <typename T> auto getAlignof(T a) { return irgen.getAlignof(a); }
 private:
-    Expr binop(Expr a, BinOp op, Expr b, CType ty) {
+    [[nodiscard]] Expr binop(Expr a, BinOp op, Expr b, CType ty) {
         return ENEW(BinExpr){.loc = a->loc, .ty = ty, .lhs = a, .bop = op, .rhs = b};
     }
-    Expr unary(Expr e, UnaryOp op, CType ty) {
+    [[nodiscard]] Expr unary(Expr e, UnaryOp op, CType ty) {
         return ENEW(UnaryExpr){.loc = e->loc, .ty = ty, .uoperand = e, .uop = op};
     }
     Expr complex_from_real(Expr real, CType ty) {
@@ -102,7 +102,7 @@ private:
         if (e->k == EBin && e->bop == Complex_CMPLX) {
             return e->lhs;
         }
-        llvm_unreachable("invalid complex Expr");
+        return unary(e, C__real__, context.getComplexElementType(e->ty));
     }
     Expr complex_get_imag(Expr e) {
         if (e->k == EConstant) {
@@ -114,7 +114,7 @@ private:
         if (e->k == EBin && e->bop == Complex_CMPLX) {
             return e->rhs;
         }
-        llvm_unreachable("invalid complex Expr");
+        return unary(e, C__imag__, context.getComplexElementType(e->ty));
     }
     Expr complex_pair(Expr a, Expr b) {
         assert(a && b && "complex_pair: nullptr is invalid");
@@ -483,6 +483,7 @@ private:
         return make_cast(e, UIToFP, to);
     }
     Expr float_to_integer(Expr e, CType to) {
+        puts("float_to_integer");
         assert(e->ty && "cannot cast from expression with no type");
         assert(e->ty->isFloating() && "bad call to float_to_integer()");
         assert((to->isInteger()) && "bad call to float_to_integer()");
@@ -554,6 +555,9 @@ PTR_CAST:
         return bit_cast(e, to);
     }
     Expr castto(Expr e, CType to, enum Implict_Conversion_Kind implict = Implict_Cast) {
+#if 0
+        llvm::errs() << "# from " << e->ty << " to " << to << '\n';
+#endif
         assert(e && "cast object is nullptr");
         assert(e->ty && "cannot cast from expression with no type");
         assert(to && "cast type is nullptr");
@@ -586,6 +590,30 @@ PTR_CAST:
                 if (auto CI = dyn_cast<ConstantInt>(e->C))
                     return getCBool(!CI->isZero());
             return unary(e, ToBool, to);
+        }
+        // Annex G - IEC 60559-compatible complex arithmetic
+        // G.4.2 Real and imaginary
+        // 1. When a value of imaginary type is converted to a real type other than bool), the result is a positive zero.
+        // 2. When a value of real type is converted to an imaginary type, the result is a positive imaginary zero.
+        // G.4.3 Imaginary and complex
+        // 1.When a value of imaginary type is converted to a complex type, the real part of the complex result value is a positive zero and the imaginary part of the complex result value is determined by the conversion rules for the corresponding real types.
+        // 2 When a value of complex type is converted to an imaginary type, the real part of the complex value is discarded and the value of the imaginary part is converted according to the conversion rules for the corresponding real types.
+        if (e->ty->isImaginary()) {
+            if (!(to->isComplex() || to->isImaginary()))
+                return wrap(to, llvm::Constant::getNullValue(irgen.wrapNoComplexScalar(to)), e->loc);
+            CType ty = context.make(e->ty->del(TYIMAGINARY | TYCOMPLEX));
+            CType ty2 = context.make(to->del(TYCOMPLEX | TYIMAGINARY));
+            Expr e2 = context.clone(e);
+            e2->ty = ty;
+            Expr res = castto(e2, ty2);
+            if (to->isImaginary()) 
+                return res;
+            return complex_pair(wrap(to, llvm::Constant::getNullValue(irgen.wrapNoComplexScalar(ty2)), e->loc), res, to);
+        }
+        if (to->isImaginary()) {
+            if (e->ty->isComplex()) 
+                return bit_cast(complex_get_imag(e), to);
+            return wrap(to, llvm::Constant::getNullValue(irgen.wrapNoComplexScalar(to)), e->loc);
         }
         // if e is a complex number
         if (e->ty->isComplex()) {
@@ -908,6 +936,44 @@ if (k2 == F) return (void)(a = float_cast(a, bt, k2, F));
             result = make_add_pointer(result, r);
             return;
         }
+        if (result->ty->isImaginary() || r->ty->isImaginary()) {
+            assert(result->ty->getKind() == TYPRIM);
+            assert(r->ty->getKind() == TYPRIM);
+            if (result->ty->isImaginary()) {
+                // imag + complex => complex
+                if (r->ty->isComplex()) {
+                    result = castto(result, context.tryGetComplexTypeFromNonComplex(result->ty));
+                    make_add(result, r);
+                    return;
+                }
+                Expr e2 = context.clone(result);
+                e2->ty = context.getImaginaryElementType(e2->ty);
+                // imag + imag => imag
+                if (r->ty->isImaginary()) {
+                    Expr e3 = context.clone(r);
+                    e3->ty = context.getImaginaryElementType(e3->ty);
+                    make_add(e2, e3);
+                    result = bit_cast(e2, context.make(e2->ty->getTags() | TYIMAGINARY));
+                    return;
+                }
+                // imag + real => complex
+                conv(e2, r);
+                return (void)(result = complex_pair(e2, r));
+            }
+            assert(r->ty->isImaginary());
+            assert(!result->ty->isImaginary());
+            // complex + imag
+            if (result->ty->isComplex()) {
+                r = castto(r, context.tryGetComplexTypeFromNonComplex(r->ty));
+                make_add(result, r);
+                return;
+            }
+            Expr e2 = context.clone(r);
+            e2->ty = context.getImaginaryElementType(e2->ty);
+            // real + imag => complex
+            conv(result, e2);
+            return (void)(result = complex_pair(result, e2));
+        }
         checkSpec(result, r);
         if (result->ty->isComplex()) {
             if (result->k == EConstant && r->k == EConstant) {
@@ -960,7 +1026,6 @@ if (k2 == F) return (void)(a = float_cast(a, bt, k2, F));
                         return;
                     }
                 }
-
             }
             result = binop(result, CAdd, r, r->ty);
             return;
@@ -1021,6 +1086,55 @@ if (k2 == F) return (void)(a = float_cast(a, bt, k2, F));
             }
             result = make_add_pointer(ptrPart, intPart);
             return;
+        }
+        if (result->ty->isImaginary() || r->ty->isImaginary()) {
+            assert(result->ty->getKind() == TYPRIM);
+            assert(r->ty->getKind() == TYPRIM);
+            if (result->ty->isImaginary()) {
+                // imag - complex => complex
+                if (r->ty->isComplex()) {
+                    result = castto(result, context.tryGetComplexTypeFromNonComplex(result->ty));
+                    make_sub(result, r);
+                    return;
+                }
+                Expr e2 = context.clone(result);
+                e2->ty = context.getImaginaryElementType(e2->ty);
+                // imag - imag => imag
+                if (r->ty->isImaginary()) {
+                    Expr e3 = context.clone(r);
+                    e3->ty = context.getImaginaryElementType(e3->ty);
+                    make_sub(e2, e3);
+                    result = bit_cast(e2, context.tryGetImaginaryTypeFromNonImaginary(e2->ty));
+                    return;
+                }
+                // imag - real => complex
+                // e.g., (3i) - (4) => -4 + 3i
+                conv(e2, r);
+                if (e2->k == EConstant) {
+                    return (void)(result = complex_pair(wrap(e2->ty, llvm::ConstantExpr::getNeg(e2->C), e2->loc), r));
+                } else {
+                    return (void)(result = complex_pair(unary(e2, e2->ty->isFloating() ? FNeg : UNeg, e2->ty), r));
+                }
+            }
+            assert(r->ty->isImaginary());
+            assert(!result->ty->isImaginary());
+            // complex - imag
+            if (result->ty->isComplex()) {
+                r = castto(r, context.tryGetComplexTypeFromNonComplex(r->ty));
+                make_sub(result, r);
+                return;
+            }
+            Expr e2 = context.clone(r);
+            e2->ty = context.getImaginaryElementType(e2->ty);
+            // real - imag => complex
+            // e.g, 4 - 3i
+            conv(result, e2);
+            if (e2->k == EConstant) {
+                e2 = wrap(e2->ty, llvm::ConstantExpr::getNeg(e2->C), e2->loc);
+            } else {
+                e2 = unary(e2, e2->ty->isFloating() ? FNeg : UNeg, e2->ty);
+            }
+            return (void)(result = complex_pair(result, e2));
         }
         checkSpec(result, r);
         if (result->ty->isComplex()) {
@@ -1268,6 +1382,45 @@ ONE : {
     }
     void make_mul(Expr &result, Expr &r) {
         checkArithmetic(result, r);
+        if (result->ty->isImaginary() || r->ty->isImaginary()) {
+            assert(result->ty->getKind() == TYPRIM);
+            assert(r->ty->getKind() == TYPRIM);
+            if (result->ty->isImaginary()) {
+                // imag * complex => complex
+                if (r->ty->isComplex()) {
+                    result = castto(result, context.tryGetComplexTypeFromNonComplex(result->ty));
+                    make_mul(result, r);
+                    return;
+                }
+                Expr e2 = context.clone(result);
+                e2->ty = context.getImaginaryElementType(result->ty);
+                // imag * imag => real
+                if (r->ty->isImaginary()) {
+                    Expr e3 = context.clone(r);
+                    e3->ty = context.getImaginaryElementType(e3->ty);
+                    make_mul(e2, e3);
+                    result = e2;
+                    return;
+                }
+                // imag * real => imag
+                result = bit_cast(r, context.getImaginaryElementType(r->ty));
+                make_mul(result, r);
+                result->ty->addTag(TYIMAGINARY);
+                return;
+            }
+            assert(r->ty->isImaginary());
+            assert(!result->ty->isImaginary());
+            // complex * imag => complex
+            if (result->ty->isComplex()) {
+                r = castto(r, context.tryGetComplexTypeFromNonComplex(r->ty));
+                make_mul(result, r);
+                return;
+            }
+            // real * imag => imag
+            Expr tmp = bit_cast(r, context.getImaginaryElementType(r->ty));
+            make_mul(result, tmp);
+            return;
+        }
         conv(result, r);
         if (result->ty->isComplex()) {
             if (result->k == EConstant && r->k == EConstant) {
@@ -1358,6 +1511,45 @@ ZERO:
     }
     void make_div(Expr &result, Expr &r) {
         checkArithmetic(result, r);
+        if (result->ty->isImaginary() || r->ty->isImaginary()) {
+            assert(result->ty->getKind() == TYPRIM);
+            assert(r->ty->getKind() == TYPRIM);
+            if (result->ty->isImaginary()) {
+                // imag / complex => complex
+                if (r->ty->isComplex()) {
+                    result = castto(result, context.tryGetComplexTypeFromNonComplex(result->ty));
+                    make_div(result, r);
+                    return;
+                }
+                Expr e2 = context.clone(result);
+                e2->ty = context.getImaginaryElementType(result->ty);
+                // imag / imag => real
+                if (r->ty->isImaginary()) {
+                    Expr e3 = context.clone(r);
+                    e3->ty = context.getImaginaryElementType(e3->ty);
+                    make_div(e2, e3);
+                    result = e2;
+                    return;
+                }
+                // imag / real => imag
+                result = bit_cast(r, context.getImaginaryElementType(r->ty));
+                make_div(result, r);
+                result->ty->addTag(TYIMAGINARY);
+                return;
+            }
+            assert(r->ty->isImaginary());
+            assert(!result->ty->isImaginary());
+            // complex / imag => complex
+            if (result->ty->isComplex()) {
+                r = castto(r, context.tryGetComplexTypeFromNonComplex(r->ty));
+                make_div(result, r);
+                return;
+            }
+            // real / imag => imag
+            Expr tmp = bit_cast(r, context.getImaginaryElementType(r->ty));
+            make_div(result, tmp);
+            return;
+        }
         conv(result, r);
         if (result->ty->isComplex()) {
             // if the first operand is a nonzero finite number or an infinity and the second operand is a zero then the result of the / operator is an infinity.
@@ -1600,7 +1792,7 @@ NOT_CONSTANT:
             result = boolToInt(binop(result, tok == TEq ? CEQ : CNE, r, context.getBool()));
         else
             result =
-                boolToInt(binop(result, get_relational_expression_op(tok, result->ty->isFloating(), result->ty->isSigned()),
+                boolToInt(binop(result, get_relational_expression_op(tok, result->ty->isFloating(), result->ty->isSigned2()),
                             r, context.getBool()));
     }
     Expr boolToInt(Expr e) {
@@ -1659,7 +1851,7 @@ NOT_CONSTANT:
         CType eat_typedef = nullptr;
         bool no_typedef = false;
         type_tag_t tags = 0;
-        unsigned b = 0, L = 0, s = 0, f = 0, d = 0, i = 0, c = 0, v = 0, numsigned = 0, numunsigned = 0, numcomplex = 0;
+        unsigned b = 0, L = 0, s = 0, f = 0, d = 0, i = 0, c = 0, v = 0, numsigned = 0, numunsigned = 0, numcomplex = 0, numimaginary = 0;
         type_tag_t old_tag;
         const Token firstTok = l.tok.tok;
         unsigned count = 0;
@@ -1695,6 +1887,7 @@ NO_REPEAT:
             case Kvoid: ++v; goto TYPE_SPEC;
             case Kchar: ++c; goto TYPE_SPEC;
             case K_Complex: ++numcomplex; goto TYPE_SPEC;
+            case K_Imaginary: ++numimaginary; goto TYPE_SPEC;
             case K_Bool: ++b; goto TYPE_SPEC;
 TYPE_SPEC:
             no_typedef = true;
@@ -1752,6 +1945,9 @@ TYPE_SPEC:
             case K_Complex:
                 warning(loc, "plain '_Complex' requires a type specifier; assuming '_Complex double'");
                 return context.getComplexDouble();
+            case K_Imaginary:
+                warning(loc, "plain '_Imaginary' requires a type specifier; assuming '_Imaginary double'");
+                return context.getImaginaryDouble();
             default: llvm_unreachable("unhandled type in specifier_qualifier_list()");
             }
         }
@@ -1768,49 +1964,56 @@ TYPE_SPEC:
             type_error(loc, "duplicate 'signed/unsigned'");
             return context.getInt();
         }
-        if (numcomplex) {
+        if (numcomplex || numimaginary) {
             if (numcomplex > 1)
-                type_error(loc, "duplicate '_Complex'");
-            if (v || b) {
-                type_error(loc, "'_Complex void' is invalid");
+                warning(loc, "duplicate '_Complex'");
+            if (numimaginary > 1)
+                warning(loc, "duplicate _Imaginary");
+            if (numcomplex && numimaginary) {
+                type_error(loc, "both '_Complex' and '_Imaginary' is invalid");
                 return context.getComplexDouble();
             }
-            tags |= TYCOMPLEX;
+            if (b || v) {
+                type_error("'%s %s' is invalid", numcomplex ? "_Complex" : "_Imaginary", b ? "_Bool" : "void");
+                return context.getComplexDouble();
+            }
+            if (numcomplex)
+                tags |= TYCOMPLEX;
+            else
+                tags |= TYIMAGINARY;
         }
         if (f) {
             if (f > 1)
-                type_error(loc, "duplicate 'float'");
+                warning(loc, "duplicate 'float'");
             F = F_Float;
         } else if (d) {
             if (d > 1)
-                type_error(loc, "duplicate 'double'");
+                warning(loc, "duplicate 'double'");
             if (L > 1)
-                type_error(loc, "too many 'long's for 'double'");
+                warning(loc, "too many 'long's for 'double'");
             F = F_Double;
         } else if (s) {
             if (s > 1)
-                type_error(loc, "duplicate 'short'");
+                warning(loc, "duplicate 'short'");
             I = context.getShortLog2();
         } else if (L) {
-            if (I)
-                type_error(loc, "cannot merge with previous %R", I.show(numunsigned == 0));
             switch (L) {
             case 1: I = context.getLongLog2(); break;
             case 2: I = context.getLongLongLog2(); break;
             case 3: type_error(loc, "'long long long' is too long for XCC"); break;
-            default: type_error(loc, "too many 'long'");
+            default: warning(loc, "too many 'long'");
             }
         } else if (c) {
             if (c > 1)
-                type_error(loc, "duplicate 'char'");
+                warning(loc, "duplicate 'char'");
             I = context.getCharLog2();
         } else if (i) {
             if (i > 1)
-                type_error(loc, "duplicate 'int'");
+                warning(loc, "duplicate 'int'");
             I = context.getIntLog2();
         } else if (v) {
             if (v > 1)
-                type_error(loc, "duplicate 'void'");
+                warning(loc, "duplicate 'void'");
             tags |= TYVOID;
         } else if (numunsigned || numsigned) {
             I = context.getIntLog2();
@@ -1819,8 +2022,9 @@ TYPE_SPEC:
         } else {
             if (!eat_typedef) {
                 warning(loc, "type-specifier missing, defaults to 'int'");
-                eat_typedef = context.clone(context.getInt());
-                goto MERGE;
+                if (tags) 
+                    return context.make_signed(context.getIntLog2(), tags);
+                return context.getInt();
             }
         }
         if (!eat_typedef) {
@@ -1833,7 +2037,6 @@ TYPE_SPEC:
             }
             return context.make(tags);
         }
-MERGE:
         // try to merge typedef with type qualifiers and storage class specifers
         // If tags has 'void', '_Complex', '_Imaginary', or we have meet int(I) or float(F), than we cannot merge.
         if (I || F || tags & (TYVOID | TYIMAGINARY | TYCOMPLEX)) {
@@ -1855,7 +2058,7 @@ MERGE:
         Expr e, result;
         int m;
         if (l.tok.tok != TLcurlyBracket) {
-            auto ty = sema.currentInitTy;
+            CType ty = sema.currentInitTy;
             if (!ty)
                 return assignment_expression();
             auto k = ty->getKind();
@@ -2438,7 +2641,7 @@ MERGE:
                 return insertStmt(res);
             }
             st.ty->noralize();
-#if 0
+#if 1
             print_cdecl(st.name->getKey(), st.ty, llvm::errs(), true);
 #endif
             size_t idx = putsymtype(st.name, st.ty, full_loc);
@@ -3011,8 +3214,8 @@ NEXT:
         ConstantInt *CI = H ? 
                 ConstantInt::get(irgen.ctx, APInt(bit_width, {H, L})) :
                 ConstantInt::get(irgen.ctx, APInt(bit_width, L));
-        if (su.isImaginary)
-            ty->addTag(TYIMAGINARY);
+        if (su.isImaginary) 
+            ty = context.tryGetImaginaryTypeFromNonImaginary(ty);
         return wrap(ty, CI, loc);
     }
     Expr wrap(CType ty, llvm::Constant *C, Location loc = Location()) {

@@ -1,20 +1,5 @@
 /* SourceMgr.cpp - Source Code manager */
 
-/*
-Translation phases
-1. Multibyte characters are mapped to the source character set, introducing new-line characters and end-of-line
-indicators.Trigraphs sequences are replaced by single character.
-2. The `'\' newline` is deleted
-3. Source file is decomposed into preprocessing tokens, comment replaced by one space character
-4. Preprocessing directives are executed, _Pragma are executed.A #include directives causes translation phase 1 through
-phase 4, recursively.
-5. Convert escaped string literals to the execution charset.
-6. Concat string literals.
-7. Ignore white spaces, preprocessing is converted into token.The resulting tokens are syntactically and semantically
-analyzed and translated as a translation unit.
-8. resolve external object and functions...
-*/
-
 #if WINDOWS
 typedef HANDLE fd_t;
 #else
@@ -58,8 +43,8 @@ struct SourceMgr : public DiagnosticHelper {
     std::vector<xstring> userPaths;
     std::vector<Stream> streams;
     std::vector<fileid_t> includeStack;
-    bool hasStdinAdded = false;
     LocTree *tree;
+    bool trigraphs;
     uint32_t getLine() const { return streams[includeStack.back()].line; }
     void setLine(uint32_t line) { streams[includeStack.back()].line = line; }
     const char *getFileName(unsigned i) const { return streams[i].name; }
@@ -84,7 +69,7 @@ struct SourceMgr : public DiagnosticHelper {
         tree = tree->getParent();
     }
     bool is_tty;
-    SourceMgr(DiagnosticsEngine &Diag) : DiagnosticHelper{Diag}, buf{}, tree{nullptr} {
+    SourceMgr(DiagnosticsEngine &Diag) : DiagnosticHelper{Diag}, buf{}, tree{nullptr}, trigraphs{false} {
         buf.resize_for_overwrite(STREAM_BUFFER_SIZE);
 #if WINDOWS
         DWORD dummy;
@@ -92,6 +77,9 @@ struct SourceMgr : public DiagnosticHelper {
 #else
         is_tty = isatty(STDIN_FILENO) != 0;
 #endif
+    }
+    void setTrigraphsEnabled(bool enable) {
+        trigraphs = enable;
     }
     void addUsernIcludeDir(xstring path) { userPaths.push_back(path); }
     void addSysIncludeDir(const char *path) { sysPaths.push_back(path); }
@@ -360,14 +348,11 @@ REPEAT:
         }
     }
     void addStdin(const char *Name = "<stdin>") {
-        if (hasStdinAdded)
-            return (void)pp_error("stdardard input (%s) cannot be added as file more than once", Name);
         Stream x = Stream{.name = Name, .k = AStdinStream};
         x.i = 0;
         x.readed = 0;
         includeStack.push_back(streams.size());
         streams.push_back(x);
-        hasStdinAdded = true;
     }
     void addString(StringRef s, const char *fileName = "<string>") {
         Stream x = Stream{.name = fileName, .k = AStringStream};
@@ -383,13 +368,17 @@ REPEAT:
         ++f.line;
         f.column = 1;
     }
-    uint16_t lastc = 256;
+    uint16_t lastc = 256, lastc2 = 256;
     char raw_read_from_stack() { return raw_read(streams[includeStack.back()]); }
     // Translation phases 1
     char stream_read() {
         // for support '\r' end-of-lines
         if (LLVM_UNLIKELY(lastc <= 0xFF)) {
-            // trunc to i8
+            if (LLVM_UNLIKELY(lastc2 <= 0xFF)) {
+                char res = lastc;
+                lastc2 = 256;
+                return res;
+            }
             char res = lastc;
             lastc = 256;
             return res;
@@ -413,13 +402,12 @@ REPEAT:
                 resetLine();
                 c2 = raw_read_from_stack();
                 if (c2 != '\n')
-                    lastc = (uint16_t)(unsigned char)c;
+                    lastc = (unsigned char)c;
                 return '\n';
             }
             }
         }
     }
-    // Translation phases 2, 3
     char skip_read() {
         char c = stream_read();
         if (c == '/') {
@@ -432,7 +420,7 @@ REPEAT:
                         if (c == '/')
                             break;
                     } else if (c == '\0')
-                        return pp_error("unterminated comment '/*'"), '\0';
+                        return pp_error(getLoc(), "unterminated comment '/*'"), '\0';
                 } while (1);
                 return ' ';
             }
@@ -442,9 +430,10 @@ REPEAT:
                 } while (c != '\n' && c != '\0');
                 return ' ';
             }
-            lastc = (uint16_t)(unsigned char)c2;
+            lastc = (unsigned char)c2;
             return c;
         }
+        BACKSLASH:
         if (c == '\\') {
             char c2 = stream_read();
             if (c2 == '\n')
@@ -455,10 +444,10 @@ REPEAT:
                 while (c != ' ' && c != '\0');
                 if (c != '\n') {
                     if (c == '\0') {
-                        warning("'\\' at end of input");
+                        warning(getLoc(), "'\\' at end of input");
                         goto RET;
                     }
-                    pp_error("%s", "bad '\\' and space without newline");
+                    pp_error(getLoc(), "expect newline after '\\'");
                     do
                         c = stream_read();
                     while (c != '\n' && c != '\0');
@@ -467,10 +456,46 @@ RET:
                 }
                 return skip_read();
             }
-            lastc = (uint16_t)(unsigned char)c2;
+            lastc = (unsigned char)c2;
+            return c;
+        }
+        // trigraphs
+        if (c == '?') {
+            char c2 = stream_read();
+            if (c2 == '?') {
+                char c3 = stream_read();
+                char t = GetTrigraphCharForLetter(c3);
+                if (t) {
+                    if (trigraphs) {
+                        warning(getLoc(), "trigraph '??%c' converted to '%c'", c3, t);
+                        if (t == '\\')
+                            goto BACKSLASH;
+                        return t;
+                    }
+                    warning(getLoc(), "trigraph '??%c' ignored, use -trigraphs to enable", c3);
+                }
+                lastc = (unsigned char)c3;
+                lastc2 = c2;
+                return c;
+            }
+            lastc = (unsigned char)c2;
             return c;
         }
         return c;
+    }
+    static char GetTrigraphCharForLetter(char Letter) {
+      switch (Letter) {
+      default:   return 0;
+      case '=':  return '#';
+      case ')':  return ']';
+      case '(':  return '[';
+      case '!':  return '|';
+      case '\'': return '^';
+      case '>':  return '}';
+      case '/':  return '\\';
+      case '<':  return '{';
+      case '-':  return '~';
+      }
     }
     void dump(raw_ostream &OS = llvm::errs()) const {
         OS <<

@@ -95,19 +95,21 @@ static enum TypeIndex getTypeIndex(CType ty) {
         void_type = llvm::Type::getVoidTy(ctx);
 
         pointer_type = llvm::PointerType::get(ctx, 0);
-        integer_types[1] = llvm::Type::getInt1Ty(ctx);
+        integer_types[0] = llvm::Type::getInt1Ty(ctx);
+        integer_types[1] = nullptr;
+        integer_types[2] = nullptr;
         integer_types[3] = llvm::Type::getInt8Ty(ctx);
         integer_types[4] = llvm::Type::getInt16Ty(ctx);
         integer_types[5] = llvm::Type::getInt32Ty(ctx);
         integer_types[6] = llvm::Type::getInt64Ty(ctx);
         integer_types[7] = llvm::Type::getInt128Ty(ctx);
 
-        float_types_array[F_Half] = llvm::Type::getHalfTy(ctx);
-        float_types_array[F_BFloat] = llvm::Type::getBFloatTy(ctx);
-        float_types_array[F_Float] = llvm::Type::getFloatTy(ctx);
-        float_types_array[F_Double] = llvm::Type::getDoubleTy(ctx);
-        float_types_array[F_Quadruple] = llvm::Type::getFP128Ty(ctx);
-        float_types_array[F_PPC128] = llvm::Type::getPPC_FP128Ty(ctx);
+        float_types[F_Half] = llvm::Type::getHalfTy(ctx);
+        float_types[F_BFloat] = llvm::Type::getBFloatTy(ctx);
+        float_types[F_Float] = llvm::Type::getFloatTy(ctx);
+        float_types[F_Double] = llvm::Type::getDoubleTy(ctx);
+        float_types[F_Quadruple] = llvm::Type::getFP128Ty(ctx);
+        float_types[F_PPC128] = llvm::Type::getPPC_FP128Ty(ctx);
         // TODO: Decimal float types
 
         intptrTy = layout->getIntPtrType(ctx);
@@ -118,8 +120,8 @@ static enum TypeIndex getTypeIndex(CType ty) {
         i32_0 = llvm::ConstantInt::get(integer_types[4], 0);
         i1_0 = llvm::ConstantInt::getFalse(ctx);
         i1_1 = llvm::ConstantInt::getTrue(ctx);
-        _complex_double = llvm::StructType::get(float_types_array[F_Double], float_types_array[F_Double]);
-        _complex_float = llvm::StructType::get(float_types_array[F_Float], float_types_array[F_Float]);
+        _complex_double = llvm::StructType::get(float_types[F_Double], float_types[F_Double]);
+        _complex_float = llvm::StructType::get(float_types[F_Float], float_types[F_Float]);
         addModule("main");
     }
     xcc_context &context;
@@ -144,9 +146,8 @@ static enum TypeIndex getTypeIndex(CType ty) {
     unsigned lastFileID = -1;
     llvm::DIFile *lastFile = nullptr;
     OnceAllocator alloc{};
-    llvm::IntegerType *integer_types_array[IntegerKind::MAX_KIND];
-    llvm::IntegerType **integer_types = integer_types_array - 1;
-    llvm::Type *float_types_array[FloatKind::MAX_KIND];
+    llvm::IntegerType *integer_types[8];
+    llvm::Type *float_types[FloatKind::MAX_KIND];
     llvm::PointerType *pointer_type;
     llvm::Type *void_type;
     DIType *ditypes = nullptr;
@@ -219,7 +220,7 @@ static enum TypeIndex getTypeIndex(CType ty) {
             FloatKind k = ty->getFloatKind();
             if (k.equals(F_Double)) return _complex_double;
             if (k.equals(F_Float)) return _complex_float;
-            auto T = float_types_array[(uint64_t)k];
+            auto T = float_types[(uint64_t)k];
             return llvm::StructType::get(T, T);
         }
         return wrapComplexForInteger(ty);
@@ -416,14 +417,17 @@ static enum TypeIndex getTypeIndex(CType ty) {
             }
             return B.CreateOr(a, b);
         }
-        return B.CreateIsNotNull(V);
+        auto T = V->getType();
+        if (auto I = dyn_cast<llvm::IntegerType>(T)) 
+            return B.CreateICmpNE(V, ConstantInt::get(I, 0));
+        return B.CreateFCmpONE(V, ConstantFP::getZero(T, false));
     }
     Type wrapNoComplexScalar(CType ty) {
         assert(ty->getKind() == TYPRIM);
         if (ty->isInteger()) {
             return integer_types[ty->getIntegerKind().asLog2()];
         }
-        return float_types_array[static_cast<uint64_t>(ty->getFloatKind())];
+        return float_types[static_cast<uint64_t>(ty->getFloatKind())];
     }
     llvm::Type *wrapPrim(const_CType ty) {
         assert(ty->getKind() == TYPRIM);
@@ -434,7 +438,7 @@ static enum TypeIndex getTypeIndex(CType ty) {
         if (ty->isInteger()) {
             return integer_types[ty->getIntegerKind().asLog2()];
         }
-        return float_types_array[static_cast<uint64_t>(ty->getFloatKind())];
+        return float_types[static_cast<uint64_t>(ty->getFloatKind())];
     }
     Type wrap2(CType ty) {
         switch (ty->getKind()) {
@@ -551,7 +555,7 @@ static enum TypeIndex getTypeIndex(CType ty) {
         B.CreateBr(phiBB);
 
         append(phiBB);
-        auto phi = B.CreatePHI(integer_types[1], 2);
+        auto phi = B.CreatePHI(integer_types[0], 2);
         phi->addIncoming(R, leftBB);
         phi->addIncoming(L, rightBB);
         return phi;
@@ -1012,8 +1016,8 @@ BINOP_ATOMIC_RMW:
                  b = gen_complex_imag(lhs),
                  c = gen_complex_real(rhs),
                  d = gen_complex_imag(rhs),
-                 l = B.CreateAdd(a, c),
-                 r = B.CreateAdd(b, d); 
+                 l = B.CreateSub(a, c),
+                 r = B.CreateSub(b, d); 
                 return make_complex_pair(e->ty, l, r);
             }
             // clang::ComplexExprEmitter::EmitBinMul

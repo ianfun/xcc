@@ -537,11 +537,10 @@ struct FloatKind {
     }
 };
 struct IntegerKind {
-    static constexpr size_t MAX_KIND = 7;
     uint8_t shift;
     constexpr IntegerKind(uint8_t shift): shift{shift} {}
     constexpr bool isValid() const {
-        return shift != 2 && shift <= MAX_KIND;
+        return shift != 1 && shift != 2 && shift <= 7;
     }
     explicit constexpr operator bool() const {
         return shift;
@@ -591,7 +590,9 @@ struct IntegerKind {
     APInt getZero() const {
         return APInt::getZero(asBits());
     }
-    bool isBool() const { return asBits() == 1; }
+    bool isBool() const { 
+        return shift == 0;
+    }
     llvm::Type *toLLVMType(LLVMContext &ctx) const {
         return llvm::IntegerType::get(ctx, asBits());
     }
@@ -875,7 +876,7 @@ struct TokenV {
         case ATokenVBase: OS << show(tok); break;
         case ATokenIdent:
             OS.write_escaped(s->getKey());
-            OS << '(' << show(tok) << '-' << show(s->second.getToken()) << ')';
+            // OS << '(' << show(tok) << '-' << show(s->second.getToken()) << ')';
             break;
         case ATokenVNumLit: OS << str.str(); break;
         case ATokenVStrLit: OS.write_escaped(str.str()); break;

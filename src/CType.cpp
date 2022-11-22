@@ -85,7 +85,9 @@ public:
     bool isVoid() const { return tags & TYVOID; }
     bool isComplex() const { return tags & TYCOMPLEX; }
     bool isImaginary() const { return tags & TYIMAGINARY; }
-    bool isBool() const { return getKind() == TYPRIM && isInteger() && getIntegerKind().isBool(); }
+    bool isBool() const { 
+        return getKind() == TYPRIM && isInteger() && getIntegerKind().isBool(); 
+    }
     bool basic_equals(const_CType other) const {
         // two types are equal
         // the align are equal
@@ -187,6 +189,9 @@ public:
     }
     bool isSigned() const {
         assert(isInteger());
+        return tags & sign_bit;
+    }
+    bool isSigned2() const {
         return tags & sign_bit;
     }
     void setUnsigned() {
@@ -301,7 +306,7 @@ public:
         if (isComplex())
             OS << "_Complex ";
         if (isImaginary())
-            OS << "_Imaginary";
+            OS << "_Imaginary ";
         if (isInteger())
             return OS << getIntegerKind().show(isSigned());
         return OS << getFloatKind().show();

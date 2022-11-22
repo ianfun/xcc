@@ -8,13 +8,10 @@ struct Lexer : public EvalHelper {
         PFPP = 2
     };
     static const char months[12][4];
-    static bool isCSkip(char c) {
-        // space, tab, new line, form feed are translate into ' '
-        return c == ' ' || c == '\t' || c == '\f' || c == '\v';
-    }
     TokenV tok = TNul;
     bool want_expr = false;
     bool isPPMode = false;
+    bool isDisableSpace = false;
     llvm::SmallVector<uint8_t, 4> ppstack;
     bool ok = true;
     char c = ' ';
@@ -32,6 +29,10 @@ struct Lexer : public EvalHelper {
     Location getLoc() { return loc; }
     Expr constant_expression();
     void updateLoc() { loc = SM.getLoc(); }
+    static bool isCSkip(char c) {
+        // space, tab, new line, form feed are translate into ' '
+        return c == ' ' || c == '\t' || c == '\f' || c == '\v';
+    }
     void validUCN(Codepoint codepoint, Location loc) {
         if (codepoint < 0xA0) {
             if (codepoint == 0x24 || codepoint == 0x40 || codepoint == 0x60)
@@ -151,7 +152,7 @@ struct Lexer : public EvalHelper {
             eat();
         }
         if (c != '\'')
-            lex_error(loc, "missing terminating " lquote "'" rquote " character in character literal");
+            warning(loc, "missing terminating " lquote "'" rquote " character in character literal");
         eat();
         return theTok;
     }
@@ -328,7 +329,7 @@ END:
                 break;
             } else {
                 if (c == '\0') {
-                    lex_error(loc, "missing terminating \" character");
+                    warning(loc, "missing terminating \" character");
                     break;
                 }
                 str.push_back(c);
@@ -420,37 +421,39 @@ END:
                     if (!isCSkip(c))
                         break;
                 }
-                if (isPPMode && !want_expr) {
+                if (isDisableSpace || want_expr)
+                    continue;
+                if (isPPMode) 
                     return TSpace;
-                }
                 continue;
             }
             updateLoc();
             if (c == '#') {
+                eat();
                 goto RUN;
 BAD_RET:
                 return isPPMode = false, lex();
 RUN:
                 if (isPPMode) {
-                    eat();
                     if (c == '#')
                         return eat(), PPSharpSharp;
                     return PPSharp;
                 }
                 isPPMode = true;
-                eat();
                 tok = lex(); // directive
+                if (tok.tok == TSpace)
+                    tok = lex();
                 if (tok.tok < kw_start) {
-                    pp_error(loc, "%s", "expect identifier");
+                    if (tok.tok != TNewLine)
+                        pp_error(loc, "%s", "expect identifier or null directive(new line)");
                     goto BAD_RET;
                 }
-
                 IdentRef saved_name = tok.s;
                 Token saved_tok = saved_name->second.getToken();
                 if (saved_tok != PPinclude) {
-                    do {
+                    tok = lex();
+                    if (tok.tok == TSpace)
                         tok = lex();
-                    } while (tok.tok == TSpace);
                 }
                 switch (saved_tok) {
                 case PPdefine: {
@@ -471,9 +474,10 @@ RUN:
                     while (tok.tok == TSpace)
                         tok = lex();
                     if (theMacro->m.k == MFUNC) {
+                        isDisableSpace = true;
                         for (;;) {
                             tok = lex();
-                            if (tok.tok == PPIdent) {
+                            if (tok.tok >= kw_start) {
                                 theMacro->m.params.push_back(tok.s);
                                 tok = lex();
                                 if (tok.tok == TRbracket)
@@ -514,11 +518,10 @@ RUN:
                             if (tok.tok == TRbracket)
                                 break;
                             else
-                                parse_error(loc, "unexpected token: %C", c);
+                                pp_error(loc, "unexpected token: %C", c);
                         }
                         tok = lex(); // eat ')'
-                        while (tok.tok == TSpace)
-                            tok = lex();
+                        isDisableSpace = false;
                     }
                     while (isPPMode) {
                         theMacro->m.tokens.push_back(tok), tok = lex();
@@ -626,7 +629,7 @@ RUN:
                     while (c == ' ')
                         eat();
                     if (SM.includeStack.empty()) {
-                        pp_error("unexpected EOF");
+                        pp_error(loc, "unexpected EOF");
                         goto BAD_RET;
                     }
                     auto theFD = SM.includeStack.back();
@@ -739,7 +742,6 @@ STD_INCLUDE:
                     else
                         pp_error(loc, "#error: %R", s.str());
                 } break;
-                case TNewLine: continue;
                 default: pp_error(loc, "invalid preprocessing directive: %I", saved_name);
                 }
                 while (tok.tok != TNewLine && tok.tok != TEOF)
@@ -756,6 +758,13 @@ STD_INCLUDE:
                     eat();
                     if (lastc == '\n' && c == '#')
                         goto RUN;
+                    if (lastc == '%') {
+                        eat();
+                        if (c == ':') {
+                            eat();
+                            goto RUN;
+                        }
+                    }
                 }
             }
             switch (c) {
@@ -838,13 +847,32 @@ STD_INCLUDE:
                 TOK2('^', '=', TAsignBitXor, TXor)
                 TOK2('/', '=', TAsignDiv, TSlash)
                 TOK2('!', '=', TNe, TNot)
+                // ':>' convert to ']'
                 TOK2(':', '>', TRSquareBrackets, TColon)
                 TOK3('+', '+', TAddAdd, '=', TAsignAdd, TAdd)
                 TOK3('>', '=', TGe, '>', Tshr, TGt)
                 TOK3('|', '=', TAsignBitOr, '|', TLogicalOr, TBitOr)
                 TOK3('&', '=', TAsignBitAnd, '&', TLogicalAnd, TBitAnd)
-                TOK4('%', '=', TAsignRem, '>', TRcurlyBracket, ':', TBash, TPercent)
+                // '%>' convert to '}'
+                // '%:' convert to '#'
+                case '%':    
+                    eat();
+                    switch (c) {
+                        case '=': return eat(), TAsignRem;
+                        case '>': return eat(), TRcurlyBracket;
+                        case ':':
+                            eat();
+                            if (c == '%') {
+                                eat();
+                                if (c == ':') // convert '%:%:' to '##'
+                                    return PPSharpSharp;
+                            }
+                            goto RUN;
+                        default: return TPercent;
+                    }
                 TOK4('-', '-', TSubSub, '=', TAsignSub, '>', TArrow, TDash)
+                // '<:' convert to '['
+                // '<%' convert to '{'
                 TOK5('<', '<', Tshl, '=', TLe, ':', TLSquareBrackets, '%', TLcurlyBracket, TLt)
             default:
                 if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_' || c == '$' || c == '\\' ||
@@ -937,7 +965,6 @@ STD_INCLUDE:
                             if (tok.tok >= kw_start) {
                                 if (isMacroInUse(theTok.s)) {
                                     // https://gcc.gnu.org/onlinedocs/cpp/Self-Referential-Macros.html
-                                    dbgprint("skipping self-referential macro %s\n", theTok.s->getKey().data());
                                     if (theTok.tok == PPIdent)
                                         theTok.tok = TIdentifier;
                                 }
@@ -986,16 +1013,14 @@ STD_INCLUDE:
                     }
                     if (m.tokens.size()) {
                         beginExpandMacro(it->second);
-                        for (size_t i = 0; i < m.tokens.size(); i++) {
-                            TokenV theTok = m.tokens[i]; // copy ctor
+                        for (size_t i = m.tokens.size();i--; ) {
+                            TokenV theTok = m.tokens[i];
                             if (theTok.tok != TSpace) {
                                 if (theTok.tok >= kw_start) {
-                                    size_t j;
                                     IdentRef s = theTok.s;
-                                    for (j = 0; j < m.params.size(); j++) {
-                                        if (s == m.params[i]) {
-                                            // xxx: llvm::SmallVector's append does better
-                                            for (const auto it : args[i])
+                                    for (unsigned j = 0; j < m.params.size(); j++) {
+                                        if (s == m.params[j]) {
+                                            for (const auto &it : args[j])
                                                 tokenq.push_back(it);
                                             goto BREAK;
                                         }
@@ -1011,6 +1036,7 @@ BREAK:;
                                 tokenq.push_back(theTok);
                             }
                         }
+                        tokenq.push_back(SM.getLocTree());
                     }
                     return cpp();
                 }

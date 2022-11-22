@@ -12,13 +12,13 @@ struct xcc_context {
         i8 = make_signed(3);
         i16 = make_signed(4);
         i32 = make_signed(5);
-        i64 = make_signed(4);
-        i128 = make_signed(6);
+        i64 = make_signed(6);
+        i128 = make_signed(7);
         u8 = make_unsigned(3);
         u16 = make_unsigned(4);
         u32 = make_unsigned(5);
         u64 = make_unsigned(6);
-        u128 = make_unsigned(9);
+        u128 = make_unsigned(7);
 
         fhalfty = make_floating(F_Half);
         bfloatty = make_floating(F_BFloat);
@@ -55,16 +55,19 @@ struct xcc_context {
 
         // There are three complex types, designated as float _Complex, double _Complex, and long double _Complex.
         
-        _complex_double = make_complex_float(fdoublety->getFloatKind());
-        _complex_float = make_complex_float(ffloatty->getFloatKind());
-        _complex_longdouble = make_complex_float(_longdouble->getFloatKind());
+        _complex_double = make(fdoublety->getTags() | TYCOMPLEX);
+        _complex_float = make(ffloatty->getTags() | TYCOMPLEX);
+        _complex_longdouble = make(_longdouble->getTags() | TYCOMPLEX);
+
+        _imaginary_double = make(fdoublety->getTags() | TYIMAGINARY);
+        _imaginary_float = make(ffloatty->getTags() | TYIMAGINARY);
     }
     IdentifierTable table; // contains allocator!
     CType constint, b, v, i8, u8, i16, u16, i32, u32, i64, u64, i128, u128, 
     ffloatty, fdoublety, bfloatty, fhalfty, f128ty, ppc_f128, f80ty, str8ty, str16ty, str32ty, stringty, wstringty, _complex_float, _complex_double, 
     _complex_longdouble, 
     _short ,_ushort, _wchar, _long, _ulong, _longlong, _ulonglong, _longdouble, _uchar, 
-    _size_t, _ptr_diff_t, _uint_ptr, fdecimal32, fdecimal64, fdecimal128;
+    _size_t, _ptr_diff_t, _uint_ptr, fdecimal32, fdecimal64, fdecimal128, _imaginary_double, _imaginary_float;
     [[nodiscard]] CType make(uint64_t tags) {
         return TNEW(PrimType){.tags = tags};
     }
@@ -80,21 +83,68 @@ struct xcc_context {
     [[nodiscard]] CType make_complex_float(FloatKind kind, uint64_t tags = 0) {
         return make(build_float(kind) | TYCOMPLEX | tags);
     }
+    [[nodiscard]] CType make_imaginary_float(FloatKind kind, uint64_t tags = 0) {
+        return make(build_float(kind) | TYIMAGINARY | tags);
+    }
+    [[nodiscard]] CType lookupType(const_CType ty, uint64_t tags) {
+        if (ty->isFloating()) {
+            switch (ty->getFloatKind().asEnum()) {
+            case F_Float: return getFloat();
+            case F_Double: return getDobule();
+            case F_Half: return getFPHalf();
+            case F_BFloat: return getBFloat();
+            case F_Quadruple: return getFloat128();
+            case F_PPC128: return getPPCFloat128();
+            case F_x87_80: return getFP80();
+            default: break;
+            }
+        } else {
+            bool isSigned = ty->isSigned();
+            switch (ty->getIntegerKind().asLog2()) {
+            case 0:
+            case 1: return b;
+            case 3: return isSigned ? i8 : u8;
+            case 4: return isSigned ? i16 : u16;
+            case 5: return isSigned ? i32 : u32;
+            case 6: return isSigned ? i64 : u64;
+            case 7: return isSigned ? i128 : u128;
+            default: break;
+            }
+        }
+        return make(ty->del(tags));
+    }
     [[nodiscard]] CType getComplexElementType(const_CType ty) {
         // For each floating type there is a corresponding real type, which is always a real floating type. For real floating types, it is the same type. For complex types, it is the type given by deleting the keyword _Complex from the type name.
-        return make(ty->del(TYCOMPLEX));
+        return lookupType(ty, TYCOMPLEX);
+    }
+    [[nodiscard]] CType getImaginaryElementType(const_CType ty) {
+        return lookupType(ty, TYIMAGINARY);
     }
     [[nodiscard]] CType tryGetComplexTypeFromNonComplex(const_CType ty) {
         if (ty->isFloating()) {
-            const auto k = ty->getFloatKind();
-            switch (k.asEnum()) {
-            case F_Double: return getComplexDouble();
+            switch (ty->getFloatKind().asEnum()) {
             case F_Float: return getComplexFloat();
+            case F_Double: return getComplexDouble();
             default: break;
             }
-            return make_complex_float(k);
         }
         return make(ty->getTags() | TYCOMPLEX);
+    }
+    [[nodiscard]] CType tryGetImaginaryTypeFromNonImaginary(const_CType ty) {
+        if (ty->isFloating()) {
+            switch (ty->getFloatKind().asEnum()) {
+            case F_Float: return getImaginaryFloat();
+            case F_Double: return getImaginaryDouble();
+            default: break;
+            }
+        }
+        return make(ty->getTags() | TYIMAGINARY);
+    }
+    [[nodiscard]] CType getImaginaryDouble() {
+        return _imaginary_double;
+    }
+    [[nodiscard]] CType getImaginaryFloat() {
+        return _imaginary_float;
     }
     [[nodiscard]] CType getPointerType(CType base, uint64_t tags = 0) {
         CType result = TNEW(PointerType){.tags = tags, .p = base};
@@ -224,7 +274,7 @@ struct xcc_context {
         return new (getAllocator()) PPMacroDef();
     }
     [[nodiscard]] unsigned getBoolLog2() const {
-        return 1;
+        return 0;
     }
     [[nodiscard]] unsigned getCharLog2() const {
         return 3;

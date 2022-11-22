@@ -289,10 +289,20 @@ bool HandleImmediateArgs() {
   return true;
 }
 bool BuildInputs(SourceMgr &SM, Options &opts) {
+  bool hasStdinAdded = false;
   for (Arg *A : getArgs()) {
     if (A->getOption().getKind() == Option::InputClass) { 
       const char *Value = A->getValue();
-      SM.addFile(Value);
+      if (Value[0] == '-' && Value[1] == '\0') {
+        if (hasStdinAdded) {
+          warning("stdardard input specfied as input more than once is ignored");
+        } else {
+          SM.addStdin();
+          hasStdinAdded = false;
+        }
+      } else {
+        SM.addFile(Value);
+      }
     }
   }
   if (SM.empty())
@@ -308,6 +318,7 @@ bool BuildCompilation(ArrayRef<const char *> Args, Options &opts, SourceMgr &SM,
       error("unable to set working directory: %s", WD->getValue());
   if (!HandleImmediateArgs())
     return true;
+  opts.trigraphs = getArgs().hasArg(OPT_ftrigraphs);
   opts.triple = computeTargetTriple(*this, TargetTriple, getArgs());
   std::string Error;
   opts.theTarget = llvm::TargetRegistry::lookupTarget(opts.triple.str(), Error);;

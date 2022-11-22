@@ -141,7 +141,7 @@ void TextDiagnosticPrinter::realHandleDiagnostic(const Diagnostic &Diag) {
         case Remark: msgtype = "remark: "; break;
         case Warning: msgtype = "warning: "; break;
         case Error: msgtype = "error: "; break;
-        case PPError: msgtype = "preprocessor error: "; break;
+        case PPError: msgtype = "cpp error: "; break;
         case LexError: msgtype = "lex error: "; break;
         case ParseError: msgtype = "parse error: "; break;
         case EvalError: msgtype = "evaluation error: "; break;
