@@ -901,6 +901,10 @@ static enum TypeIndex getTypeIndex(CType ty) {
             return local;
         }
         default:
+            if (e->ty->hasTag(TYREPLACED_CONSTANT)) {
+                auto e2 = reinterpret_cast<ReplacedExpr*>(e);
+                return vars[e2->id];
+            }
             llvm_unreachable("");
         }
     }

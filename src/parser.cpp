@@ -23,7 +23,8 @@ struct Parser : public EvalHelper {
         LOCAL_GARBAGE = 0,         // just declared
         USED = 0x1,                // set if variable is used
         ASSIGNED = 0x2,            // set if assigned or initialized
-        PARAM = 0x4                // set if is a parameter
+        PARAM = 0x4,               // set if is a parameter
+        CONST_VAR = 0x5
     };
     struct Variable_Info {
         CType ty = nullptr;
@@ -41,7 +42,7 @@ struct Parser : public EvalHelper {
     Lexer l;
     xcc_context &context;
     struct Sema { // Semantics processor
-        CType currentfunctionRet = nullptr, currentInitTy = nullptr;
+        CType currentfunction = nullptr, currentInitTy = nullptr;
         Stmt currentswitch = nullptr;
         IdentRef pfunc; // current function name: `__func__`
         FunctionAndBlockScope<Variable_Info> typedefs;
@@ -64,6 +65,8 @@ struct Parser : public EvalHelper {
     Stmt unreachable_reason = nullptr;
     Expr intzero, intone, size_t_one, cfalse, ctrue;
     StringPool string_pool;
+    llvm::ConstantPointerNull *null_ptr;
+    Expr null_ptr_expr;
     template <typename T> auto getsizeof(T a) { return irgen.getsizeof(a); }
     template <typename T> auto getAlignof(T a) { return irgen.getAlignof(a); }
 private:
@@ -343,10 +346,9 @@ private:
         Cast_Sign
     };
     static enum Cast_Status canBeSavelyCastTo(const_CType p, const_CType expected) {
-        assert(p && "p is nullptr");
-        assert(expected && "expected is nullptr");
-        assert(p->getKind() == expected->getKind());
-        const auto mask = TYCOMPLEX | TYIMAGINARY | TYVOID;
+        if (p->getKind() != expected->getKind())
+            return Cast_Imcompatible;
+        const auto mask = OpaqueCType::important_mask;
         switch (p->getKind()) {
         case TYPRIM:
         {
@@ -448,23 +450,72 @@ private:
         }
         return type_error(e->loc, "invalid conversion from %T to %T", e->ty, to), e;
     }
-    Expr integer_to_ptr(Expr e, CType to) {
+    Expr integer_to_ptr(Expr e, CType to, enum Implict_Conversion_Kind implict) {
         assert(e->ty && "cannot cast from expression with no type");
         assert((e->ty->isInteger()) && "bad call to integer_to_ptr()");
         assert((to->getKind() == TYPOINTER) && "bad call to integer_to_ptr()");
         if (e->k == EConstant) {
             auto CI = cast<ConstantInt>(e->C);
             if (CI->isZero()) // A interger constant expression with the value 0 is a *null pointer constant*
-                return wrap(to, llvm::ConstantPointerNull::get(irgen.pointer_type),
-                            e->loc);
-            return wrap(to, llvm::ConstantExpr::getIntToPtr(CI, irgen.wrapNoComplexScalar(to)), e->loc);
+                return wrap(to, null_ptr, e->loc);
+            return wrap(to, llvm::ConstantExpr::getIntToPtr(CI, irgen.pointer_type), e->loc);
+        }
+        if (implict != Implict_Cast) {
+            CType arg1 = e->ty;
+            CType arg2 = to;
+            const char *msg;
+            switch (implict) {
+            case Implict_Cast: llvm_unreachable("");
+            case Implict_Assign:
+                std::swap(arg1, arg2);
+                msg = "assignment to %T from %T makes pointer from integer without a cast";
+                break;
+            case Implict_Init:
+                std::swap(arg1, arg2);
+                msg = "initialization of %T from %T makes pointer from integer without a cast";
+                break;
+            case Implict_Return:
+                msg = "returning %T from a function with result type %T make pointer from integer without a cast";
+                break;
+            case Implict_Call:
+                msg = "passing %T to parameter of type %T makes pointer from integer without a cast";
+                break;
+            }
+            warning(e->loc, msg, arg1, arg2);
+        } else if (e->ty->getIntegerKind().asBits() < irgen.pointerSizeInBits) {
+            warning(e->loc, "cast to %T from smaller integer type %T", to, e->ty);
         }
         return make_cast(e, IntToPtr, to);
     }
-    Expr ptr_to_integer(Expr e, CType to) {
+    Expr ptr_to_integer(Expr e, CType to, enum Implict_Conversion_Kind implict) {
         assert(e->ty && "cannot cast from expression with no type");
         assert((e->ty->getKind() == TYPOINTER) && "bad call to ptr_to_integer()");
         assert((to->isInteger()) && "bad call to ptr_to_integer()");
+        if (implict != Implict_Cast) {
+            CType arg1 = e->ty;
+            CType arg2 = to;
+            const char *msg;
+            switch (implict) {
+            case Implict_Cast: llvm_unreachable("");
+            case Implict_Assign:
+                std::swap(arg1, arg2);
+                msg = "assignment to %T from %T makes integer from pointer without a cast";
+                break;
+            case Implict_Init:
+                std::swap(arg1, arg2);
+                msg = "initialization of %T from %T makes integer from pointer without a cast";
+                break;
+            case Implict_Return:
+                msg = "returning %T from a function with result type %T make integer from pointer without a cast";
+                break;
+            case Implict_Call:
+                msg = "passing %T to parameter of type %T makes integer from pointer without a cast";
+                break;
+            }
+            warning(e->loc, msg, arg1, arg2);
+        } else if (to->getIntegerKind().asBits() < irgen.pointerSizeInBits) {
+            warning(e->loc, "cast to smaller integer type %T from %T", to, e->ty);
+        }
         if (e->k == EConstant)
             return wrap(to, llvm::ConstantExpr::getPtrToInt(e->C, irgen.wrapNoComplexScalar(to)), e->loc);
         return make_cast(e, PtrToInt, to);
@@ -567,9 +618,9 @@ PTR_CAST:
         if (type_equal(e->ty, to))
             return e;
         if (k0 == TYPOINTER && k == TYPRIM && to->isInteger())
-            return ptr_to_integer(e, to);
+            return ptr_to_integer(e, to, implict);
         if (k0 == TYPRIM && e->ty->isInteger() && k == TYPOINTER)
-            return integer_to_ptr(e, to);
+            return integer_to_ptr(e, to, implict);
         if (k0 == TYPOINTER && k == TYPOINTER)
             return ptr_cast(e, to, implict);
         if (k0 == TYENUM) // cast from enum: bit-cast e to int first, then do-cast to ty
@@ -653,7 +704,7 @@ PTR_CAST:
             return float_to_integer(e, to);
         return int_cast(e, to);
     }
-    bool isTopLevel() { return sema.currentfunctionRet == nullptr; }
+    bool isTopLevel() { return sema.currentfunction == nullptr; }
     void enterBlock() {
         sema.typedefs.push();
         sema.tags.push();
@@ -1399,7 +1450,10 @@ ONE : {
                     Expr e3 = context.clone(r);
                     e3->ty = context.getImaginaryElementType(e3->ty);
                     make_mul(e2, e3);
-                    result = e2;
+                    if (e2->k == EConstant)
+                        result = wrap(e2->ty, llvm::ConstantExpr::getNeg(e2->C), e2->loc);
+                     else 
+                        result = unary(e2, e2->ty->isFloating() ? FNeg : UNeg , e2->ty);
                     return;
                 }
                 // imag * real => imag
@@ -1856,8 +1910,9 @@ NOT_CONSTANT:
         const Token firstTok = l.tok.tok;
         unsigned count = 0;
         for (;;++count) {
+            const Token theTok = l.tok.tok;
             old_tag = tags;
-            switch (l.tok.tok) {
+            switch (theTok) {
             case Kinline: tags |= TYINLINE; goto NO_REPEAT;
             case K_Noreturn: tags |= TYNORETURN; goto NO_REPEAT;
             case Kextern: tags |= TYEXTERN; goto NO_REPEAT;
@@ -1892,6 +1947,35 @@ NO_REPEAT:
 TYPE_SPEC:
             no_typedef = true;
             break;
+            case Ktypeof:
+            case Ktypeof_unqual:
+                if (no_typedef)
+                    goto BREAK;
+                no_typedef = true;
+                consume();
+                if (l.tok.tok != TLbracket) {
+                    parse_error(loc, "expect '(' after typedef");
+                    return context.getInt();
+                }
+                consume();
+                {
+                    if (istype()) {
+                        CType ty = type_name();
+                        if (!ty) return context.getInt();
+                        eat_typedef = ty;
+                    } else {
+                        Expr e = expression();
+                        if (!e) return context.getInt();
+                        eat_typedef = e->ty;
+                    }
+                    if (theTok == Ktypeof_unqual) {
+                        eat_typedef = context.clone(eat_typedef);
+                        eat_typedef->clearQualifiers();
+                    }
+                    if (l.tok.tok != TRbracket)
+                        parse_error(loc, "missing ')'");
+                    break;
+                }
             case TIdentifier:
                 if (no_typedef) // we cannot eat double typedef
                     goto BREAK;
@@ -2620,18 +2704,18 @@ TYPE_SPEC:
                     }
                 }
                 size_t idx = putsymtype2(st.name, st.ty, full_loc);
-                sema.pfunc = st.name;
                 if (!isTopLevel())
-                    return parse_error(full_loc, "function definition is not allowed here"),
-                           (void)note("function can only declared in global scope");
+                    return (void)parse_error(full_loc, "function definition is not allowed here");
                 Stmt res = SNEW(FunctionStmt){.loc = full_loc,
                                               .func_idx = idx,
                                               .funcname = st.name,
                                               .functy = st.ty,
                                               .args = xvector<size_t>::get_with_length(st.ty->params.size())};
-                sema.currentfunctionRet = st.ty->ret;
+                sema.currentfunction = st.ty;
+                sema.pfunc = st.name;
                 res->funcbody = function_body(st.ty->params, res->args, loc);
-                sema.currentfunctionRet = nullptr;
+                sema.pfunc = nullptr;
+                sema.currentfunction = nullptr;
                 res->numLabels = jumper.cur;
                 jumper.cur = 0;
                 sreachable = true;
@@ -2675,8 +2759,10 @@ TYPE_SPEC:
                 result->vars.back().init = init;
                 if (st.ty->getKind() == TYARRAY && !st.ty->hassize && !st.ty->vla) 
                     result->vars.back().ty = init->ty;
-                if (init->k == EConstant && st.ty->hasTag(TYCONST))
+                if (init->k == EConstant && st.ty->hasTags(TYCONST | TYCONSTEXPR)) {
                     var_info.val = init->C; // for const and constexpr, their value can be fold to constant
+                    var_info.tags |= CONST_VAR;
+                }
                 if ((isTopLevel() || st.ty->isGlobalStorage()) && init->k != EConstant && init->k != EConstantArray &&
                     init->k != EConstantArraySubstript) {
                     // take address of globals is constant!
@@ -2816,8 +2902,15 @@ TYPE_SPEC:
                 return nullptr;
             if (e->k == EConstantArray) {
                 assert(e->ty->getKind() == TYPOINTER);
-                e->ty = context.getPointerType(context.getFixArrayType(
-                    e->ty->p, cast<llvm::ArrayType>(e->array->getValueType())->getNumElements()));
+                if (auto CA = dyn_cast<llvm::ConstantDataArray>(e->array)) {
+                    e->ty = context.getPointerType(context.getFixArrayType(
+                    e->ty->p, CA->getType()->getNumElements()));
+                } else {
+                    auto AZ = cast<ConstantAggregateZero>(e->C);
+                    e->ty = context.getPointerType(
+                        context.getFixArrayType(e->ty->p, cast<llvm::ArrayType>(AZ->getType())->getNumElements())
+                    );
+                }
                 return e;
             }
             if (e->k == EArrToAddress)
@@ -2826,8 +2919,11 @@ TYPE_SPEC:
                 return type_error(loc, "cannot take address of bit-field"), e;
             if (e->ty->hasTag(TYREGISTER))
                 return type_error(loc, "take address of register variable"), e;
-            if (e->k == EUnary && e->uop == AddressOf && e->ty->p->getKind() == TYFUNCTION)
-                return e->ty->clearTags(TYLVALUE), e;
+            if (e->k == EUnary && e->uop == AddressOf && e->ty->p->getKind() == TYFUNCTION) {
+                e->ty = context.clone(e->ty);
+                e->ty->clearTag(TYLVALUE);
+                return e;
+            }
             if (!assignable(e))
                 return e;
             return unary(e, AddressOf, context.getPointerType(e->ty));
@@ -3223,6 +3319,9 @@ NEXT:
     }
     Expr getIntZero() { return intzero; }
     Expr getIntOne() { return intone; }
+    Expr getFunctionNameExpr(Location loc) {
+        return ENEW(ConstantArrayExpr) {.loc = loc, .ty = context.stringty, .array = string_pool.getAsUTF8(sema.pfunc->getKey())};
+    }
     Expr primary_expression() {
         // primary expressions:
         //      constant
@@ -3230,7 +3329,8 @@ NEXT:
         //      identfier
         Expr result;
         Location loc = getLoc();
-        switch (l.tok.tok) {
+        const Token theTok = l.tok.tok;
+        switch (theTok) {
         case TCharLit: {
             CType ty;
             switch (l.tok.itag) {
@@ -3299,13 +3399,9 @@ NEXT:
             consume();
         } break;
         case TIdentifier: {
-            if (l.want_expr)
+            if (LLVM_UNLIKELY(l.want_expr))
                 result = getIntZero();
-            else if (l.tok.s->second.getToken() == PP__func__) {
-                xstring s = xstring::get(sema.pfunc->getKey());
-                result = ENEW(ConstantArrayExpr){
-                    .loc = loc, .ty = context.str8ty, .array = string_pool.getAsUTF8(s)};
-            } else {
+            else {
                 IdentRef sym = l.tok.s;
                 size_t idx;
                 Variable_Info *it = sema.typedefs.getSym(sym, idx);
@@ -3318,8 +3414,14 @@ NEXT:
                 CType ty = context.clone(it->ty);
                 // lvalue conversions
                 ty->lvalue_cast();
-                if (it->val)
+                if (it->val) {
+                    if (it->tags & CONST_VAR) {
+                        ty->addTags(TYREPLACED_CONSTANT | TYLVALUE);
+                        return ENEW(ReplacedExpr){.loc = loc, .ty = ty, .C = it->val, .id = idx};
+                    }
                     return wrap(ty, it->val, loc);
+                }
+                ty->addTag(TYLVALUE);
                 switch (ty->getKind()) {
                 case TYFUNCTION:
                     result =
@@ -3389,6 +3491,81 @@ GENERIC_END:
                               testty),
                    nullptr;
         } break;
+        case Knullptr:
+            consume();
+            return null_ptr_expr;
+        case Kfalse:
+            consume();
+            return cfalse;
+        case Ktrue:
+            consume();
+            return ctrue;
+        case K__func__:
+            consume();
+            if (isTopLevel()) {
+                warning(loc, "predefined identifier is only valid inside function");
+                return ENEW(ConstantArrayExpr) {
+                    .loc = loc,
+                    .ty = context.stringty,
+                    .array = string_pool.getEmptyString()
+                };
+            }
+            return getFunctionNameExpr(loc);
+        case K__PRETTY_FUNCTION__:
+        {
+            consume();
+            if (isTopLevel()) {
+                warning(loc, "predefined identifier is only valid inside function");
+                return ENEW(ConstantArrayExpr) 
+                    {
+                        .loc = loc,
+                        .ty = context.stringty,
+                        .array = string_pool.getAsUTF8(StringRef("top level", 10))
+                    };
+            }
+            SmallString<64> Str;
+            llvm::raw_svector_ostream OS(Str);
+            OS << sema.currentfunction;
+            return ENEW(ConstantArrayExpr) 
+                    {
+                        .loc = loc, 
+                        .ty = context.stringty, 
+                        .array = string_pool.getAsUTF8(Str.str())
+                    };
+        }
+        case K__builtin_FILE:
+        case K__builtin_FUNCTION:
+        case K__builtin_LINE:
+        case K__builtin_COLUMN:
+        {
+            consume(); // eat __builtin_xxx
+            if (l.tok.tok != TLbracket) {
+                parse_error(loc, "expect '(' after %s", show(theTok));
+            }
+            consume(); // eat '('
+            if (l.tok.tok != TRbracket) {
+                parse_error(loc, "expect ')' after %s", show(theTok));
+            }
+            consume(); // eat ')'
+            switch (theTok) {
+            case K__builtin_FUNCTION:
+                if (isTopLevel()) {
+                    warning(loc, "predefined identifier is only valid inside function");
+                    return ENEW(ConstantArrayExpr) {
+                        .loc = loc, 
+                        .ty = context.stringty, 
+                        .array = string_pool.getEmptyString()
+                    };
+                }
+                return getFunctionNameExpr(loc);
+            case K__builtin_LINE:
+                return wrap(context.getInt(), ConstantInt::get(irgen.integer_types[context.getIntLog2()], loc.line), loc);
+            case K__builtin_COLUMN:
+                return wrap(context.getInt(), ConstantInt::get(irgen.integer_types[context.getIntLog2()], loc.col), loc);
+            case K__builtin_FILE:
+            default: llvm_unreachable("");
+            }
+        }
         default:
             return parse_error(loc, "unexpected token in primary_expression: %s\n", show(l.tok.tok)), consume(),
                    nullptr;
@@ -3534,7 +3711,7 @@ CONTINUE:;
     }
     void make_deref(Expr &e, Location loc) {
         assert(e->ty->getKind() == TYPOINTER && "bad call to make_deref: expect a pointer");
-        if ((e->ty->p->getKind() == TYINCOMPLETE) || e->ty->p->hasTag(TYVOID)) {
+        if ((e->ty->p->getKind() == TYINCOMPLETE) || e->ty->p->isVoid()) {
             type_error(loc, "dereference from incomplete/void type: %T", e->ty);
             return;
         }
@@ -3737,7 +3914,7 @@ NEXT:
         Location loc = getLoc();
         switch (l.tok.tok) {
         case TSemicolon: return consume();
-        case K__asm__: return parse_asm(), checkSemicolon();
+        case Kasm: return parse_asm(), checkSemicolon();
         case TLcurlyBracket: return compound_statement();
         case Kcase: {
             const APInt *CaseStart = nullptr, *CaseEnd = nullptr;
@@ -3831,27 +4008,27 @@ NEXT:
             consume();
             if (l.tok.tok == TSemicolon) {
                 consume();
-                if (sema.currentfunctionRet->hasTag(TYVOID))
+                if (sema.currentfunction->ret->isVoid())
                     return insertStmt(SNEW(ReturnStmt){.loc = loc, .ret = nullptr});
 
-                return warning(loc, "function should not return void in a function return %T", sema.currentfunctionRet),
+                return warning(loc, "function should not return void in a function return %T", sema.currentfunction->ret),
                        note("%s", "A return statement without an expression shall only appear in a function whose "
                                   "return type is void"),
                        insertStmt(SNEW(ReturnStmt){
                            .loc = loc,
-                           .ret = wrap(sema.currentfunctionRet,
-                                       llvm::UndefValue::get(irgen.wrap2(sema.currentfunctionRet)), loc)});
+                           .ret = wrap(sema.currentfunction->ret,
+                                       llvm::UndefValue::get(irgen.wrap2(sema.currentfunction->ret)), loc)});
             }
             Expr e;
             if (!(e = expression()))
                 return;
             checkSemicolon();
-            if (sema.currentfunctionRet->hasTag(TYVOID))
+            if (sema.currentfunction->ret->isVoid())
                 return warning(loc, "function should return a value in a function return void"),
                        note("A return statement with an expression shall not appear in a function whose return type is "
                             "void"),
                        insertStmt(SNEW(ReturnStmt){.loc = loc, .ret = nullptr});
-            return insertStmt(SNEW(ReturnStmt){.loc = loc, .ret = castto(e, sema.currentfunctionRet, Implict_Return)});
+            return insertStmt(SNEW(ReturnStmt){.loc = loc, .ret = castto(e, sema.currentfunction->ret, Implict_Return)});
         }
         case Kwhile:
         case Kswitch: {
@@ -4276,10 +4453,14 @@ NEXT:
                             continue;
                         }
                         if (r->k == EConstant) {
-                            if (auto CI2 = dyn_cast<ConstantInt>(r->C))
+                            if (auto CI2 = dyn_cast<ConstantInt>(r->C)) {
+                                warning(result->loc, "use of logical '&&' with constant operand");
+                                note(result->loc, "use '&' for a bitwise operation");
                                 result = CI2->isZero() ? getIntZero() : getIntOne();
-                            else
+                            }
+                            else {
                                 result = r;
+                            }
                             continue;
                         }
                     }
@@ -4324,10 +4505,14 @@ NEXT:
                             continue;
                         }
                         if (r->k == EConstant) {
-                            if (auto CI2 = dyn_cast<ConstantInt>(r->C))
+                            if (auto CI2 = dyn_cast<ConstantInt>(r->C)) {
+                                warning(result->loc, "use of logical '||' with constant operand");
+                                note(result->loc, "use '|' for a bitwise operation");
                                 result = CI2->isZero() ? getIntZero() : getIntOne();
-                            else
+                            }
+                            else {
                                 result = r;
+                            }
                             continue;
                         }
                     }
@@ -4382,17 +4567,19 @@ NEXT:
             return lhs;
         }
         consume();
-        if (!(rhs = conditional_expression()))
+        // GCC extension
+        // x ? : y => x ? x : y
+        if (l.tok.tok == TSemicolon)
+            rhs = start;
+        else if (!(rhs = conditional_expression()))
             return nullptr;
         if (!compatible(lhs->ty, rhs->ty))
             warning(getLoc(), "incompatible type for conditional-expression: (%T and %T)", lhs->ty, rhs->ty);
         conv(lhs, rhs);
         valid_condition(start);
-        if (start->k == EConstant) {
-            if (auto CI = dyn_cast<ConstantInt>(start->C)) {
+        if (start->k == EConstant)
+            if (auto CI = dyn_cast<ConstantInt>(start->C))
                 return CI->isZero() ? rhs : lhs;
-            }
-        }
         return ENEW(ConditionExpr){.loc = start->loc, .ty = lhs->ty, .cond = start, .cleft = lhs, .cright = rhs};
     }
     Expr conditional_expression() {
@@ -4537,7 +4724,7 @@ NEXT:
                 if (sema.pfunc->second.getToken() == PP_main) {
                     insertStmt(SNEW(ReturnStmt){.loc = loc2, .ret = getIntZero()});
                 } else {
-                    if (!(sema.currentfunctionRet->hasTag(TYVOID))) {
+                    if (!(sema.currentfunction->ret->isVoid())) {
                         if (s->k != SLabel) {
                             warning(loc2, "control reaches end of non-void function");
                             note("in the definition of function %I", sema.pfunc);
@@ -4576,7 +4763,7 @@ public:
           intone{wrap(context.getInt(), ConstantInt::get(irgen.ctx, APInt(context.getInt()->getBitWidth(), 1)))},
           cfalse{wrap(context.getBool(), ConstantInt::getFalse(irgen.ctx))},
           ctrue{wrap(context.getBool(), ConstantInt::getTrue(irgen.ctx))},
-          string_pool{irgen} { }
+          string_pool{irgen}, null_ptr{llvm::ConstantPointerNull::get(irgen.pointer_type)}, null_ptr_expr{wrap(context.getNullPtr_t(), null_ptr)} { }
     // used by Lexer
     Expr constant_expression() { return conditional_expression(); }
     // the main entry to run parser

@@ -64,6 +64,16 @@ testJit:
 # make all, you may run with -j to make it faster
 all: testLexer testCpp testParser testCodeGen testJit main mainNoLLD
 
+runTest: testCpp testCodeGen
+	./codegen complex.c
+	./codegen imaginary.c
+	./codegen bool.c
+	./codegen complex2.c
+	./codegen xc.c
+	./cpp trigraphs.c
+	clang example.ll
+	./a.out hello.c
+
 # clean outputs
 clean:
 	rm -f lexer cpp parser codegen jit xcc *.out *.o *.ll

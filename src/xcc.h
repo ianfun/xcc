@@ -739,6 +739,15 @@ struct GNUSwitchCase : public SwitchCase {
 #include "statements.inc"
 #include "utf8.cpp"
 
+struct ReplacedExpr {
+  enum ExprKind k=EConstant;
+  Location loc;
+  CType ty;
+  struct {
+    llvm::Constant* C;
+    size_t id;
+  };
+};
 static constexpr uint64_t build_integer(IntegerKind kind, bool Signed) {
     const uint64_t log2size = kind.asLog2();
     return (log2size << 47) | (Signed ? OpaqueCType::sign_bit : 0ULL);
@@ -818,7 +827,7 @@ static bool compatible(CType p, CType expected) {
         case TYUNION: return p == expected;
         case TYPOINTER: {
             // ignore TYLVALUE attribute
-            return p->p->hasTag(TYVOID) || expected->p->hasTag(TYVOID) ||
+            return p->isNullPtr_t() || expected->isNullPtr_t() || p->p->isVoid() || expected->p->isVoid() ||
                    (
                     p->andTags(type_qualifiers) == expected->andTags(type_qualifiers) &&
                     compatible(p->p, expected->p)
@@ -967,6 +976,8 @@ static unsigned scalarRank(const_CType ty) {
 #include "StringPool.cpp"
 #include "parser.cpp"
 #include "lexer.cpp"
-//#include "Target/TargetInfo.h"
-//#include "toolchains/ToolChain.cpp"
+#ifdef XCC_MAIN
+#include "Target/TargetInfo.h"
+#include "toolchains/ToolChain.cpp"
+#endif
 } // namespace xcc

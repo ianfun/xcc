@@ -1,6 +1,6 @@
 ## The XCC C Compiler
 
-A clang-like C compiler.
+A C23(C2X) C compiler.
 
 ![](screenshots.png)
 

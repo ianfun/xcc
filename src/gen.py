@@ -21,10 +21,13 @@ type_tags = (
 	"TYLVALUE",
 	"TYVOID",
 	"TYCOMPLEX",
-	"TYIMAGINARY"
+	"TYIMAGINARY",
+	"TYNULLPTR",
+	"TYREPLACED_CONSTANT"
 )
 
 keywords = (
+# begin declaration-specifiers
 	"extern",
 	"short",	
 	"register",
@@ -39,6 +42,18 @@ keywords = (
 	"_Decimal32",
 	"_Decimal128",
 	"_Decimal64",
+	"__int128",
+	"_Float16",
+	"_Accum",
+	"_Fract",
+	"_Sat",
+	"__float128",
+	"__bf16",
+	"half",
+	"__ibm128",
+	"__thread",
+	"__auto_type",
+
 	"_Imaginary",
 	"_Complex",
 	"_Atomic",
@@ -55,17 +70,49 @@ keywords = (
 	"long",
 	"float",
 	"double",
+	"typeof_unqual",
+	"typeof",
+	"_BitInt",
 
 	"_Alignas",
 	"const",
 	"restrict",
 	"volatile",
 
+# end declaration-specifiers
+  "__func__",
+	"__declspec",
+	"__attribute",
+	"__builtin_choose_expr",
+	"__builtin_offsetof",
+	"__builtin_FILE",
+	"__builtin_FUNCTION",
+	"__builtin_LINE",
+	"__builtin_COLUMN",
+	"__builtin_types_compatible_p",
+	"__builtin_va_arg",
+	"__builtin_bit_cast",
+	"__builtin_available",
+
+	"__cdecl",
+	"__stdcall",
+	"__fastcall",
+	"__thiscall",
+	"__regcall",
+	"__vectorcall",
+	"__pascal",
+
+	"__PRETTY_FUNCTION__",
 	"__extension__",
-  "__real",
-  "__imag",
+  "__real",     # GNU extension
+  "__imag",     # GNU extension
+  "__label__",
 	"asm",
-	"__asm__",
+	"nullptr",    # since C23
+	"true",       # since C23
+	"false",      # since C23
+	"__objc_yes", # clang Objective-C extension
+	"__objc_no",  # clang Objective-C extension
 	"return",
 	"for",
 	"case",
@@ -82,6 +129,45 @@ keywords = (
 	"_Alignof",
 	"_Static_assert",
 	"_Generic"
+)
+keywords_alias = (
+	("__FUNCTION__", "__func__"),
+	("__alignof__", "_Alignof"),
+	("__alignof", "_Alignof"),
+	("__builtin_alignof", "_Alignof"),
+	("__asm", "asm"),
+	("__asm__", "asm"),
+	("_asm", "asm"),
+	("_cdecl", "__cdecl"),
+	("_fastcall", "__fastcall"),
+	("_stdcall", "__stdcall"),
+	("_thiscall", "__thiscall"),
+	("_vectorcall", "__vectorcall"),
+	("__attribute__", "__attribute"),
+	("__complex", "_Complex"),
+	("__complex__", "_Complex"),
+	("__const", "const"),
+	("__const__", "const"),
+	("__imag__", "__imag"),
+	("__real__", "__real"),
+	("__inline", "inline"),
+	("__inline__", "inline"),
+	("_inline", "inline"),
+	("__nullptr", "nullptr"),
+	("__restrict", "restrict"),
+	("__volatile", "volatile"),
+	("__volatile__", "volatile"),
+	("__signed", "signed"),
+	("__signed__", "signed"),
+	("__typeof", "typeof"),
+	("__typeof__", "typeof"),
+	("alignas", "_Alignas"),
+	("alignof", "_Alignof"),
+	("bool", "_Bool"),
+	("static_assert", "_Static_assert"),
+	("thread_local", "_Thread_local"),
+	("__fp16", "half"),
+	("_declspec", "__declspec"),
 )
 stmts = {
 	"SHead": (),
@@ -271,7 +357,6 @@ def gen_tokens():
 	
 	P("TIdentifier", "<TIdentifier>") # name(identifier), after macro processing
 	P("PPIdent", "<PPIdent>") # identifier, may be a macro
-	P("PP__func__", "__func__", True)
 	P("PP_main", "main", True)
 	P("PP__VA_ARGS__", "__VA_ARGS__", True)
 	# built-in macros
@@ -308,6 +393,10 @@ def gen_tokens():
 	f = open("IdentifierTableInit.inc", "w")
 	f.write(',\n'.join(
 		('{"%s", %s}' % (i, 'K' + i)) for i in keywords)
+	)
+	f.write(',\n')
+	f.write(',\n'.join(
+		('{"%s", %s}' % (i, 'K' + j) for (i, j) in keywords_alias))
 	)
 	f.write(',\n')
 	f.write(',\n'.join(

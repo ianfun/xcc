@@ -19,7 +19,7 @@ int main(int argc_, const char **argv_)
     XInitLLVM crashReport(engine, argc_, argv_);
 
     // init args
-    llvm::SmallVector<const char *, 8> argv(argv_, argv_ + argc_);
+    llvm::ArrayRef<const char*> argv(argv_, argv_ + argc_);
     
     // register targets
     llvm::InitializeAllTargets();

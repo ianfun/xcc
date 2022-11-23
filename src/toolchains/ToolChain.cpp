@@ -26,9 +26,9 @@ FileType lookupTypeForExtension(StringRef Ext) {
     default: return TY_INVALID;
   }
 }
-class Driver;
+struct Driver;
 
-class Command {
+struct Command {
   StringRef Program;
   SmallVector<StringRef> args;
   void addArg(StringRef arg) {
@@ -70,7 +70,7 @@ struct ToolChain {
   AssemblerBuilder theAssembler;
   LinkerBuilder theLinker;
   ToolChain(const Driver &D, const llvm::Triple &T, const llvm::opt::ArgList &Args, AssemblerBuilder Assembler = buildAssembler, LinkerBuilder Linker = buildLinker)
-  : D(D), Triple(T), Args(Args), theAssembler{Assembler},  theLinker{Linker} {}
+  : Triple(T), D(D), Args(Args), theAssembler{Assembler},  theLinker{Linker} {}
   auto getLinker() const { return theLinker; };
   auto getAssembler() const { return theAssembler; };
   virtual void addSystemIncludes(llvm::SmallVectorImpl<const char*> paths) {};

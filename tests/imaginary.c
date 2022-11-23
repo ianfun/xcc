@@ -1,6 +1,6 @@
 // program to test imaginary numbers specfied in 
 // C23 Annex G - IEC 60559-compatible complex arithmetic
-
+/*
 _Imaginary double a = 10j;
 _Bool zero = 0j;
 _Bool non_zero = 1j;
@@ -22,10 +22,10 @@ _Complex double imaginary_sub2(_Imaginary double real, double imag) {
 }
 _Complex double imaginary_sub3(double real, double _Imaginary imag) {
         return imag - real;
-}
-_Imaginary double imaginary_mul1(_Imaginary double a, _Imaginary double b) {
+}*/
+double imaginary_mul1(_Imaginary double a, _Imaginary double b) {
 	return a * b;
-}
+}/*
 _Imaginary double imaginary_mul2(double a, _Imaginary double b) {
         return a * b;
 }
@@ -65,3 +65,4 @@ double always_zero(_Imaginary double a) {
 _Imaginary double always_zero2(double a) {
 	return a;
 }
+*/

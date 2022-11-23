@@ -4,7 +4,7 @@
     auto ast = parser.run(num_typedefs, num_tags);
     printer.finalize();
 
-    if (printer.NumErrors)
+    if (engine.getNumErrors())
         return 1;
 
     ig.run(ast, num_typedefs, num_tags);

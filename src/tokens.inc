@@ -80,6 +80,17 @@ enum Token: unsigned char {
   K_Decimal32,
   K_Decimal128,
   K_Decimal64,
+  K__int128,
+  K_Float16,
+  K_Accum,
+  K_Fract,
+  K_Sat,
+  K__float128,
+  K__bf16,
+  Khalf,
+  K__ibm128,
+  K__thread,
+  K__auto_type,
   K_Imaginary,
   K_Complex,
   K_Atomic,
@@ -95,15 +106,44 @@ enum Token: unsigned char {
   Klong,
   Kfloat,
   Kdouble,
+  Ktypeof_unqual,
+  Ktypeof,
+  K_BitInt,
   K_Alignas,
   Kconst,
   Krestrict,
   Kvolatile,
+  K__func__,
+  K__declspec,
+  K__attribute,
+  K__builtin_choose_expr,
+  K__builtin_offsetof,
+  K__builtin_FILE,
+  K__builtin_FUNCTION,
+  K__builtin_LINE,
+  K__builtin_COLUMN,
+  K__builtin_types_compatible_p,
+  K__builtin_va_arg,
+  K__builtin_bit_cast,
+  K__builtin_available,
+  K__cdecl,
+  K__stdcall,
+  K__fastcall,
+  K__thiscall,
+  K__regcall,
+  K__vectorcall,
+  K__pascal,
+  K__PRETTY_FUNCTION__,
   K__extension__,
   K__real,
   K__imag,
+  K__label__,
   Kasm,
-  K__asm__,
+  Knullptr,
+  Ktrue,
+  Kfalse,
+  K__objc_yes,
+  K__objc_no,
   Kreturn,
   Kfor,
   Kcase,
@@ -122,7 +162,6 @@ enum Token: unsigned char {
   K_Generic,
   TIdentifier,
   PPIdent,
-  PP__func__,
   PP_main,
   PP__VA_ARGS__,
   PP__LINE__,
@@ -159,6 +198,17 @@ static const char *show(Token o){
     case K_Decimal32: return "_Decimal32";
     case K_Decimal128: return "_Decimal128";
     case K_Decimal64: return "_Decimal64";
+    case K__int128: return "__int128";
+    case K_Float16: return "_Float16";
+    case K_Accum: return "_Accum";
+    case K_Fract: return "_Fract";
+    case K_Sat: return "_Sat";
+    case K__float128: return "__float128";
+    case K__bf16: return "__bf16";
+    case Khalf: return "half";
+    case K__ibm128: return "__ibm128";
+    case K__thread: return "__thread";
+    case K__auto_type: return "__auto_type";
     case K_Imaginary: return "_Imaginary";
     case K_Complex: return "_Complex";
     case K_Atomic: return "_Atomic";
@@ -174,15 +224,44 @@ static const char *show(Token o){
     case Klong: return "long";
     case Kfloat: return "float";
     case Kdouble: return "double";
+    case Ktypeof_unqual: return "typeof_unqual";
+    case Ktypeof: return "typeof";
+    case K_BitInt: return "_BitInt";
     case K_Alignas: return "_Alignas";
     case Kconst: return "const";
     case Krestrict: return "restrict";
     case Kvolatile: return "volatile";
+    case K__func__: return "__func__";
+    case K__declspec: return "__declspec";
+    case K__attribute: return "__attribute";
+    case K__builtin_choose_expr: return "__builtin_choose_expr";
+    case K__builtin_offsetof: return "__builtin_offsetof";
+    case K__builtin_FILE: return "__builtin_FILE";
+    case K__builtin_FUNCTION: return "__builtin_FUNCTION";
+    case K__builtin_LINE: return "__builtin_LINE";
+    case K__builtin_COLUMN: return "__builtin_COLUMN";
+    case K__builtin_types_compatible_p: return "__builtin_types_compatible_p";
+    case K__builtin_va_arg: return "__builtin_va_arg";
+    case K__builtin_bit_cast: return "__builtin_bit_cast";
+    case K__builtin_available: return "__builtin_available";
+    case K__cdecl: return "__cdecl";
+    case K__stdcall: return "__stdcall";
+    case K__fastcall: return "__fastcall";
+    case K__thiscall: return "__thiscall";
+    case K__regcall: return "__regcall";
+    case K__vectorcall: return "__vectorcall";
+    case K__pascal: return "__pascal";
+    case K__PRETTY_FUNCTION__: return "__PRETTY_FUNCTION__";
     case K__extension__: return "__extension__";
     case K__real: return "__real";
     case K__imag: return "__imag";
+    case K__label__: return "__label__";
     case Kasm: return "asm";
-    case K__asm__: return "__asm__";
+    case Knullptr: return "nullptr";
+    case Ktrue: return "true";
+    case Kfalse: return "false";
+    case K__objc_yes: return "__objc_yes";
+    case K__objc_no: return "__objc_no";
     case Kreturn: return "return";
     case Kfor: return "for";
     case Kcase: return "case";
@@ -201,7 +280,6 @@ static const char *show(Token o){
     case K_Generic: return "_Generic";
     case TIdentifier: return "<TIdentifier>";
     case PPIdent: return "<PPIdent>";
-    case PP__func__: return "__func__";
     case PP_main: return "main";
     case PP__VA_ARGS__: return "__VA_ARGS__";
     case PP__LINE__: return "__LINE__";

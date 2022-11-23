@@ -40,6 +40,7 @@ struct xcc_context {
         _size_t = make_unsigned(getSize_tLog2());
         _ptr_diff_t = make_signed(getSize_tLog2());
         _uint_ptr = make_unsigned(6);
+        _nullptr_t = getPointerType(v, TYNULLPTR);
 
         // For wide string literals prefixed by the letter u or U, the array elements have type char16_t or char32_t
         str32ty = getPointerType(make(getChar()->getTags() | TYCONST));
@@ -64,10 +65,10 @@ struct xcc_context {
     }
     IdentifierTable table; // contains allocator!
     CType constint, b, v, i8, u8, i16, u16, i32, u32, i64, u64, i128, u128, 
-    ffloatty, fdoublety, bfloatty, fhalfty, f128ty, ppc_f128, f80ty, str8ty, str16ty, str32ty, stringty, wstringty, _complex_float, _complex_double, 
+    ffloatty, fdoublety, bfloatty, fhalfty, f128ty, ppc_f128, f80ty, str8ty, str16ty, str32ty, stringty, wstringty, _complex_float, _complex_double,
     _complex_longdouble, 
     _short ,_ushort, _wchar, _long, _ulong, _longlong, _ulonglong, _longdouble, _uchar, 
-    _size_t, _ptr_diff_t, _uint_ptr, fdecimal32, fdecimal64, fdecimal128, _imaginary_double, _imaginary_float;
+    _size_t, _ptr_diff_t, _uint_ptr, fdecimal32, fdecimal64, fdecimal128, _imaginary_double, _imaginary_float, _nullptr_t;
     [[nodiscard]] CType make(uint64_t tags) {
         return TNEW(PrimType){.tags = tags};
     }
@@ -155,6 +156,9 @@ struct xcc_context {
         CType result = TNEW(ArrayType){.tags = 0, .arrtype = elementType, .hassize = true, .arrsize = size};
         result->setKind(TYARRAY);
         return result;
+    }
+    [[nodiscard]] CType getNullPtr_t() const {
+        return _nullptr_t;
     }
     [[nodiscard]] CType createDummyType() {
         CType res = reinterpret_cast<CType>(getAllocator().Allocate(ctype_max_size, 1));

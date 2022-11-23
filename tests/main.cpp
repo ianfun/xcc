@@ -1,4 +1,4 @@
-// the main program include file
+#define XCC_MAIN 1
 
 #include "../src/xcc.h"
 #include "../src/xInitLLVM.cpp"
@@ -99,14 +99,21 @@ int main(int argc_, const char **argv_)
 {
     assert(argc_ > 0 && "no program name!");
     assert(argv_ && "NULL argv!");
+
+    // create a DiagnosticsEngine for diagnostics
+    xcc::DiagnosticsEngine engine;
+
     // make our text printer that print to stderr
     xcc::TextDiagnosticPrinter printer(llvm::errs()); 
 
+    // add the printer to engine
+    engine.addConsumer(&printer);
+
     // create xcc_context
-    xcc::xcc_context ctx {&printer};
+    xcc::xcc_context ctx;
 
     // create a crash report info
-    XInitLLVM crashReport(ctx, argc_, argv_);
+    XInitLLVM crashReport(engine, argc_, argv_);
 
     // init args
     llvm::ArrayRef<const char *> argv(argv_, size_t(argc_));
@@ -115,16 +122,16 @@ int main(int argc_, const char **argv_)
     llvm::InitializeAllTargets();
 
     // create the Driver
-    xcc::driver::Driver theDriver(ctx);
+    xcc::driver::Driver theDriver(engine);
 
     // XCC options
     xcc::Options options;
 
     // create SourceMgr for mangement source files
-    xcc::SourceMgr SM(ctx);
+    xcc::SourceMgr SM(engine);
 
     // set SourceMgr to the printer for printing source lines
-    ctx.printer->setSourceMgr(&SM);
+    printer.setSourceMgr(&SM);
 
     int ret = CC_EXIT_SUCCESS;
     // parse options ...
@@ -158,16 +165,16 @@ int main(int argc_, const char **argv_)
     llvmcontext->setDiagnosticHandler(std::make_unique<xcc::XCCDiagnosticHandler>()); 
 
     // preparing target information and ready for code generation to LLVM IR
-    xcc::IRGen ig(ctx, SM, *llvmcontext, options);
+    xcc::IRGen ig(ctx, engine, SM, *llvmcontext, options);
 
     // create parser
-    xcc::Parser parser(SM, ctx, ig);
+    xcc::Parser parser(SM, ig, engine, ctx);
 
     // now, parsing source files ...
     size_t num_typedefs = 0, num_tags = 0;
     auto ast = parser.run(num_typedefs, num_tags);
 
-    if (ctx.printer->NumErrors)
+    if (engine.getNumErrors())
         return CC_EXIT_FAILURE;
 
     if (theDriver.getArgs().hasArg(xcc::driver::options::OPT_fsyntax_only))

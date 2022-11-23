@@ -10,7 +10,19 @@ struct StringPool {
     DenseMap<ArrayRef<uint16_t>, GV> interns16;
     DenseMap<ArrayRef<uint32_t>, GV> interns32;
     StringPool(const IRGen &ig) : irgen{ig} { }
-    GV getAsUTF8(xstring &s) {
+    GV getEmptyString() {
+        auto it = interns.insert(std::make_pair(StringRef("", 1), nullptr));
+        if (it.second) {
+            auto str = llvm::ConstantAggregateZero::get(llvm::ArrayType::get(irgen.integer_types[3], 1));
+            auto GV = new llvm::GlobalVariable(*irgen.module, str->getType(), true, IRGen::PrivateLinkage, str, ".cstr");
+            GV->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
+            GV->setAlignment(irgen.layout->getPrefTypeAlign(irgen.integer_types[3]));
+            GV->setConstant(true);
+            it.first->second = GV;
+        }
+        return it.first->second;
+    }
+    GV getAsUTF8(const StringRef &s) {
         auto it = interns.insert(std::make_pair(s.str(), nullptr));
         if (it.second) {
             auto str = enc::getUTF8(s, irgen.ctx);
@@ -23,7 +35,7 @@ struct StringPool {
         }
         return it.first->second;
     }
-    GV getAsUTF16(xstring s, bool is32Bit) {
+    GV getAsUTF16(const StringRef &s, bool is32Bit) {
         if (is32Bit) {
             SmallVector<uint32_t> data;
             uint32_t state = 0, codepoint;
@@ -77,7 +89,7 @@ struct StringPool {
         }
         return it.first->second;  
     }
-    GV getAsUTF32(xstring s) {
+    GV getAsUTF32(const StringRef &s) {
         SmallVector<uint32_t> data;
         uint32_t state = 0, codepoint;
         for (const auto c : s)

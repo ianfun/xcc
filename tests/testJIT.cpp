@@ -24,36 +24,43 @@ void myGetLine(std::string &line) {
 
 int main(int argc_, const char **argv_)
 {
+    // create a DiagnosticsEngine for diagnostics
+    xcc::DiagnosticsEngine engine;
+
     // make our text printer that print to stderr
     xcc::TextDiagnosticPrinter printer(llvm::errs()); 
 
+    // add the printer to engine
+    engine.addConsumer(&printer);
+
     // create xcc_context
-    xcc::xcc_context ctx {&printer};
+    xcc::xcc_context ctx;
 
     // create a crash report info
-    XInitLLVM crashReport(ctx, argc_, argv_);
+    XInitLLVM crashReport(engine, argc_, argv_);
 
     // init args
-    llvm::SmallVector<const char *, 8> argv(argv_, argv_ + argc_);
+    llvm::ArrayRef<const char*> argv(argv_, argv_ + argc_);
     
     // register targets
     llvm::InitializeAllTargets();
 
     // create the Driver
-    xcc::driver::Driver theDriver(ctx);
+    xcc::driver::Driver theDriver(engine);
 
     // XCC options
     xcc::Options options;
 
     // create SourceMgr for mangement source files
-    xcc::SourceMgr SM(ctx);
+    xcc::SourceMgr SM(engine);
 
     // set SourceMgr to the printer for printing source lines
-    ctx.printer->setSourceMgr(&SM);
+    printer.setSourceMgr(&SM);
 
+    int ret = 0;
     // parse options ...
-    if (theDriver.BuildCompilation(argv, options, SM))
-        return 1;
+    if (theDriver.BuildCompilation(argv, options, SM, ret))
+        return ret;
 
     llvm::InitializeAllAsmParsers();
     llvm::InitializeAllAsmPrinters();
@@ -68,16 +75,16 @@ int main(int argc_, const char **argv_)
     llvmcontext->setDiagnosticHandler(std::make_unique<xcc::XCCDiagnosticHandler>()); 
 
     // preparing target information and ready for code generation to LLVM IR
-    xcc::IRGen ig(ctx, SM, *llvmcontext, options);
+    xcc::IRGen ig(ctx, engine, SM, *llvmcontext, options);
 
     // create parser
-    xcc::Parser parser(SM, ctx, ig);
+    xcc::Parser parser(SM, ig, engine, ctx);
 
     // now, parsing source files ...
     size_t num_typedefs, num_tags;
     auto ast = parser.run(num_typedefs, num_tags);
     printer.finalize();
-    if (ctx.printer->NumErrors)
+    if (engine.getNumErrors())
         return 1;
 
     ig.run(ast, num_typedefs, num_tags);

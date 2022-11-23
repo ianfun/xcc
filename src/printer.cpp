@@ -1,6 +1,6 @@
-raw_ostream &operator<<(llvm::raw_ostream &, const CType);
+raw_ostream &operator<<(llvm::raw_ostream &, const_CType);
 
-raw_ostream &operator<<(llvm::raw_ostream &OS, const Expr e) {
+raw_ostream &operator<<(llvm::raw_ostream &OS, const_Expr e) {
     switch (e->k) {
     case EConstantArraySubstript: e->carray->getInitializer()->print(OS); return OS;
     case EConstantArray: e->array->print(OS); return OS;
@@ -43,7 +43,7 @@ raw_ostream &operator<<(llvm::raw_ostream &OS, const Expr e) {
     llvm_unreachable("");
 }
 
-raw_ostream &operator<<(llvm::raw_ostream &OS, const CType ty) {
+raw_ostream &operator<<(llvm::raw_ostream &OS, const_CType ty) {
     switch (ty->getKind()) {
     case TYPRIM: {
         auto str0 = ty->get_pointer_qual_str();
@@ -55,6 +55,8 @@ raw_ostream &operator<<(llvm::raw_ostream &OS, const CType ty) {
         return ty->print_basic(OS);
     }
     case TYPOINTER: {
+        if (ty->isNullPtr_t())
+            return OS << "nullptr_t";
         auto str = ty->get_pointer_qual_str();
         bool isArrType = ty->p->getKind() == TYARRAY;
         if (isArrType)
@@ -107,7 +109,7 @@ raw_ostream &operator<<(llvm::raw_ostream &OS, const CType ty) {
     llvm_unreachable("");
 }
 
-raw_ostream &operator>>(llvm::raw_ostream &OS, const CType ty) {
+raw_ostream &operator>>(llvm::raw_ostream &OS, const_CType ty) {
     switch (ty->getKind()) {
     case TYPRIM: {
         auto str0 = ty->get_pointer_qual_str();
@@ -119,6 +121,8 @@ raw_ostream &operator>>(llvm::raw_ostream &OS, const CType ty) {
         return ty->print_basic(OS);
     }
     case TYPOINTER: {
+        if (ty->isNullPtr_t())
+            return OS << "nullptr_t";
         auto str = ty->get_pointer_qual_str();
         OS << "pointer[elementType=" << ty->p;
         if (!str.empty())
@@ -168,7 +172,7 @@ raw_ostream &operator>>(llvm::raw_ostream &OS, const CType ty) {
     llvm_unreachable("");
 }
 
-void print_cdecl(const CType ty, raw_ostream &OS) {
+void print_cdecl(const_CType ty, raw_ostream &OS) {
     switch (ty->getKind()) {
     case TYPRIM: {
         auto str0 = ty->get_pointer_qual_str();
@@ -181,6 +185,8 @@ void print_cdecl(const CType ty, raw_ostream &OS) {
         break;
     }
     case TYPOINTER: {
+        if (ty->isNullPtr_t())
+            return (void)(OS << "nullptr_t");
         auto str = ty->get_pointer_qual_str();
         if (!str.empty())
             OS << str << ' ';
@@ -233,7 +239,7 @@ void print_cdecl(const CType ty, raw_ostream &OS) {
     case TYINCOMPLETE: OS << show(ty->tag) << ' ' << ty->name->getKey(); break;
     }
 }
-void print_cdecl(StringRef name, const CType ty, raw_ostream &OS = llvm::errs(), bool addNewLine = false) {
+void print_cdecl(StringRef name, const_CType ty, raw_ostream &OS = llvm::errs(), bool addNewLine = false) {
     OS << "declare " << name << " as ";
     print_cdecl(ty, OS);
     if (addNewLine)

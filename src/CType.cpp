@@ -1,10 +1,11 @@
 // CType - 64 bit unsigned integer
 struct OpaqueCType
 {
+    static constexpr type_tag_t important_mask =  TYCOMPLEX | TYIMAGINARY | TYVOID | TYNULLPTR;
 private:
     OpaqueCType(): tags{0} {}
-    OpaqueCType(uint64_t tags): tags{tags} {};
-    uint64_t tags;
+    OpaqueCType(type_tag_t tags): tags{tags} {};
+    type_tag_t tags;
     [[maybe_unused]] static void TEST1() {
         OpaqueCType a = {};
         for (unsigned i = 0;i < 64;++i) {
@@ -28,7 +29,7 @@ private:
         puts("TEST 1: OK");
     }
     [[maybe_unused]] static void TEST2() {
-        uint64_t s;
+        type_tag_t s;
         OpaqueCType a;
         for (unsigned i = 0;i < 8;++i) {
             a.tags = build_integer(i);
@@ -38,7 +39,7 @@ private:
             a.setAlignLog2Value(i);
             assert(a.isSigned()==s);
             assert(a.isInteger());
-            assert((uint64_t)a.getIntegerKind().asLog2()==i);
+            assert((type_tag_t)a.getIntegerKind().asLog2()==i);
             assert(a.getAlignLog2Value()==i);
             a.clearIntegerAllBits();
             assert(a.getAlignLog2Value()==i);
@@ -53,7 +54,7 @@ private:
         {
             a.tags = build_float(i);
             assert(a.isFloating());
-            assert(static_cast<uint64_t>(a.getFloatKind()) == i);
+            assert(static_cast<type_tag_t>(a.getFloatKind()) == i);
             a.setAlignLog2Value(i);
             assert(a.getAlignLog2Value()==i);
             a.clearFloatAllBits();
@@ -72,15 +73,21 @@ public:
         TEST3();
         puts("All tests passed.");
     }
-    uint64_t getTags() const { return tags; }
-    uint64_t getTagsQualifiersOnly() const { return tags & type_qualifiers; }
-    uint64_t getTagsStoragesOnly() const { return tags & storage_class_specifiers; }
-    uint64_t getTagsQualifiersAndStoragesOnly() const { return tags & type_qualifiers_and_storage_class_specifiers;}
-    uint64_t getTagsNoQualifiersAndStorages() const { return tags & ~type_qualifiers_and_storage_class_specifiers; }
-    uint64_t getTagsNoQualifiers() const { return tags & ~type_qualifiers; }
-    uint64_t getTagsNoStorages() const { return tags & ~storage_class_specifiers; }
+    type_tag_t getTags() const { return tags; }
+    type_tag_t getTagsQualifiersOnly() const { return tags & type_qualifiers; }
+    type_tag_t getTagsStoragesOnly() const { return tags & storage_class_specifiers; }
+    type_tag_t getTagsQualifiersAndStoragesOnly() const { return tags & type_qualifiers_and_storage_class_specifiers;}
+    type_tag_t getTagsNoQualifiersAndStorages() const { return tags & ~type_qualifiers_and_storage_class_specifiers; }
+    type_tag_t getTagsNoQualifiers() const { return tags & ~type_qualifiers; }
+    type_tag_t getTagsNoStorages() const { return tags & ~storage_class_specifiers; }
+    void clearQualifiers() {
+        tags &= ~type_qualifiers;
+    }
+    void clearStorages() {
+        tags &= ~storage_class_specifiers;
+    }
     void lvalue_cast() {
-        tags = getTagsNoQualifiersAndStorages() | TYLVALUE;
+        tags = getTagsNoQualifiersAndStorages();
     }
     bool isVoid() const { return tags & TYVOID; }
     bool isComplex() const { return tags & TYCOMPLEX; }
@@ -96,8 +103,7 @@ public:
         // two IntegerKinds or FloatKinds are equal
         assert(getKind() == TYPRIM);
         assert(other->getKind() == TYPRIM);
-        constexpr auto mask = TYCOMPLEX | TYIMAGINARY | TYVOID;
-        if ((getTags() & mask) != (other->getTags() & mask))
+        if ((getTags() & important_mask) != (other->getTags() & important_mask))
             return false;
         bool A = isInteger();
 
@@ -114,59 +120,62 @@ public:
     bool isGlobalStorage() const {
         return tags & (TYSTATIC | TYEXTERN);
     }
-    void setTag(uint64_t new_tag) { tags = new_tag; }
-    void setTags(const uint64_t new_tags) { tags = new_tags; }
-    bool hasTag(const uint64_t theTag) const {
+    void setTag(type_tag_t new_tag) { tags = new_tag; }
+    void setTags(const type_tag_t new_tags) { tags = new_tags; }
+    bool hasTag(const type_tag_t theTag) const {
         return tags & theTag;
     }
-    bool hasTags(const uint64_t theTag) const {
+    bool hasTags(const type_tag_t theTag) const {
         return hasTag(theTag);
     }
-    void addTag(const uint64_t tag) {
+    void addTag(const type_tag_t tag) {
         tags |= tag;
     }
-    void addTags(const uint64_t tags) {
+    void addTags(const type_tag_t tags) {
         return addTag(tags);
     }
     bool isScalar() const {
         auto k = getKind();
         return k == TYPOINTER || (k == TYPRIM && !(tags & TYVOID));
     }
+    bool isNullPtr_t() const {
+        return hasTag(TYNULLPTR);
+    }
     enum CTypeKind getKind() const {
         return static_cast<enum CTypeKind>(tags >> 60);
     }
     void setKind(enum CTypeKind kind) {
-        const uint64_t k = static_cast<uint64_t>(kind);
+        const type_tag_t k = static_cast<type_tag_t>(kind);
         assert(k <= 15 && "invalid CTypeKind");
         tags |= (k << 60);
     }
-    void setKind(uint64_t kind) {
+    void setKind(type_tag_t kind) {
         return setKind(static_cast<enum CTypeKind>(kind));
     }
-    uint64_t getAlignLog2Value() const {
+    type_tag_t getAlignLog2Value() const {
         return (tags >> 53) & 63;
     }
     llvm::MaybeAlign getAlignAsMaybeAlign() const {
-        uint64_t A = getAlignLog2Value();
-        if (A) return llvm::Align(uint64_t(1) << A);
+        type_tag_t A = getAlignLog2Value();
+        if (A) return llvm::Align(type_tag_t(1) << A);
         return llvm::MaybeAlign();
     }
-    void setAlignLog2Value(uint64_t Align) {
+    void setAlignLog2Value(type_tag_t Align) {
         assert(Align < 64 && "Alignment too large");
         tags |= (Align << 53);
     }
-    void setAlignInBytes(uint64_t Bytes) {
+    void setAlignInBytes(type_tag_t Bytes) {
         assert(llvm::isPowerOf2_64(Bytes) && "Alignment bytes is not a power of 2");
         return setAlignLog2Value(llvm::Log2_64(Bytes));
     }
-    void setAlignInBits(uint64_t Bits) {
+    void setAlignInBits(type_tag_t Bits) {
         assert(llvm::isPowerOf2_64(Bits) && "Alignment bits is not power of 2");
         return setAlignInBytes(llvm::Log2_64(Bits));
     }
     void clearAlignAllBits() {
         tags &= ~(63ULL << 53);
     }
-    static constexpr uint64_t integer_bit = 1ULL << 52;
+    static constexpr type_tag_t integer_bit = 1ULL << 52;
     void setFloatReprsentation() {
         tags |= integer_bit;
     }
@@ -182,7 +191,7 @@ public:
     void toogleReprsentation() {
         tags ^= integer_bit;
     }
-    static constexpr uint64_t sign_bit = 1ULL << 51;
+    static constexpr type_tag_t sign_bit = 1ULL << 51;
     void setSigned() {
         assert(isInteger());
         tags |= sign_bit;
@@ -206,7 +215,7 @@ public:
         assert(isInteger());
         tags ^= sign_bit;
     }
-    uint64_t getRawData() const {
+    type_tag_t getRawData() const {
         return tags >> 47;
     }
     IntegerKind getIntegerKind() const {
@@ -217,7 +226,7 @@ public:
         assert(isFloating());
         return getRawData() & 0b1111;
     }
-    uint64_t getBitWidth() const {
+    type_tag_t getBitWidth() const {
         return isInteger() ? getIntegerKind().getBitWidth() : getFloatKind().getBitWidth();
     }
     void clearFloatAllBits() {
@@ -226,7 +235,7 @@ public:
     void clearIntegerAllBits() {
         tags &= ~(0b111ULL << 47);
     }
-    [[nodiscard]] uint64_t del(uint64_t tags_to_delete) const {
+    [[nodiscard]] type_tag_t del(type_tag_t tags_to_delete) const {
         return tags & ~tags_to_delete;
     }
     [[maybe_unused]] void dumpBits(){
@@ -240,13 +249,13 @@ public:
         bin(tags >> 56);
         putchar(10);
     }
-    void clearTags(const uint64_t tags_to_clear) {
+    void clearTags(const type_tag_t tags_to_clear) {
         tags &= ~tags_to_clear;
     }
-    void clearTag(const uint64_t tag_to_clear) {
+    void clearTag(const type_tag_t tag_to_clear) {
         tags &= ~tag_to_clear;
     }
-    uint64_t andTags(const uint64_t tag_to_clear) const {
+    type_tag_t andTags(const type_tag_t tag_to_clear) const {
         return tags & tag_to_clear;
     }
     void noralize() {
