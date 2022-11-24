@@ -199,6 +199,15 @@ struct xcc_context {
     [[nodiscard]] CType getPPCFloat128() const {
         return ppc_f128;
     }
+    [[nodiscard]] CType getDecimal32() const {
+        return fdecimal32;
+    }
+    [[nodiscard]] CType getDecimal64() const {
+        return fdecimal64;
+    }
+    [[nodiscard]] CType getDecimal128() const {
+        return fdecimal128;
+    }
     [[nodiscard]] CType getBool() const {
         return b;
     }
@@ -231,13 +240,13 @@ struct xcc_context {
     [[nodiscard]] CType getChar32_t() const {
         return u32;
     }
-    [[nodiscard]] unsigned getChar8_tLog2() const {
+    [[nodiscard]] uint8_t getChar8_tLog2() const {
         return 3;
     }
-    [[nodiscard]] unsigned getChar16_tLog2() const {
+    [[nodiscard]] uint8_t getChar16_tLog2() const {
         return 4;
     }
-    [[nodiscard]] unsigned getChar32_tLog2() const {
+    [[nodiscard]] uint8_t getChar32_tLog2() const {
         return 5;
     }
     [[nodiscard]] CType getLong() const {
@@ -258,6 +267,12 @@ struct xcc_context {
     [[nodiscard]] CType getUShort() const {
         return _ushort;
     }
+    [[nodiscard]] CType getInt128() const {
+        return i128;
+    }
+    [[nodiscard]] CType getUInt128() const {
+        return u128;
+    }
     [[nodiscard]] CType getPtrDiff_t() const { return _ptr_diff_t; }
     [[nodiscard]] CType getSize_t() const { return _size_t; }
     [[nodiscard]] CType getUint_ptr_t() const {
@@ -277,23 +292,26 @@ struct xcc_context {
     [[nodiscard]] PPMacroDef *newMacro() {
         return new (getAllocator()) PPMacroDef();
     }
-    [[nodiscard]] unsigned getBoolLog2() const {
+    [[nodiscard]] uint8_t getBoolLog2() const {
         return 0;
     }
-    [[nodiscard]] unsigned getCharLog2() const {
+    [[nodiscard]] uint8_t getCharLog2() const {
         return 3;
     }
-    [[nodiscard]] unsigned getShortLog2() const {
+    [[nodiscard]] uint8_t getShortLog2() const {
         return 4;
     }
-    [[nodiscard]] unsigned getIntLog2() const {
+    [[nodiscard]] uint8_t getIntLog2() const {
         return 5;
     }
-    [[nodiscard]] unsigned getLongLog2() const {
+    [[nodiscard]] uint8_t getLongLog2() const {
         return 6;
     }
-    [[nodiscard]] unsigned getLongLongLog2() const {
+    [[nodiscard]] uint8_t getLongLongLog2() const {
         return 6;
+    }
+    [[nodiscard]] uint8_t getInt128Log2() const {
+        return 7;
     }
     // https://learn.microsoft.com/en-us/cpp/cpp/string-and-character-literals-cpp?view=msvc-170
     // Linux's wchar(L prefix) is int, Windows is unsigned short
@@ -307,7 +325,7 @@ struct xcc_context {
     u | char16_t
     U | char32_t
     */ 
-    [[nodiscard]] unsigned getWCharLog2() const {
+    [[nodiscard]] uint8_t getWCharLog2() const {
         return 5;
     }
     [[nodiscard]] bool isWChar_tSigned() const {
@@ -315,7 +333,7 @@ struct xcc_context {
         // signed int Linux(int)
         return true;
     }
-    [[nodiscard]] unsigned getUCharLog2() const {
+    [[nodiscard]] uint8_t getUCharLog2() const {
         return 5;
     }
     [[nodiscard]] bool isUChar_tSigned() const {
@@ -325,10 +343,10 @@ struct xcc_context {
     [[nodiscard]] FloatKind getLongDobuleFloatKind() const {
         return F_Quadruple;
     }
-    [[nodiscard]] unsigned getSize_tLog2() const {
+    [[nodiscard]] uint8_t getSize_tLog2() const {
         return 6;
     }
-    [[nodiscard]] unsigned getSize_tBitWidth() const {
+    [[nodiscard]] uint8_t getSize_tBitWidth() const {
         return _size_t->getIntegerKind().getBitWidth();
     }
 };

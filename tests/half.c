@@ -1,9 +1,8 @@
-float half_add(unsigned a) {
-	volatile __fp16 fp = a;
+float half_add(float init) {
+	half fp = init;
 	fp++;
 	fp = -fp;
-	fp *= fp;
-	fp /= fp;
-	return fp;
+	return (fp * 5) / 3;
 }
+
 

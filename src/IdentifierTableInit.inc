@@ -17,6 +17,7 @@
 {"_Fract", K_Fract},
 {"_Sat", K_Sat},
 {"__float128", K__float128},
+{"__float80", K__float80},
 {"__bf16", K__bf16},
 {"half", Khalf},
 {"__ibm128", K__ibm128},

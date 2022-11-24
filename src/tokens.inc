@@ -86,6 +86,7 @@ enum Token: unsigned char {
   K_Fract,
   K_Sat,
   K__float128,
+  K__float80,
   K__bf16,
   Khalf,
   K__ibm128,
@@ -204,6 +205,7 @@ static const char *show(Token o){
     case K_Fract: return "_Fract";
     case K_Sat: return "_Sat";
     case K__float128: return "__float128";
+    case K__float80: return "__float80";
     case K__bf16: return "__bf16";
     case Khalf: return "half";
     case K__ibm128: return "__ibm128";

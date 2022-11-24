@@ -48,6 +48,7 @@ keywords = (
 	"_Fract",
 	"_Sat",
 	"__float128",
+	"__float80",
 	"__bf16",
 	"half",
 	"__ibm128",

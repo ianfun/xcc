@@ -534,7 +534,6 @@ private:
         return make_cast(e, UIToFP, to);
     }
     Expr float_to_integer(Expr e, CType to) {
-        puts("float_to_integer");
         assert(e->ty && "cannot cast from expression with no type");
         assert(e->ty->isFloating() && "bad call to float_to_integer()");
         assert((to->isInteger()) && "bad call to float_to_integer()");
@@ -789,6 +788,25 @@ PTR_CAST:
         b = castto(b, resultTy);
         return;
     }
+    void fp_conv(Expr &a, Expr &b, CType at, CType bt) {
+        auto k1 = at->getFloatKind().asEnum();
+        auto k2 = bt->getFloatKind().asEnum();
+        if (k1 == k2)
+            return;
+#define HANDLE_FP_CAST(F) \
+if (k1 == F) return (void)(b = float_cast(b, at, k1, F)); \
+if (k2 == F) return (void)(a = float_cast(a, bt, k2, F));
+        HANDLE_FP_CAST(F_Decimal128);
+        HANDLE_FP_CAST(F_Decimal64);
+        HANDLE_FP_CAST(F_Decimal32);
+        HANDLE_FP_CAST(F_PPC128);
+        HANDLE_FP_CAST(F_Quadruple);
+        HANDLE_FP_CAST(F_Double);
+        HANDLE_FP_CAST(F_Float);
+        HANDLE_FP_CAST(F_Half);
+        HANDLE_FP_CAST(F_BFloat);
+        llvm_unreachable("unhandled floating type");
+    }
     void conv(Expr &a, Expr &b) {
         CType at = a->ty;
         CType bt = b->ty;
@@ -799,24 +817,13 @@ PTR_CAST:
         if (bt->isComplex())
             return complex_conv(b, a, bt, at);
         if (at->isFloating()) {
-            // TOTO: Decimal Float
-            auto k1 = at->getFloatKind().asEnum();
-            auto k2 = bt->getFloatKind().asEnum();
-            if (k1 == k2)
-                return;
-#define HANDLE_FP_CAST(F) \
-if (k1 == F) return (void)(b = float_cast(b, at, k1, F)); \
-if (k2 == F) return (void)(a = float_cast(a, bt, k2, F));
-            HANDLE_FP_CAST(F_Decimal128);
-            HANDLE_FP_CAST(F_Decimal64);
-            HANDLE_FP_CAST(F_Decimal32);
-            HANDLE_FP_CAST(F_PPC128);
-            HANDLE_FP_CAST(F_Quadruple);
-            HANDLE_FP_CAST(F_Double);
-            HANDLE_FP_CAST(F_Float);
-            HANDLE_FP_CAST(F_Half);
-            HANDLE_FP_CAST(F_BFloat);
-            llvm_unreachable("unhandled floating type");
+            if (!bt->isFloating())
+                b = castto(b, at);
+            return fp_conv(a, b, at, b->ty);
+        }
+        if (bt->isFloating()) {
+            a = castto(a, bt);
+            return fp_conv(a, b, a->ty, bt);
         }
         auto sizeofa = at->getIntegerKind().asLog2();
         auto sizeofb = bt->getIntegerKind().asLog2();
@@ -833,10 +840,8 @@ if (k2 == F) return (void)(a = float_cast(a, bt, k2, F));
                 a = bit_cast(a, bt);
             return;
         }
-        if (sizeofa > sizeofb) {
+        if (sizeofa > sizeofb) 
             return (void)(b = int_cast_promote(b, is_b_unsigned, at));
-        }
-        assert(sizeofa < sizeofb);
         a = int_cast_promote(a, is_a_unsigned, bt);
     }
     // clang::Sema::DefaultArgumentPromotion
@@ -1907,7 +1912,11 @@ NOT_CONSTANT:
         CType eat_typedef = nullptr;
         bool no_typedef = false;
         type_tag_t tags = 0;
-        unsigned b = 0, L = 0, s = 0, f = 0, d = 0, i = 0, c = 0, v = 0, numsigned = 0, numunsigned = 0, numcomplex = 0, numimaginary = 0;
+        unsigned b = 0, L = 0, s = 0, f = 0, d = 0, i = 0, 
+        c = 0, v = 0, numsigned = 0, numunsigned = 0, numcomplex = 0, 
+        numimaginary = 0, numint128 = 0, numfloat128 = 0, numfloat80 = 0, 
+        numimb128 = 0, numdecimal32 = 0, numdecimal64 = 0, numdecimal128 = 0,
+        num__fp16 = 0;
         type_tag_t old_tag;
         const Token firstTok = l.tok.tok;
         unsigned count = 0;
@@ -1946,6 +1955,14 @@ NO_REPEAT:
             case K_Complex: ++numcomplex; goto TYPE_SPEC;
             case K_Imaginary: ++numimaginary; goto TYPE_SPEC;
             case K_Bool: ++b; goto TYPE_SPEC;
+            case K__float128: ++numfloat128; goto TYPE_SPEC;
+            case K__int128: ++numint128; goto TYPE_SPEC;
+            case K__float80: ++numfloat80; goto TYPE_SPEC;
+            case K__ibm128: ++numimb128; goto TYPE_SPEC;
+            case K_Decimal32: ++numdecimal32; goto TYPE_SPEC;
+            case K_Decimal64: ++numdecimal64; goto TYPE_SPEC;
+            case K_Decimal128: ++numdecimal128; goto TYPE_SPEC;
+            case Khalf: ++num__fp16; goto TYPE_SPEC;
 TYPE_SPEC:
             no_typedef = true;
             break;
@@ -2026,6 +2043,14 @@ TYPE_SPEC:
             case Kchar: return context.getChar();
             case Kint:
             case Ksigned: return context.getInt();
+            case K__int128: return context.getInt128();
+            case K__float128: return context.getFloat128();
+            case K__float80: return context.getFP80();
+            case K_Decimal32: return context.getDecimal32();
+            case K_Decimal64: return context.getDecimal64();
+            case K_Decimal128: return context.getDecimal128();
+            case K__ibm128: return context.getPPCFloat128();
+            case Khalf: return context.getFPHalf();
             case Kunsigned: return context.getUInt();
             case Kshort: return context.getShort();
             case K_Complex:
@@ -2078,6 +2103,48 @@ TYPE_SPEC:
             if (L > 1)
                 warning(loc, "too many 'long's for 'double'");
             F = F_Double;
+        } else if (numfloat128) {
+            if (L)
+                warning(loc, "'long' in '__float128'");
+            if (numfloat128 > 1)
+                warning(loc, "duplicate '__float128'");
+            F = F_Quadruple;
+        } else if (numfloat80) {
+            if (L)
+                warning(loc, "'long' in '__float80'");
+            if (numfloat80 > 1)
+                warning("duplicate '__float80'");
+            F = F_x87_80;
+        } else if (numimb128) {
+            if (L)
+                warning(loc, "'long' in '__imb128'");
+            if (numimb128 > 1)
+                warning("duplicate '__ibm128'");
+            F = F_PPC128;
+        } else if (numdecimal32) {
+            if (L)
+                warning(loc, "'long' in '_Decimal32'");
+            if (numdecimal32 > 1)
+                warning(loc, "duplicate '_Decimal32'");
+            F = F_Decimal32;
+        } else if (numdecimal64) {
+            if (L)
+                warning(loc, "'long' in '_Decimal64'");
+            if (numdecimal64 > 1)
+                warning(loc, "duplicate '_Decimal64'");
+            F = F_Decimal64;
+        } else if (numdecimal128) {
+            if (L)
+                warning(loc, "'long' in '_Decimal128'");
+            if (numdecimal128 > 1)
+                warning(loc, "duplicate '_Decimal128'");
+            F = F_Decimal128;
+        } else if (num__fp16) {
+            if (L)
+                warning(loc, "'long' in '__fp16'(half)");
+            if (num__fp16 > 1)
+                warning(loc, "duplicate '__fp16'(half)");
+            F = F_Half;
         } else if (s) {
             if (s > 1)
                 warning(loc, "duplicate 'short'");
@@ -2101,6 +2168,10 @@ TYPE_SPEC:
             if (v > 1)
                 warning(loc, "duplicate 'void'");
             tags |= TYVOID;
+        } else if (numint128) {
+            if (numint128 > 1)
+                warning(loc, "duplicate '__int128'"); 
+            I = context.getInt128Log2();
         } else if (numunsigned || numsigned) {
             I = context.getIntLog2();
         } else if (b) { 
@@ -2962,7 +3033,7 @@ TYPE_SPEC:
                             e->loc);
                 }
             }
-            return unary(e, (e->ty->isComplex()) ? CNeg : (e->ty->isSigned() ? SNeg : UNeg), e->ty);
+            return unary(e, (e->ty->isComplex()) ? CNeg : (e->ty->isFloating() ? FNeg : (e->ty->isSigned() ? SNeg : UNeg)), e->ty);
         }
         case TAdd: {
             Expr e;
@@ -2986,7 +3057,7 @@ TYPE_SPEC:
                 return type_error(e->loc, "expect scalar operand to '++'/'--'"), e;
             CType ty = e->ty->getKind() == TYPOINTER ? context.getSize_t() : e->ty;
             Expr obj = e;
-            Expr one = wrap(ty, ConstantInt::get(irgen.ctx, APInt(
+            Expr one = e->ty->isFloating() ? wrap(ty, ConstantFP::get(irgen.wrapFloating(ty), 1.0), e->loc) : wrap(ty, ConstantInt::get(irgen.ctx, APInt(
                  ty->getBitWidth(), 1)
             ), e->loc);
             (tok == TAddAdd) ? make_add(e, one) : make_sub(e, one);

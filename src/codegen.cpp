@@ -417,9 +417,11 @@ static enum TypeIndex getTypeIndex(CType ty) {
     }
     llvm::Type * wrapNoComplexScalar(CType ty) {
         assert(ty->getKind() == TYPRIM);
-        if (ty->isInteger()) {
+        if (ty->isInteger())
             return integer_types[ty->getIntegerKind().asLog2()];
-        }
+        return float_types[static_cast<uint64_t>(ty->getFloatKind())];
+    }
+    llvm::Type *wrapFloating(CType ty) {
         return float_types[static_cast<uint64_t>(ty->getFloatKind())];
     }
     llvm::Type *wrapPrim(const_CType ty) {
@@ -914,6 +916,9 @@ static enum TypeIndex getTypeIndex(CType ty) {
                 auto e2 = reinterpret_cast<ReplacedExpr*>(e);
                 return vars[e2->id];
             }
+#if CC_DEBUG
+            llvm::errs() << "unable to generate address for expression " << e << " type = " << e->ty;
+#endif
             llvm_unreachable("");
         }
     }
