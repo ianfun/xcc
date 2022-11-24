@@ -1,3 +1,5 @@
+// compile-time constant complex arithmetic
+
 const _Complex double a = 2 + 4i; // a = 2 + 4i
 const _Complex double b = 1 + 2i; // b = 1 + 2i
 

@@ -1,4 +1,5 @@
 // program to test Complex number support
+// runtime complex arithmetic
 _Complex double c_add(_Complex double a, _Complex double b) {
 	return a + b;
 }

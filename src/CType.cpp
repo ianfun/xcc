@@ -95,6 +95,9 @@ public:
     bool isBool() const { 
         return getKind() == TYPRIM && isInteger() && getIntegerKind().isBool(); 
     }
+    bool isVLA() const {
+        return vla != nullptr;
+    }
     bool basic_equals(const_CType other) const {
         // two types are equal
         // the align are equal

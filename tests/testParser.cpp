@@ -8,5 +8,5 @@
 
     printer.finalize();
 
-    return (int)(bool)printer.NumErrors;
+    return engine.getNumErrors() != 0;
 }

@@ -1443,12 +1443,10 @@ ONE : {
                     make_mul(result, r);
                     return;
                 }
-                Expr e2 = context.clone(result);
-                e2->ty = context.getImaginaryElementType(result->ty);
                 // imag * imag => real
                 if (r->ty->isImaginary()) {
-                    Expr e3 = context.clone(r);
-                    e3->ty = context.getImaginaryElementType(e3->ty);
+                    Expr e2 = bit_cast(result, context.getImaginaryElementType(result->ty));
+                    Expr e3 = bit_cast(r, context.getImaginaryElementType(r->ty));
                     make_mul(e2, e3);
                     if (e2->k == EConstant)
                         result = wrap(e2->ty, llvm::ConstantExpr::getNeg(e2->C), e2->loc);
@@ -1457,9 +1455,10 @@ ONE : {
                     return;
                 }
                 // imag * real => imag
-                result = bit_cast(r, context.getImaginaryElementType(r->ty));
+                result = bit_cast(result, context.getImaginaryElementType(result->ty));
                 make_mul(result, r);
-                result->ty->addTag(TYIMAGINARY);
+                result = context.clone(result);
+                result->ty = context.make(result->ty->getTags() | TYIMAGINARY);
                 return;
             }
             assert(r->ty->isImaginary());
@@ -1473,6 +1472,8 @@ ONE : {
             // real * imag => imag
             Expr tmp = bit_cast(r, context.getImaginaryElementType(r->ty));
             make_mul(result, tmp);
+            result = context.clone(result);
+            result->ty = context.make(result->ty->getTags() | TYIMAGINARY);
             return;
         }
         conv(result, r);
@@ -1575,12 +1576,10 @@ ZERO:
                     make_div(result, r);
                     return;
                 }
-                Expr e2 = context.clone(result);
-                e2->ty = context.getImaginaryElementType(result->ty);
                 // imag / imag => real
                 if (r->ty->isImaginary()) {
-                    Expr e3 = context.clone(r);
-                    e3->ty = context.getImaginaryElementType(e3->ty);
+                    Expr e2 = bit_cast(result, context.getImaginaryElementType(result->ty));
+                    Expr e3 = bit_cast(r, context.getImaginaryElementType(r->ty));
                     make_div(e2, e3);
                     result = e2;
                     return;
@@ -1588,7 +1587,8 @@ ZERO:
                 // imag / real => imag
                 result = bit_cast(r, context.getImaginaryElementType(r->ty));
                 make_div(result, r);
-                result->ty->addTag(TYIMAGINARY);
+                result = context.clone(result);
+                result->ty = context.make(result->ty->getTags() | TYIMAGINARY);
                 return;
             }
             assert(r->ty->isImaginary());
@@ -1602,6 +1602,8 @@ ZERO:
             // real / imag => imag
             Expr tmp = bit_cast(r, context.getImaginaryElementType(r->ty));
             make_div(result, tmp);
+            result = context.clone(result);
+            result->ty = context.make(result->ty->getTags() | TYIMAGINARY);
             return;
         }
         conv(result, r);
