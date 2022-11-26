@@ -623,9 +623,6 @@ constexpr type_tag_t
 #define kw_end K_Generic
 typedef unsigned label_t;
 #define INVALID_LABEL ((label_t)-1)
-typedef uint16_t fileid_t;
-typedef uint16_t column_t;
-typedef uint32_t line_t;
 typedef uint32_t Codepoint;
 typedef struct OpaqueStmt *Stmt;
 typedef const struct OpaqueStmt *const_Stmt;
@@ -634,27 +631,35 @@ typedef const struct OpaqueExpr *const_Expr;
 typedef struct OpaqueCType *CType;
 typedef const struct OpaqueCType *const_CType;
 
-struct LocationBase {
-    line_t line;
-    column_t col; // at most 65535 columns are supported
-    fileid_t id;
+typedef unsigned line_t;
+typedef unsigned column_t;
+typedef unsigned fileid_t;
+typedef uint32_t location_t;
+
+struct source_location {
+    line_t line = 0;
+    column_t col = 0;
+    fileid_t fd = 0;
+    LocTree *tree = nullptr;;
+    char *source_line = nullptr;
+    SmallString<0> source_line;
     bool isValid() const { return line != 0; }
-    LocationBase(line_t line = 0, column_t col = 0, fileid_t fd = 0): line{line}, col{col}, id{fd} {}
-    bool operator >(const LocationBase &rhs) {
+    source_location(line_t line = 0, column_t col = 0, fileid_t fd = 0): line{line}, col{col}, id{fd} {}
+    bool operator >(const source_location &rhs) {
         return line > rhs.line && col > rhs.col;
     }
-    bool operator <(const LocationBase &rhs) {
+    bool operator <(const source_location &rhs) {
         return line < rhs.line && col < rhs.col;
     }
-    bool operator >=(const LocationBase &rhs) {
+    bool operator >=(const source_location &rhs) {
         return line >= rhs.line && col >= rhs.col;
     }
-    bool operator <=(const LocationBase &rhs) {
+    bool operator <=(const source_location &rhs) {
         return line <= rhs.line && col <= rhs.col;
     }
 };
 struct Include_Info {
-    unsigned line; // the line where #include occurs
+    line_t line; // the line where #include occurs
     fileid_t fd; // the file ID in SourceMgr's streams
 };
 struct LocTree {
@@ -672,15 +677,6 @@ struct LocTree {
     }
     void setParent(LocTree *theParent) { this->parent = theParent; }
     LocTree *getParent() const { return parent; }
-};
-struct Location: public LocationBase
-{
-    LocTree *tree;
-    // construct an invalid Location
-    void setParent(LocTree *parent) { this->tree = parent; }
-    LocTree *getParent() const { return tree; }
-    Location(): LocationBase(), tree{nullptr} { }
-    Location(LocationBase loc, LocTree *parent = nullptr): LocationBase(loc), tree{parent} {}
 };
 struct Declator {
     IdentRef name;

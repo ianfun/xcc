@@ -11,11 +11,17 @@ enum StreamType : uint8_t {
     AStringStream,
     AStdinStream
 };
-
+struct IncludeStackEntry {
+    fileid_t fd;
+    location_t loc;
+};
 struct Stream /*FileStream*/ {
     // null terminated file name
     const char *name; // maybe any of <stdin>, <built-in>, <string>, ../x.c, /x.c, ~/x.c
-    uint32_t line = 1, column = 1;
+    line_t line = 1;
+    column_t column = 1;
+    location_t fileSize;
+    location_t startLoc;
     enum StreamType k;
     union {
         struct {
@@ -39,37 +45,34 @@ struct Stream /*FileStream*/ {
 
 struct SourceMgr : public DiagnosticHelper {
     SmallString<STREAM_BUFFER_SIZE> buf;
-    std::vector<const char *> sysPaths;
-    std::vector<xstring> userPaths;
+    SmallVector<const char *, 16> sysPaths;
+    SmallVector<xstring, 16> userPaths;
     std::vector<Stream> streams;
-    std::vector<fileid_t> includeStack;
-    LocTree *tree;
+    SmallVector<fileid_t, 16> includeStack;
+    LocTree *tree = nullptr;
+    std::map<location_t, LocTree*, std::less<location_t>> location_map;
     bool trigraphs;
+    bool is_tty;
     uint32_t getLine() const { return streams[includeStack.back()].line; }
     void setLine(uint32_t line) { streams[includeStack.back()].line = line; }
     const char *getFileName(unsigned i) const { return streams[i].name; }
     const char *getFileName() const { return streams[includeStack.back()].name; }
     void setFileName(const char *name) { streams[includeStack.back()].name = name; }
-    Location getLoc() const {
-        const Stream &f = streams[includeStack.back()];
-        return Location(LocationBase(f.line, f.column, includeStack.back()), getLocTree());
-    }
-    LocTree *getLocTree() const {
-        return tree;
-    }
+    location_t getCurrentLocation() const { return includeStack.back().loc;}
+    location_t getLoc() const { return getCurrentLocation(); }
+    inline LocTree *getLocTree() const { return tree; }
     void beginExpandMacro(PPMacroDef *M, xcc_context &context) {
-        tree = new (context.getAllocator()) LocTree(tree, M);
+        location_map[current_loc] = (tree = new (context.getAllocator()) LocTree(tree, M));
     }
     void beginInclude(unsigned line, xcc_context &context, fileid_t theFD) {
         assert(includeStack.size() >= 2 && "call beginInclude() without previous include position!");
         Include_Info *info = new (context.getAllocator()) Include_Info{.line = line, .fd = theFD};
-        tree = new (context.getAllocator()) LocTree(tree, info);
+        location_map[current_loc] = (tree = new (context.getAllocator()) LocTree(tree, info));
     }
     void endTree() {
-        tree = tree->getParent();
+        location_map[current_loc] = (tree = tree->getParent());
     }
-    bool is_tty;
-    SourceMgr(DiagnosticsEngine &Diag) : DiagnosticHelper{Diag}, buf{}, tree{nullptr}, trigraphs{false} {
+    SourceMgr(DiagnosticsEngine &Diag) : DiagnosticHelper{Diag}, buf{}, trigraphs{false} {
         buf.resize_for_overwrite(STREAM_BUFFER_SIZE);
 #if WINDOWS
         DWORD dummy;
@@ -84,6 +87,7 @@ struct SourceMgr : public DiagnosticHelper {
     void addUsernIcludeDir(xstring path) { userPaths.push_back(path); }
     void addSysIncludeDir(const char *path) { sysPaths.push_back(path); }
     bool addFile(const char *path, bool verbose = true) {
+        location_t fileSize;
 #if WINDOWS
         llvm::SmallVector<WCHAR, 128> convertBuffer;
         if (llvm::sys::windows::CurCPToUTF16(path, convertBuffer))
@@ -92,8 +96,19 @@ struct SourceMgr : public DiagnosticHelper {
                                   FILE_ATTRIBUTE_NORMAL, nullptr);
         if (fd == INVALID_HANDLE_VALUE) {
             if (verbose)
-                error("cannot open %s: %w", path, (uint64_t)GetLastError());
+                error("cannot open %s: %w", path, (DWORD)GetLastError());
             return false;
+        }
+        DWORD highPart;
+        fileSize = ::GetFileSize(fd, &highPart);
+        if (fileSize == INVALID_FILE_SIZE )
+            return error("failed to get file size for %s: %w", path, (DWORD)GetLastError()), false;
+        if (highPart) {
+            // this can done much better in assembly code
+            uint64_t total = highPart;
+            total <<= 32;
+            total |= fileSize;
+            return errno("file size %Z is too large for XCC", total), false;
         }
 #else
         int fd = ::open(path, O_RDONLY);
@@ -102,29 +117,142 @@ struct SourceMgr : public DiagnosticHelper {
                 error("cannot open %s: %o", path, errno);
             return false;
         }
-        /*{
+        {
             struct stat sb;
-            if (fstat(fd, &sb))
+            if (::fstat(fd, &sb))
                 return error("fstat: %o", errno), false;
             if (!S_ISREG(sb.st_mode)) {
-                pp_error("not a regular file: %s", path);
+                error("not a regular file: %s", path);
                 return false;
             }
-        }*/
-#endif
+            fileSize = sb.st_size;
+        }
+#endif  
+        location_t new_loc = includeStack.empty() ? 0 : getCurrentLocation();
+        new_loc += fileSize;
         Stream f = Stream{.name = path, .k = AFileStream};
+        f.fileSize = fileSize;
         f.p = 0;
         f.pos = 0;
         f.fd = fd;
-        includeStack.push_back(streams.size());
+        includeStack.push_back(IncludeStackEntry {.fd = streams.size(), .loc = new_loc});
         streams.push_back(f);
         return true;
+    }
+    fileid_t getFileFromLocation(location_t loc, uint64_t &offset) const {
+        uint64_t start = 0;
+        for (size_t i = 0;i < streams.size();++i) {
+            start += streams[i].fileSize;
+            if (start >= loc) {
+                start -= streams[i].fileSize;
+                offset = static_cast<uint64_t>(loc) - start;
+                return i;
+            }
+        }
+        return (fileid_t)-1;
+    }
+    bool translateLocation(location_t loc, source_location &out) {
+        uint64_t offset;
+        fileid_t fd = getFileFromLocation(loc, offset);
+        if (fd == (fileid_t)-1)
+            return false;
+        out.fd = fd;
+        for (const auto &it: location_map) {
+            if (it.first >= loc) {
+                out.tree = it.second;
+                return translateLocationLineAndColumn(offset, out);
+            }
+        }
+        return false;
+    }
+    bool translateLocationLineAndColumn(uint64_t offset, source_location &out) {
+        Stream &f = streams[out.fd];
+        if (f.k != AFileStream) {
+            out.line = 0;
+            out.col = 0;
+            return true;
+        }
+        constexpr size_t read_size = 1024;
+#if WINDOWS
+        LARGE_INTEGER saved_posl;
+        {
+            LARGE_INTEGER seek_pos;
+            seek_pos.QuadPart = -static_cast<ULONGLONG>(stream_ref.pos);
+            if (!::SetFilePointerEx(stream_ref.fd, seek_pos, &saved_posl, FILE_CURRENT)) {
+                dbgprint("SetFilePointerEx() failed!");
+                return false;
+            }
+            seek_pos.QuadPart = 0;
+            ::SetFilePointerEx(stream_ref.fd, seek_pos, nullptr, FILE_BEGIN);
+        }
+#else
+        off_t saved_posl;
+        if ((saved_posl = ::lseek(stream_ref.fd, -static_cast<off_t>(stream_ref.pos), SEEK_CUR)) < 0) {
+            dbgprint("lseek() failed!");
+            return false;
+        }
+        ::lseek(stream_ref.fd, 0, SEEK_SET);
+#endif
+        uint64_t readed = 0, last_line_offset = 0;
+        unsigned line = 0;
+        char *buffer = new char[read_size];
+        for (uint64_t i = 0;i < offset;++i) {
+            uint64_t to_read = offset - readed;
+            if (LLVM_LIKELY(to_read > read_size))
+                to_read = read_size;
+            if (LLVM_UNLIKELY(to_read == 0))
+                break;
+#if WINDOWS
+            DWORD L = 0;
+            if (!::ReadFile(f.fd, buffer, to_read, &L, nullptr) || L != to_read)
+                return false;
+#else
+            size_t L = ::read(f.fd, buffer, to_read);
+            if (L != (size_t)to_read)
+                return false;
+#endif
+            for (uint64_t j = 0;j < to_read;++j) {
+                if (buffer[j] == '\n') {
+                    line++;
+                    last_line_offset = readed + j;
+                }
+            }
+            readed += to_read;
+        }
+        loc.line = line;
+        loc.col = offset - last_line_offset;
+        if (loc.col) {
+            for (uint64_t i = 0;i < ;++i) {
+
+            }
+        }
+        // now, read source line
+        for (;;) {
+#if WINDOWS
+            DWORD L = 0;
+            if (!::ReadFile(f.fd, buffer, to_read, &L, nullptr) || L != to_read)
+                return false;
+#else
+            size_t L = ::read(f.fd, buffer, to_read);
+            if (L != (size_t)to_read)
+                return false;
+#endif
+        }
+        dbgprint("resolve location_t: line %zu, column %zu, source_line = %s\n", line_read, column_read, source_line);
+        f.pos = 0;
+        delete [] buffer;
+#if WINDOWS
+        ::SetFilePointerEx(stream_ref.fd, saved_posl, nullptr, FILE_BEGIN);
+#else
+        ::lseek(stream_ref.fd, saved_posl, SEEK_SET);
+#endif
     }
     bool empty() const {
         return includeStack.empty();
     }
     // read a char from a stream
     char raw_read(Stream &f) {
+        ++current_loc;
         switch (f.k) {
         case AFileStream: {
 AGAIN:
@@ -383,9 +511,10 @@ REPEAT:
             lastc = 256;
             return res;
         }
-        if (includeStack.empty())
+        if (includeStack.empty()) {
+            location_map[current_loc] = tree;
             return '\0';
-        else {
+        } else {
             char c = raw_read_from_stack();
             addCol();
             switch (c) {
@@ -508,7 +637,7 @@ RET:
             OS << "  stream[" << i << "]: Name = " << f.name << ", kind = ";
             switch (f.k) {
             case AFileStream:
-                OS << "(file stream, fd = " << f.fd << ")\n";
+                OS << "(file stream, fd = " << f.fd << ", size = " << f.fileSize << ")\n";
                 break;
             case AStdinStream:
                 OS << "(stdin stream)\n";
