@@ -16,11 +16,11 @@ struct Diagnostic {
 
     const char *fmt;
     SmallVector<storage_type, 5> data;
-    Location loc;
+    location_t loc;
     enum DiagnosticLevel level;
     // default constructor - construct a invalid Diagnostic
-    Diagnostic(): fmt{nullptr}, data{}, loc{Location()}, level{Ignored} {}
-    Diagnostic(const char *fmt, Location loc = Location()) : fmt{fmt}, data{}, loc{loc} { }
+    Diagnostic(): fmt{nullptr}, data{}, loc{ZERO_LOC}, level{Ignored} {}
+    Diagnostic(const char *fmt, location_t loc = ZERO_LOC) : fmt{fmt}, data{}, loc{loc} { }
     template <typename T> void write_impl(const T *ptr) { data.push_back(reinterpret_cast<storage_type>(ptr)); }
     void write_impl(const StringRef &str) {
         data.push_back(static_cast<storage_type>(str.size()));
@@ -205,8 +205,8 @@ struct TextDiagnosticPrinter : public DiagnosticConsumer {
             OS << " generated.\n";
         }
     }
-    void printSource(const LocationBase &loc);
-    void write_loc(const LocationBase &loc);
+    void printSource(const source_location &loc);
+    void write_loc(const source_location &loc);
 };
 struct DiagnosticsEngine {
     unsigned ErrorLimit = 0;
@@ -260,7 +260,7 @@ struct DiagnosticHelper {
     }
 #define DIAGNOSTIC_HANDLER(HANDLER, LEVEL) \
     template <typename... Args> DiagnosticBuilder HANDLER(const char *msg, const Args &...args) { \
-        engine.CurrentDiagnostic.loc = Location(); \
+        engine.CurrentDiagnostic.loc = ZERO_LOC; \
         engine.CurrentDiagnostic.data.clear(); \
         engine.CurrentDiagnostic.fmt = msg; \
         engine.CurrentDiagnostic.write(args...); \
@@ -268,13 +268,13 @@ struct DiagnosticHelper {
         return DiagnosticBuilder(engine);\
     } \
     DiagnosticBuilder HANDLER(const char *msg) { \
-        engine.CurrentDiagnostic.loc = Location(); \
+        engine.CurrentDiagnostic.loc = ZERO_LOC; \
         engine.CurrentDiagnostic.data.clear(); \
         engine.CurrentDiagnostic.fmt = msg; \
         engine.CurrentDiagnostic.level = LEVEL; \
         return DiagnosticBuilder(engine);\
     } \
-    template <typename... Args> DiagnosticBuilder HANDLER(Location loc, const char *msg, const Args &...args) { \
+    template <typename... Args> DiagnosticBuilder HANDLER(location_t loc, const char *msg, const Args &...args) { \
         engine.CurrentDiagnostic.loc = loc; \
         engine.CurrentDiagnostic.data.clear(); \
         engine.CurrentDiagnostic.fmt = msg; \
@@ -282,7 +282,7 @@ struct DiagnosticHelper {
         engine.CurrentDiagnostic.level = LEVEL; \
         return DiagnosticBuilder(engine);\
     }\
-    template <typename... Args> DiagnosticBuilder HANDLER(Location loc, const char *msg) { \
+    template <typename... Args> DiagnosticBuilder HANDLER(location_t loc, const char *msg) { \
         engine.CurrentDiagnostic.loc = loc; \
         engine.CurrentDiagnostic.data.clear(); \
         engine.CurrentDiagnostic.fmt = msg; \
@@ -298,15 +298,15 @@ struct DiagnosticHelper {
     DIAGNOSTIC_HANDLER(type_error, TypeError)
     DIAGNOSTIC_HANDLER(error, Error)
     DIAGNOSTIC_HANDLER(fatal, Fatal)
-    void expect(Location loc, const char *item) {  parse_error(loc, "%s expected", item); }
-    void expectExpression(Location loc) {  parse_error(loc, "%s", "expected expression"); }
-    void expectStatement(Location loc) {  parse_error(loc, "%s", "expected statement"); }
-    void expectLB(Location loc) {  parse_error(loc, "%s", "missing " lquote "(" rquote); }
-    void expectRB(Location loc) {  parse_error(loc, "%s", "missing " lquote ")" rquote); }
+    void expect(location_t loc, const char *item) {  parse_error(loc, "%s expected", item); }
+    void expectExpression(location_t loc) {  parse_error(loc, "%s", "expected expression"); }
+    void expectStatement(location_t loc) {  parse_error(loc, "%s", "expected statement"); }
+    void expectLB(location_t loc) {  parse_error(loc, "%s", "missing " lquote "(" rquote); }
+    void expectRB(location_t loc) {  parse_error(loc, "%s", "missing " lquote ")" rquote); }
 };
 struct EvalHelper: public DiagnosticHelper {
     EvalHelper(DiagnosticsEngine &engine): DiagnosticHelper(engine) {}
-    uint64_t force_eval(Expr e, Location cloc) {
+    uint64_t force_eval(Expr e, location_t cloc) {
         if (e->k != EConstant) {
             type_error(cloc, "not a constant expression: %E", e);
             return 0;
@@ -319,7 +319,7 @@ struct EvalHelper: public DiagnosticHelper {
         type_error(cloc, "not a integer constant: %E", e);
         return 0;
     }
-    uint64_t try_eval(Expr e, Location cloc, bool &ok) {
+    uint64_t try_eval(Expr e, location_t cloc, bool &ok) {
         if (e->k == EConstant) {
             if (const auto CI = dyn_cast<ConstantInt>(e->C)) {
                 if (CI->getValue().getActiveBits() > 64)

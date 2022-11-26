@@ -22,18 +22,18 @@ struct Lexer : public EvalHelper {
     std::vector<PPMacroDef*> expansion_list;
     xstring lexIdnetBuffer = xstring::get_with_capacity(20);
     uint32_t counter = 0;
-    Location loc;
+    location_t loc;
     xcc_context &context;
 
     Lexer(SourceMgr &SM, Parser &parser, xcc_context &context, DiagnosticsEngine &Diag) : EvalHelper{Diag}, parser{parser}, SM{SM}, context{context} { }
-    Location getLoc() { return loc; }
+    location_t getLoc() { return loc; }
     Expr constant_expression();
     void updateLoc() { loc = SM.getLoc(); }
     static bool isCSkip(char c) {
         // space, tab, new line, form feed are translate into ' '
         return c == ' ' || c == '\t' || c == '\f' || c == '\v';
     }
-    void validUCN(Codepoint codepoint, Location loc) {
+    void validUCN(Codepoint codepoint, location_t loc) {
         if (codepoint < 0xA0) {
             if (codepoint == 0x24 || codepoint == 0x40 || codepoint == 0x60)
                 return;
@@ -61,7 +61,7 @@ struct Lexer : public EvalHelper {
         }
     }
     Codepoint lexUChar(unsigned count) {
-        Location loc = getLoc();
+        location_t loc = getLoc();
         unsigned n = 0, i = 0;
 
         for (;;) {
@@ -368,7 +368,7 @@ END:
             expansion_list.pop_back();
             return cpp();
         } else if (tok.tok == PPMacroTraceLoc) {
-            loc.setParent(tok.tree);
+            //loc.setParent(tok.tree);
             return cpp();
         }
     }
@@ -598,7 +598,7 @@ RUN:
                         break;
                     }
                     if (!ok) {
-                        Location cloc = getLoc();
+                        location_t cloc = getLoc();
                         Expr e;
                         want_expr = true;
                         e = constant_expression();
@@ -659,8 +659,8 @@ STD_INCLUDE:
                                     pp_error(loc, "#include file not found: %R", StringRef(path.data(), path.length() - 1));
                                     path.free(); // we no longer use it, so collect it
                                 }
-                                else 
-                                    SM.beginInclude(loc.line, context, theFD);
+                                else  // TODO
+                                    SM.beginInclude(0, context, theFD);
                                 break;
                             }
                             if (c == '\0' || c == '\n') {

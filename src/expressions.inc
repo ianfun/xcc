@@ -33,7 +33,7 @@ bool isSimple() const {
   }
 }
 ExprKind k;
-Location loc;
+location_t loc;
 CType ty;
 
 union {
@@ -97,7 +97,7 @@ union {
 };
 struct ConstantExpr {
   enum ExprKind k=EConstant;
-  Location loc;
+  location_t loc;
   CType ty;
   struct {
     llvm::Constant* C;
@@ -105,7 +105,7 @@ struct ConstantExpr {
 };
 struct BinExpr {
   enum ExprKind k=EBin;
-  Location loc;
+  location_t loc;
   CType ty;
   struct {
     Expr lhs;
@@ -115,7 +115,7 @@ struct BinExpr {
 };
 struct UnaryExpr {
   enum ExprKind k=EUnary;
-  Location loc;
+  location_t loc;
   CType ty;
   struct {
     Expr uoperand;
@@ -124,7 +124,7 @@ struct UnaryExpr {
 };
 struct ConstantArrayExpr {
   enum ExprKind k=EConstantArray;
-  Location loc;
+  location_t loc;
   CType ty;
   struct {
     llvm::GlobalVariable *array;
@@ -132,7 +132,7 @@ struct ConstantArrayExpr {
 };
 struct ConstantArraySubstriptExpr {
   enum ExprKind k=EConstantArraySubstript;
-  Location loc;
+  location_t loc;
   CType ty;
   struct {
     llvm::GlobalVariable *carray;
@@ -141,7 +141,7 @@ struct ConstantArraySubstriptExpr {
 };
 struct VoidExpr {
   enum ExprKind k=EVoid;
-  Location loc;
+  location_t loc;
   CType ty;
   struct {
     Expr voidexpr;
@@ -149,7 +149,7 @@ struct VoidExpr {
 };
 struct VarExpr {
   enum ExprKind k=EVar;
-  Location loc;
+  location_t loc;
   CType ty;
   struct {
     size_t sval;
@@ -157,7 +157,7 @@ struct VarExpr {
 };
 struct ConditionExpr {
   enum ExprKind k=ECondition;
-  Location loc;
+  location_t loc;
   CType ty;
   struct {
     Expr cond, cleft, cright;
@@ -165,7 +165,7 @@ struct ConditionExpr {
 };
 struct CastExpr {
   enum ExprKind k=ECast;
-  Location loc;
+  location_t loc;
   CType ty;
   struct {
     enum CastOp castop;
@@ -174,7 +174,7 @@ struct CastExpr {
 };
 struct CallExpr {
   enum ExprKind k=ECall;
-  Location loc;
+  location_t loc;
   CType ty;
   struct {
     Expr callfunc;
@@ -183,7 +183,7 @@ struct CallExpr {
 };
 struct SubscriptExpr {
   enum ExprKind k=ESubscript;
-  Location loc;
+  location_t loc;
   CType ty;
   struct {
     Expr left, right;
@@ -191,7 +191,7 @@ struct SubscriptExpr {
 };
 struct ArrayExpr {
   enum ExprKind k=EArray;
-  Location loc;
+  location_t loc;
   CType ty;
   struct {
     xvector<Expr> arr;
@@ -199,7 +199,7 @@ struct ArrayExpr {
 };
 struct StructExpr {
   enum ExprKind k=EStruct;
-  Location loc;
+  location_t loc;
   CType ty;
   struct {
     xvector<Expr> arr2;
@@ -207,7 +207,7 @@ struct StructExpr {
 };
 struct MemberAccessExpr {
   enum ExprKind k=EMemberAccess;
-  Location loc;
+  location_t loc;
   CType ty;
   struct {
     Expr obj;
@@ -216,7 +216,7 @@ struct MemberAccessExpr {
 };
 struct ArrToAddressExpr {
   enum ExprKind k=EArrToAddress;
-  Location loc;
+  location_t loc;
   CType ty;
   struct {
     Expr arr3;
@@ -224,7 +224,7 @@ struct ArrToAddressExpr {
 };
 struct PostFixExpr {
   enum ExprKind k=EPostFix;
-  Location loc;
+  location_t loc;
   CType ty;
   struct {
     enum PostFixOp pop;

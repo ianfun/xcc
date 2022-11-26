@@ -176,7 +176,7 @@ stmts = {
 	"SLabel": ("label_t label", "IdentRef labelName",),
 	"SGoto": ("label_t location",),
 	"SCondJump": ("Expr test", "label_t T", "label_t F",),
-	"SSwitch": ("Expr itest", "xvector<SwitchCase> switchs", "xvector<GNUSwitchCase> gnu_switchs", "label_t sw_default", "Location sw_default_loc",),
+	"SSwitch": ("Expr itest", "xvector<SwitchCase> switchs", "xvector<GNUSwitchCase> gnu_switchs", "label_t sw_default", "location_t sw_default_loc",),
 	"SDeclOnly": ("CType decl",),
 	"SReturn": ("Expr ret",),
 	"SExpr": ("Expr exprbody",),
@@ -449,7 +449,7 @@ bool isSimple() const {
   }
 }
 ExprKind k;
-Location loc;
+location_t loc;
 CType ty;\n
 union {
 """)
@@ -462,11 +462,11 @@ union {
 		realname = name[1::] + "Expr"
 		l.append(realname)
 		if decls:
-			f.write("struct " + realname + " {\n  enum ExprKind k=" + name + ";\n  Location loc;\n  CType ty;\n  struct {\n  ")
+			f.write("struct " + realname + " {\n  enum ExprKind k=" + name + ";\n  location_t loc;\n  CType ty;\n  struct {\n  ")
 			f.write('  ' + ';\n    '.join(decls) + ';')
 			f.write("\n  };\n};\n")
 		else:
-			f.write("  struct " + realname + " {\n  enum ExprKind k=" + name + ";\n  Location loc;\n  CType ty;\n /* empty! */ \n};\n")
+			f.write("  struct " + realname + " {\n  enum ExprKind k=" + name + ";\n  location_t loc;\n  CType ty;\n /* empty! */ \n};\n")
 	f.write("static uint8_t expr_size_map[] = {\n    " + 
 		',\n    '.join(sizeof(l)) + 
 		"\n};\n")
@@ -483,12 +483,12 @@ def gen_stmt():
 	f.write("""\
 struct NullStmt {
   enum StmtKind k;
-  Location loc;
+  location_t loc;
   Stmt next;
 };
 struct OpaqueStmt {
 StmtKind k;
-Location loc;
+location_t loc;
 Stmt next;
 bool isTerminator() const {
     switch (k) {
@@ -511,11 +511,11 @@ union {
 		realname = name[1::] + "Stmt"
 		l.append(realname)
 		if decls:
-			f.write("struct " + realname + " {\n  enum StmtKind k=" + name + ";\n  Location loc;\n  Stmt next;\n  struct {\n  ")
+			f.write("struct " + realname + " {\n  enum StmtKind k=" + name + ";\n  location_t loc;\n  Stmt next;\n  struct {\n  ")
 			f.write('  ' + ';\n    '.join(decls) + ';')
 			f.write("\n  };\n};\n")
 		else:
-			f.write("struct " + realname + " {\n  enum StmtKind k=" + name + ";\n  Location loc;\n  Stmt next;\n /* empty! */ \n};\n")
+			f.write("struct " + realname + " {\n  enum StmtKind k=" + name + ";\n  location_t loc;\n  Stmt next;\n /* empty! */ \n};\n")
 
 	f.write("static uint8_t stmt_size_map[] = {\n    " + 
 		',\n    '.join(sizeof(l)) + 

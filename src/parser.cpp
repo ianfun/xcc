@@ -12,12 +12,12 @@ struct Parser : public EvalHelper {
     };
     struct Type_info {
         CType ty = nullptr;
-        Location loc = Location();
+        location_t loc = ZERO_LOC;
     };
     struct Label_Info {
         label_t idx = 0;
         uint8_t flags = LBL_UNDEFINED;
-        Location loc = Location();
+        location_t loc = ZERO_LOC;
     };
     enum {
         LOCAL_GARBAGE = 0,         // just declared
@@ -28,7 +28,7 @@ struct Parser : public EvalHelper {
     };
     struct Variable_Info {
         CType ty = nullptr;
-        Location loc = Location();
+        location_t loc = ZERO_LOC;
         llvm::Constant *val = nullptr;
         uint8_t tags = 0;
     };
@@ -182,7 +182,7 @@ private:
         }
         return ref.idx;
     }
-    label_t putLable(IdentRef Name, Location loc) {
+    label_t putLable(IdentRef Name, location_t loc) {
         assert(Name && "expect a Name to put");
         Label_Info &ref = jumper.lookupLabel(Name);
         switch (ref.flags) {
@@ -202,7 +202,7 @@ private:
         }
         return ref.idx;
     }
-    CType gettagByName(IdentRef Name, enum CTypeKind expected, Location full_loc) {
+    CType gettagByName(IdentRef Name, enum CTypeKind expected, location_t full_loc) {
         assert(Name && "gettagByName: Name is nullptr");
         CType result;
         size_t idx;
@@ -219,7 +219,7 @@ private:
         }
         return result;
     }
-    size_t puttag(IdentRef Name, CType ty, Location loc, enum CTypeKind k) {
+    size_t puttag(IdentRef Name, CType ty, location_t loc, enum CTypeKind k) {
         assert(ty && "no type provided");
         bool found = false;
         if (Name) {
@@ -250,7 +250,7 @@ private:
         }
         return Idx;
     }
-    void putenum(IdentRef Name, uint64_t val, Location full_loc) {
+    void putenum(IdentRef Name, uint64_t val, location_t full_loc) {
         assert(Name && "enum has no Name");
         auto old = sema.typedefs.getSymInCurrentScope(Name);
         if (old) {
@@ -265,7 +265,7 @@ private:
                                    });
     }
     // function
-    size_t putsymtype2(IdentRef Name, CType yt, Location full_loc) {
+    size_t putsymtype2(IdentRef Name, CType yt, location_t full_loc) {
         CType base = yt->ret;
         if (base->getKind() == TYARRAY)
             type_error(full_loc, "function cannot return array");
@@ -293,7 +293,7 @@ private:
         return idx;
     }
     // typedef, variable
-    size_t putsymtype(IdentRef Name, CType yt, Location full_loc) {
+    size_t putsymtype(IdentRef Name, CType yt, location_t full_loc) {
         assert(Name && "missing a Name to put");
         assert(yt && "missing a type to put");
         if (yt->getKind() == TYFUNCTION)
@@ -611,7 +611,7 @@ PTR_CAST:
         assert(e && "cast object is nullptr");
         assert(e->ty && "cannot cast from expression with no type");
         assert(to && "cast type is nullptr");
-        Location loc = getLoc();
+        location_t loc = getLoc();
         auto k = to->getKind();
         auto k0 = e->ty->getKind();
         if (type_equal(e->ty, to))
@@ -1873,7 +1873,7 @@ NOT_CONSTANT:
             l.tok.tok = TIdentifier;
     }
     SourceMgr &SM() { return l.SM; }
-    Location getLoc() { return l.getLoc(); }
+    location_t getLoc() { return l.getLoc(); }
     void checkSemicolon() {
         if (l.tok.tok != TSemicolon)
             return (void)warning(getLoc(), "missing ';'");
@@ -1908,7 +1908,7 @@ NOT_CONSTANT:
             type_error(getLoc(), "at most one storage-class specifier may be given in the declaration specifiers in a declaration");
     }
     CType specifier_qualifier_list() {
-        Location loc = getLoc();
+        location_t loc = getLoc();
         CType eat_typedef = nullptr;
         bool no_typedef = false;
         type_tag_t tags = 0;
@@ -2222,7 +2222,7 @@ TYPE_SPEC:
             if (k == TYARRAY && l.tok.tok == TStringLit) {
                 xstring s = l.tok.str;
                 auto enc = l.tok.getStringPrefix();
-                Location loc1 = getLoc();
+                location_t loc1 = getLoc();
                 consume();
                 while (l.tok.tok == TStringLit) {
                     auto enc2 = l.tok.getStringPrefix();
@@ -2367,7 +2367,7 @@ TYPE_SPEC:
             if (l.tok.tok != TRSquareBrackets) {
                 Expr e;
                 bool ok;
-                Location cloc = getLoc();
+                location_t cloc = getLoc();
                 if (!(e = assignment_expression()))
                     return Declator();
                 if ((!e->ty->getKind()) == TYPRIM && e->ty->isInteger())
@@ -2407,7 +2407,7 @@ TYPE_SPEC:
             Expr e;
             unsigned bitsize;
             consume();
-            Location cloc = getLoc();
+            location_t cloc = getLoc();
             if (!(e = constant_expression()))
                 return Declator();
             bitsize = force_eval(e, cloc);
@@ -2422,7 +2422,7 @@ TYPE_SPEC:
             unsigned bitsize;
             Expr e;
             consume();
-            Location cloc = getLoc();
+            location_t cloc = getLoc();
             if (!(e = constant_expression()))
                 return Declator();
             bitsize = force_eval(e, cloc);
@@ -2439,7 +2439,7 @@ TYPE_SPEC:
         //               `struct { ... }`
         //
         //               `struct Foo { ... }`
-        Location full_loc = getLoc();
+        location_t full_loc = getLoc();
         consume(); // eat struct/union
         IdentRef Name = nullptr;
         if (l.tok.tok == TIdentifier) {
@@ -2510,7 +2510,7 @@ TYPE_SPEC:
         //
         //      `enum State { ... }`
         IdentRef Name = nullptr;
-        Location full_loc = getLoc();
+        location_t full_loc = getLoc();
         consume(); // eat enum
         if (l.tok.tok == TIdentifier) {
             Name = l.tok.s;
@@ -2527,7 +2527,7 @@ TYPE_SPEC:
         for (uint64_t c = 0;; c++) {
             if (l.tok.tok != TIdentifier)
                 break;
-            Location full_loc = getLoc();
+            location_t full_loc = getLoc();
             IdentRef s = l.tok.s;
             consume();
             if (l.tok.tok == TAssign) {
@@ -2557,7 +2557,7 @@ TYPE_SPEC:
         return result;
     }
     bool parameter_type_list(xvector<Param> &params, bool &isVararg) {
-        Location loc = getLoc();
+        location_t loc = getLoc();
         bool ok = true;
         assert(params.empty());
         enterBlock(); // function prototype scope
@@ -2573,7 +2573,7 @@ TYPE_SPEC:
             CType base = declaration_specifiers();
             if (!base)
                 return expect(getLoc(), "declaration-specifiers"), false;
-            Location full_loc = getLoc();
+            location_t full_loc = getLoc();
             Declator nt = declarator(base, Function);
             if (!nt.ty)
                 return expect(full_loc, "abstract-declarator"), false;
@@ -2628,7 +2628,7 @@ TYPE_SPEC:
             }
         } else {
             uint64_t a;
-            Location cloc = getLoc();
+            location_t cloc = getLoc();
             Expr e = expression();
             if (!e)
                 return false;
@@ -2662,7 +2662,7 @@ TYPE_SPEC:
     }
     bool consume_static_assert() {
         uint64_t ok;
-        Location loc = getLoc();
+        location_t loc = getLoc();
         consume();
         if (l.tok.tok != TLbracket)
             return expectLB(getLoc()), false;
@@ -2713,7 +2713,7 @@ TYPE_SPEC:
         // parse declaration or function definition
         CType base;
         Stmt result;
-        Location loc = getLoc();
+        location_t loc = getLoc();
         sema.currentAlign = 0;
         if (l.tok.tok == K_Static_assert) {
             consume_static_assert();
@@ -2741,7 +2741,7 @@ TYPE_SPEC:
         }
         result = SNEW(VarDeclStmt){.loc = loc, .vars = xvector<VarDecl>::get()};
         for (;;) {
-            Location full_loc = getLoc();
+            location_t full_loc = getLoc();
             Declator st = declarator(base, Direct);
             if (!st.ty)
                 return;
@@ -2915,7 +2915,7 @@ TYPE_SPEC:
         return declarator(base, Abstract).ty;
     }
     Expr unary_expression() {
-        Location loc = getLoc();
+        location_t loc = getLoc();
         Token tok = l.tok.tok;
         switch (tok) {
         case TNot: {
@@ -3158,7 +3158,7 @@ TYPE_SPEC:
 
     // the input must be null-terminated
     Expr parse_pp_number(const xstring str) {
-        Location loc = getLoc();
+        location_t loc = getLoc();
         const unsigned char *DigitsBegin = nullptr;
         bool isFPConstant = false;
         uint64_t radix;
@@ -3387,12 +3387,12 @@ NEXT:
             ty = context.tryGetImaginaryTypeFromNonImaginary(ty);
         return wrap(ty, CI, loc);
     }
-    Expr wrap(CType ty, llvm::Constant *C, Location loc = Location()) {
+    Expr wrap(CType ty, llvm::Constant *C, location_t loc = ZERO_LOC) {
         return ENEW(ConstantExpr){.loc = loc, .ty = ty, .C = C};
     }
     Expr getIntZero() { return intzero; }
     Expr getIntOne() { return intone; }
-    Expr getFunctionNameExpr(Location loc) {
+    Expr getFunctionNameExpr(location_t loc) {
         return ENEW(ConstantArrayExpr) {.loc = loc, .ty = context.stringty, .array = string_pool.getAsUTF8(sema.pfunc->getKey())};
     }
     Expr primary_expression() {
@@ -3401,7 +3401,7 @@ NEXT:
         //      `(` expression `)`
         //      identfier
         Expr result;
-        Location loc = getLoc();
+        location_t loc = getLoc();
         const Token theTok = l.tok.tok;
         switch (theTok) {
         case TCharLit: {
@@ -3632,9 +3632,9 @@ GENERIC_END:
                 }
                 return getFunctionNameExpr(loc);
             case K__builtin_LINE:
-                return wrap(context.getInt(), ConstantInt::get(irgen.integer_types[context.getIntLog2()], loc.line), loc);
+                return wrap(context.getInt(), ConstantInt::get(irgen.integer_types[context.getIntLog2()], getLocLine(loc)), loc);
             case K__builtin_COLUMN:
-                return wrap(context.getInt(), ConstantInt::get(irgen.integer_types[context.getIntLog2()], loc.col), loc);
+                return wrap(context.getInt(), ConstantInt::get(irgen.integer_types[context.getIntLog2()], getLocCol(loc)), loc);
             case K__builtin_FILE:
             default: llvm_unreachable("");
             }
@@ -3644,6 +3644,12 @@ GENERIC_END:
                    nullptr;
         }
         return result;
+    }
+    unsigned getLocLine(location_t loc) {
+        return 0;
+    }
+    unsigned getLocCol(location_t loc) {
+        return 0;
     }
     Expr postfix_expression() {
         bool isarrow;
@@ -3782,7 +3788,7 @@ CONTINUE:;
             }
         }
     }
-    void make_deref(Expr &e, Location loc) {
+    void make_deref(Expr &e, location_t loc) {
         assert(e->ty->getKind() == TYPOINTER && "bad call to make_deref: expect a pointer");
         if ((e->ty->p->getKind() == TYINCOMPLETE) || e->ty->p->isVoid()) {
             type_error(loc, "dereference from incomplete/void type: %T", e->ty);
@@ -3866,7 +3872,7 @@ CONTINUE:;
     }
     const APInt *want_integer_constant() {
         Expr e = constant_expression();
-        Location loc = e->loc;
+        location_t loc = e->loc;
         if (!e)
             return nullptr;
         if (e->k != EConstant)
@@ -3936,7 +3942,7 @@ CONTINUE:;
                 goto NEXT;
             }
         }
-        insertStmt(SNEW(CondJumpStmt){.loc = Location(), .test = test, .T = dst, .F = thenBB});
+        insertStmt(SNEW(CondJumpStmt){.loc = ZERO_LOC, .test = test, .T = dst, .F = thenBB});
 NEXT:
         return insertLabel(thenBB);
     }
@@ -3948,19 +3954,19 @@ NEXT:
                 goto NEXT;
             }
         }
-        insertStmt(SNEW(CondJumpStmt){.loc = Location(), .test = test, .T = thenBB, .F = dst});
+        insertStmt(SNEW(CondJumpStmt){.loc = ZERO_LOC, .test = test, .T = thenBB, .F = dst});
 NEXT:
         return insertLabel(thenBB);
     }
     void condJump(Expr test, label_t T, label_t F) {
-        return insertStmt(SNEW(CondJumpStmt){.loc = Location(), .test = test, .T = T, .F = F});
+        return insertStmt(SNEW(CondJumpStmt){.loc = ZERO_LOC, .test = test, .T = T, .F = F});
     }
-    void insertBr(label_t L, Location loc = Location()) {
+    void insertBr(label_t L, location_t loc = ZERO_LOC) {
         return insertStmt(SNEW(GotoStmt){.loc = loc, .location = L});
     }
     void insertLabel(label_t L, IdentRef Name = nullptr) {
         sreachable = true;
-        return insertStmtInternal(SNEW(LabelStmt){.loc = Location(), .label = L, .labelName = Name});
+        return insertStmtInternal(SNEW(LabelStmt){.loc = ZERO_LOC, .label = L, .labelName = Name});
     }
     void insertStmtInternal(Stmt s) {
         InsertPt->next = s;
@@ -3974,7 +3980,7 @@ NEXT:
                 sreachable = false;
             }
         } else {
-            if (unreachable_reason && s->loc.isValid()) {
+            if (unreachable_reason && s->loc != 0) {
                 warning(s->loc, "this statement is unreachable");
                 note(unreachable_reason->loc, "after this *terminator* statement is unreachable");
                 unreachable_reason = nullptr;
@@ -3984,7 +3990,7 @@ NEXT:
     void insertStmtEnd() { InsertPt->next = nullptr; }
     void statement() {
         // parse a statement
-        Location loc = getLoc();
+        location_t loc = getLoc();
         switch (l.tok.tok) {
         case TSemicolon: return consume();
         case Kasm: return parse_asm(), checkSemicolon();
@@ -4039,7 +4045,7 @@ NEXT:
                 consume();
             if (!sema.currentswitch)
                 parse_error(loc, "'default' statement not in switch statement");
-            else if (sema.currentswitch->sw_default_loc.isValid()) {
+            else if (sema.currentswitch->sw_default_loc != 0) {
                 parse_error(loc, "multiple default labels in one switch");
                 note(sema.currentswitch->sw_default_loc, "previous default defined here");
             } else {
@@ -4124,7 +4130,7 @@ NEXT:
                                            .switchs = xvector<SwitchCase>::get(),
                                            .gnu_switchs = xvector<GNUSwitchCase>::get_with_capacity(0),
                                            .sw_default = jumper.createLabel(),
-                                           .sw_default_loc = Location()};
+                                           .sw_default_loc = ZERO_LOC};
                 llvm::SaveAndRestore<Stmt> saved_sw(sema.currentswitch, sw);
                 llvm::SaveAndRestore<label_t> saved_b(jumper.topBreak, LEAVE);
                 insertStmt(sw); // insert switch instruction
@@ -4132,7 +4138,7 @@ NEXT:
                 sreachable = false;
                 statement();
                 bool hasDefault = true;
-                if (!sema.currentswitch->sw_default_loc.isValid()) {
+                if (sema.currentswitch->sw_default_loc == 0) {
                     // no default found: insert `default: break;`
                     sema.currentswitch->sw_default_loc = getLoc();
                     insertLabel(sema.currentswitch->sw_default);
@@ -4157,7 +4163,7 @@ NEXT:
                     for (unsigned j = 0;j < sw->switchs.size();++j) {
                         const SwitchCase &A = sw->switchs[i];
                         if (G.contains(A)) {
-                            Location startLoc = A.loc, endLoc = G.loc;
+                            location_t startLoc = A.loc, endLoc = G.loc;
                             if (startLoc > endLoc)
                                 std::swap(startLoc, endLoc);
                             const APInt sw_end = *G.CaseStart + G.range;
@@ -4171,7 +4177,7 @@ NEXT:
                             continue;
                         const GNUSwitchCase &B = sw->gnu_switchs[j];
                         if (G.overlaps(B)) {
-                            Location startLoc = G.loc, endLoc = B.loc;
+                            location_t startLoc = G.loc, endLoc = B.loc;
                             if (startLoc > endLoc)
                                 std::swap(startLoc, endLoc);
                             const APInt 
@@ -4242,7 +4248,7 @@ NEXT:
             insertLabel(BODY);
             statement();
             insertLabel(CMP);
-            insertStmt(SNEW(CondJumpStmt){.loc = Location(), .test = test, .T = BODY, .F = LEAVE});
+            insertStmt(SNEW(CondJumpStmt){.loc = ZERO_LOC, .test = test, .T = BODY, .F = LEAVE});
             insertLabel(LEAVE);
             return;
         }
@@ -4279,7 +4285,7 @@ NEXT:
             }
             consume();
             if (l.tok.tok != TRbracket) {
-                Location loc3 = getLoc();
+                location_t loc3 = getLoc();
                 if (!(forincl = expression()))
                     return;
                 forincl = simplify(forincl);
@@ -4350,7 +4356,7 @@ NEXT:
         }
         case Kelse: return parse_error(loc, "'else' without a previous 'if'"), consume();
         case TIdentifier: {
-            Location full_loc = getLoc();
+            location_t full_loc = getLoc();
             TokenV tok = l.tok;
             consume();
             if (l.tok.tok == TColon) { // labeled-statement
@@ -4778,13 +4784,13 @@ NEXT:
                 break;
         }
     }
-    Stmt function_body(const xvector<Param> params, xvector<size_t> &args, Location loc) {
+    Stmt function_body(const xvector<Param> params, xvector<size_t> &args, location_t loc) {
         consume();
         Stmt head = SNEW(HeadStmt){.loc = loc};
         sema.typedefs.push_function();
         enterBlock();
         assert(jumper.cur == 0 && "labels scope should be empty in start of function");
-        Location loc4 = getLoc();
+        location_t loc4 = getLoc();
         for (size_t i = 0; i < params.size(); ++i)
             args[i] =
                 sema.typedefs.putSym(params[i].name, Variable_Info{.ty = params[i].ty, .loc = loc4, .tags = ASSIGNED});
@@ -4793,7 +4799,7 @@ NEXT:
             eat_compound_statement();
             if (!getInsertPoint()->isTerminator()) {
                 Stmt s = getInsertPoint();
-                Location loc2 = getLoc();
+                location_t loc2 = getLoc();
                 if (sema.pfunc->second.getToken() == PP_main) {
                     insertStmt(SNEW(ReturnStmt){.loc = loc2, .ret = getIntZero()});
                 } else {

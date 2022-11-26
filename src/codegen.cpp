@@ -152,7 +152,7 @@ static enum TypeIndex getTypeIndex(CType ty) {
     llvm::DIType **dtags = nullptr;
     llvm::DIType **dtypes = nullptr;
     llvm::StructType *_complex_float, *_complex_double;
-    Location debugLoc;
+    location_t debugLoc;
     DenseMap<CType, llvm::FunctionType *> function_type_cache{};
 
     inline void store(llvm::Value* p, llvm::Value* v) {
@@ -201,7 +201,7 @@ static enum TypeIndex getTypeIndex(CType ty) {
                    (lastFile = di->createFile(getFileStr(ID), StringRef(options.CWD.data(), options.CWD.size())));
         return lastFile;
     }
-    llvm::DILocation *wrap(Location loc) { return llvm::DILocation::get(ctx, loc.line, loc.col, getLexScope()); }
+    llvm::DILocation *wrap(location_t loc) { return llvm::DILocation::get(ctx, 0, 0, getLexScope()); }
     void append(llvm::BasicBlock *theBB) {
         currentfunction->getBasicBlockList().push_back(theBB);
         B.SetInsertPoint(theBB);
@@ -282,6 +282,12 @@ static enum TypeIndex getTypeIndex(CType ty) {
         debugLoc = e->loc;
         if (options.g)
             B.SetCurrentDebugLocation(wrap(e->loc));
+    }
+    unsigned getLine(location_t loc) {
+        return 0;
+    }
+    unsigned getCol(location_t loc) {
+        return 0;
     }
     llvm::Function *addFunction(llvm::FunctionType *ty, const Twine &N) {
         return llvm::Function::Create(ty, ExternalLinkage, N, module);
@@ -462,7 +468,7 @@ static enum TypeIndex getTypeIndex(CType ty) {
             buf[i] = di->createEnumerator(ty->eelems[i].name->getKey(), ty->eelems[i].val);
         }
 
-        auto MD = di->createEnumerationType(getLexScope(), Name, getFile(debugLoc.id), debugLoc.line, 32, 0,
+        auto MD = di->createEnumerationType(getLexScope(), Name, getFile(debugLoc), getLine(debugLoc), 32, 0,
                                             di->getOrCreateArray(ArrayRef<llvm::Metadata *>(buf, ty->selems.size())),
                                             ditypes[i32ty]);
         if (old) {
@@ -634,7 +640,7 @@ static enum TypeIndex getTypeIndex(CType ty) {
         case SHead: llvm_unreachable("");
         case SCompound: {
             if (options.g)
-                lexBlocks.push_back(di->createLexicalBlock(getLexScope(), getFile(s->loc.id), s->loc.line, s->loc.col));
+                lexBlocks.push_back(di->createLexicalBlock(getLexScope(), getFile(s->loc), getLine(s->loc), getCol(s->loc)));
             for (Stmt ptr = s->inner; ptr; ptr = ptr->next)
                 gen(ptr);
             if (options.g)
@@ -654,9 +660,9 @@ static enum TypeIndex getTypeIndex(CType ty) {
                     case TagType_Union: tag = llvm::dwarf::DW_TAG_union_type; break;
                     default: llvm_unreachable("invalid type tag");
                     }
-                    auto MD = di->createReplaceableCompositeType(tag, s->decl_ty->name->getKey(), getLexScope(),
-                                                                 getFile(s->loc.line), s->loc.line);
-                    dtags[s->decl_idx] = MD;
+                    //auto MD = di->createReplaceableCompositeType(tag, s->decl_ty->name->getKey(), getLexScope(),
+//                                                                 getFile(s->loc), s->loc.line);
+                    //dtags[s->decl_idx] = MD;
                 }
             } else {
                 if (s->decl_ty->getKind() != TYENUM) {
@@ -687,14 +693,14 @@ static enum TypeIndex getTypeIndex(CType ty) {
             auto ty = cast<llvm::FunctionType>(wrap(s->functy));
             currentfunction = newFunction(ty, s->funcname, s->functy->getTags(), s->func_idx);
             llvm::DISubprogram *sp = nullptr;
-            if (options.g) {
+            /*if (options.g) {
                 sp =
                     di->createFunction(getLexScope(), s->funcname->getKey(), getLinkageName(s->functy->ret->getTags()),
                                        getFile(s->loc.id), s->loc.line, createDebugFuctionType(s->functy), s->loc.line);
                 currentfunction->setSubprogram(sp);
                 lexBlocks.push_back(sp);
                 emitDebugLocation();
-            }
+            }*/
             llvm::BasicBlock * entry = llvm::BasicBlock::Create(ctx, "entry");
             append(entry);
             for (unsigned i = 0; i < s->numLabels; i++)
@@ -705,9 +711,9 @@ static enum TypeIndex getTypeIndex(CType ty) {
                 auto p = B.CreateAlloca(pty, layout->getAllocaAddrSpace());
                 auto name = s->functy->params[arg_no].name;
                 if (options.g) {
-                    auto meta = di->createParameterVariable(getLexScope(), name->getKey(), arg_no, getFile(s->loc.id),
-                                                            s->loc.line, wrap3(s->functy->params[arg_no].ty));
-                    di->insertDeclare(p, meta, di->createExpression(), wrap(s->loc), entry);
+                    //auto meta = di->createParameterVariable(getLexScope(), name->getKey(), arg_no, getFile(s->loc.id),
+//                                                            s->loc.line, wrap3(s->functy->params[arg_no].ty));
+                    //di->insertDeclare(p, meta, di->createExpression(), wrap(s->loc), entry);
                 }
                 store(p, arg);
                 vars[s->args[arg_no++]] = p;
@@ -744,9 +750,9 @@ static enum TypeIndex getTypeIndex(CType ty) {
             BB->insertInto(currentfunction);
             if (options.g && s->labelName) {
                 BB->setName(s->labelName->getKey());
-                auto LabelInfo =
-                    di->createLabel(getLexScope(), s->labelName->getKey(), getFile(s->loc.id), s->loc.line);
-                di->insertLabel(LabelInfo, wrap(s->loc), BB);
+//                auto LabelInfo =
+//                    di->createLabel(getLexScope(), s->labelName->getKey(), getFile(s->loc.id), s->loc.line);
+//                di->insertLabel(LabelInfo, wrap(s->loc), BB);
             }
         } break;
         case SGoto:
@@ -814,13 +820,13 @@ static enum TypeIndex getTypeIndex(CType ty) {
                     else if (!init)
                         GV->setLinkage(CommonLinkage);
                     vars[idx] = GV;
-                    if (options.g) {
+/*                    if (options.g) {
                         StringRef linkage = getLinkageName(varty->getTags());
                         auto gve = di->createGlobalVariableExpression(getLexScope(), name->getKey(), linkage,
                                                                       getFile(s->loc.id), s->loc.line, wrap3(varty),
                                                                       false, di->createExpression());
                         GV->addDebugInfo(gve);
-                    }
+                    }*/
                 } else {
                     llvm::Type * ty = wrap(varty);
                     llvm::AllocaInst *val = new llvm::AllocaInst(
@@ -840,11 +846,11 @@ static enum TypeIndex getTypeIndex(CType ty) {
                         instList.insert(allocaInsertPt, val);
                     }
                     vars[idx] = val;
-                    if (options.g) {
+/*                    if (options.g) {
                         auto v = di->createAutoVariable(getLexScope(), name->getKey(), getFile(s->loc.id), s->loc.line,
                                                         wrap3(varty));
                         di->insertDeclare(val, v, di->createExpression(), wrap(s->loc), B.GetInsertBlock());
-                    }
+                    }*/
                     if (align.hasValue())
                         val->setAlignment(align.valueOrOne());
                     if (init) {

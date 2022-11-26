@@ -11,20 +11,15 @@ enum StreamType : uint8_t {
     AStringStream,
     AStdinStream
 };
-struct IncludeStackEntry {
-    fileid_t fd;
-    location_t loc;
-};
-struct Stream /*FileStream*/ {
-    // null terminated file name
-    const char *name; // maybe any of <stdin>, <built-in>, <string>, ../x.c, /x.c, ~/x.c
+struct Stream {
+    enum StreamType k;
+    const char *name;
     line_t line = 1;
     column_t column = 1;
-    location_t fileSize;
-    location_t startLoc;
-    enum StreamType k;
+    location_t startLoc, loc = 0;
+    Stream(enum StreamType k, const char *Name) :k{k}, name{Name} {}    
     union {
-        struct {
+        struct /*FileStream*/  {
             fd_t fd;
             unsigned p, pos;
         };
@@ -58,19 +53,22 @@ struct SourceMgr : public DiagnosticHelper {
     const char *getFileName(unsigned i) const { return streams[i].name; }
     const char *getFileName() const { return streams[includeStack.back()].name; }
     void setFileName(const char *name) { streams[includeStack.back()].name = name; }
-    location_t getCurrentLocation() const { return includeStack.back().loc;}
-    location_t getLoc() const { return getCurrentLocation(); }
+    location_t getCurrentLocation() const { return streams.back().loc;}
+    location_t getCurrentLocationSafe() const {
+        return streams.empty() ? 0 : getCurrentLocation();
+    }
+    location_t getLoc() const { return includeStack.empty() : 0 : streams[includeStack.back()].loc; }
     inline LocTree *getLocTree() const { return tree; }
     void beginExpandMacro(PPMacroDef *M, xcc_context &context) {
-        location_map[current_loc] = (tree = new (context.getAllocator()) LocTree(tree, M));
+        location_map[getCurrentLocation()] = (tree = new (context.getAllocator()) LocTree(tree, M));
     }
     void beginInclude(unsigned line, xcc_context &context, fileid_t theFD) {
         assert(includeStack.size() >= 2 && "call beginInclude() without previous include position!");
         Include_Info *info = new (context.getAllocator()) Include_Info{.line = line, .fd = theFD};
-        location_map[current_loc] = (tree = new (context.getAllocator()) LocTree(tree, info));
+        location_map[getCurrentLocation()] = (tree = new (context.getAllocator()) LocTree(tree, info));
     }
     void endTree() {
-        location_map[current_loc] = (tree = tree->getParent());
+        location_map[getCurrentLocation()] = (tree = tree->getParent());
     }
     SourceMgr(DiagnosticsEngine &Diag) : DiagnosticHelper{Diag}, buf{}, trigraphs{false} {
         buf.resize_for_overwrite(STREAM_BUFFER_SIZE);
@@ -96,9 +94,10 @@ struct SourceMgr : public DiagnosticHelper {
                                   FILE_ATTRIBUTE_NORMAL, nullptr);
         if (fd == INVALID_HANDLE_VALUE) {
             if (verbose)
-                error("cannot open %s: %w", path, (DWORD)GetLastError());
+                pp_error("cannot open %s: %w", path, static_cast<uint32_t>(GetLastError()));
             return false;
         }
+        /*
         DWORD highPart;
         fileSize = ::GetFileSize(fd, &highPart);
         if (fileSize == INVALID_FILE_SIZE )
@@ -109,7 +108,7 @@ struct SourceMgr : public DiagnosticHelper {
             total <<= 32;
             total |= fileSize;
             return errno("file size %Z is too large for XCC", total), false;
-        }
+        }*/
 #else
         int fd = ::open(path, O_RDONLY);
         if (fd < 0) {
@@ -117,7 +116,7 @@ struct SourceMgr : public DiagnosticHelper {
                 error("cannot open %s: %o", path, errno);
             return false;
         }
-        {
+        /*{
             struct stat sb;
             if (::fstat(fd, &sb))
                 return error("fstat: %o", errno), false;
@@ -126,30 +125,26 @@ struct SourceMgr : public DiagnosticHelper {
                 return false;
             }
             fileSize = sb.st_size;
-        }
+        }*/
 #endif  
-        location_t new_loc = includeStack.empty() ? 0 : getCurrentLocation();
-        new_loc += fileSize;
-        Stream f = Stream{.name = path, .k = AFileStream};
-        f.fileSize = fileSize;
+        auto Id = streams.size();
+        streams.emplace_back(AFileStream, path);
+        Stream &f = streams.back();
         f.p = 0;
         f.pos = 0;
         f.fd = fd;
-        includeStack.push_back(IncludeStackEntry {.fd = streams.size(), .loc = new_loc});
-        streams.push_back(f);
+        f.startLoc = getCurrentLocationSafe();
+        includeStack.push_back(Id);
         return true;
     }
     fileid_t getFileFromLocation(location_t loc, uint64_t &offset) const {
-        uint64_t start = 0;
         for (size_t i = 0;i < streams.size();++i) {
-            start += streams[i].fileSize;
-            if (start >= loc) {
-                start -= streams[i].fileSize;
-                offset = static_cast<uint64_t>(loc) - start;
-                return i;
+            if (loc < streams[i].startLoc) {
+                offset = streams[i - 1].startLoc - loc;
+                return i - 1;
             }
         }
-        return (fileid_t)-1;
+        return 0;
     }
     bool translateLocation(location_t loc, source_location &out) {
         uint64_t offset;
@@ -177,21 +172,21 @@ struct SourceMgr : public DiagnosticHelper {
         LARGE_INTEGER saved_posl;
         {
             LARGE_INTEGER seek_pos;
-            seek_pos.QuadPart = -static_cast<ULONGLONG>(stream_ref.pos);
-            if (!::SetFilePointerEx(stream_ref.fd, seek_pos, &saved_posl, FILE_CURRENT)) {
+            seek_pos.QuadPart = -static_cast<ULONGLONG>(f.pos);
+            if (!::SetFilePointerEx(f.fd, seek_pos, &saved_posl, FILE_CURRENT)) {
                 dbgprint("SetFilePointerEx() failed!");
                 return false;
             }
             seek_pos.QuadPart = 0;
-            ::SetFilePointerEx(stream_ref.fd, seek_pos, nullptr, FILE_BEGIN);
+            ::SetFilePointerEx(f.fd, seek_pos, nullptr, FILE_BEGIN);
         }
 #else
         off_t saved_posl;
-        if ((saved_posl = ::lseek(stream_ref.fd, -static_cast<off_t>(stream_ref.pos), SEEK_CUR)) < 0) {
+        if ((saved_posl = ::lseek(f.fd, -static_cast<off_t>(f.pos), SEEK_CUR)) < 0) {
             dbgprint("lseek() failed!");
             return false;
         }
-        ::lseek(stream_ref.fd, 0, SEEK_SET);
+        ::lseek(f.fd, 0, SEEK_SET);
 #endif
         uint64_t readed = 0, last_line_offset = 0;
         unsigned line = 0;
@@ -219,40 +214,45 @@ struct SourceMgr : public DiagnosticHelper {
             }
             readed += to_read;
         }
-        loc.line = line;
-        loc.col = offset - last_line_offset;
-        if (loc.col) {
-            for (uint64_t i = 0;i < ;++i) {
-
+        out.line = line;
+        out.col = offset - last_line_offset;
+        if (out.col) {
+            for (uint64_t i = 0;i < out.col;++i) {
+                out.source_line.push_back(buffer[i]);
             }
         }
         // now, read source line
         for (;;) {
 #if WINDOWS
             DWORD L = 0;
-            if (!::ReadFile(f.fd, buffer, to_read, &L, nullptr) || L != to_read)
-                return false;
+            if (!::ReadFile(f.fd, buffer, read_size, &L, nullptr) || L == 0)
+                break;
 #else
-            size_t L = ::read(f.fd, buffer, to_read);
-            if (L != (size_t)to_read)
-                return false;
+            size_t L = ::read(f.fd, buffer, read_size);
+            if (L == 0)
+                break;
 #endif
+            for (unsigned i = 0;i < L;++i) {
+                if (out.source_line.push_back(buffer[i]))
+                    break;
+            }
         }
-        dbgprint("resolve location_t: line %zu, column %zu, source_line = %s\n", line_read, column_read, source_line);
+        dbgprint("resolve location_t: line %zu, column %zu\n", out.line, out.col);
         f.pos = 0;
         delete [] buffer;
 #if WINDOWS
-        ::SetFilePointerEx(stream_ref.fd, saved_posl, nullptr, FILE_BEGIN);
+        ::SetFilePointerEx(f.fd, saved_posl, nullptr, FILE_BEGIN);
 #else
-        ::lseek(stream_ref.fd, saved_posl, SEEK_SET);
+        ::lseek(f.fd, saved_posl, SEEK_SET);
 #endif
+        return true;
     }
     bool empty() const {
         return includeStack.empty();
     }
     // read a char from a stream
     char raw_read(Stream &f) {
-        ++current_loc;
+        f.loc++;
         switch (f.k) {
         case AFileStream: {
 AGAIN:
@@ -476,19 +476,23 @@ REPEAT:
         }
     }
     void addStdin(const char *Name = "<stdin>") {
-        Stream x = Stream{.name = Name, .k = AStdinStream};
-        x.i = 0;
-        x.readed = 0;
-        includeStack.push_back(streams.size());
-        streams.push_back(x);
+        auto Id = streams.size();
+        streams.emplace_back(AStdinStream, Name);
+        Stream &f = streams.back();
+        f.i = 0;
+        f.readed = 0;
+        f.startLoc = getCurrentLocationSafe();
+        includeStack.push_back(Id);
     }
-    void addString(StringRef s, const char *fileName = "<string>") {
-        Stream x = Stream{.name = fileName, .k = AStringStream};
-        x.idx = 0;
-        x.max = s.size();
-        x.s = s.data();
-        includeStack.push_back(streams.size());
-        streams.push_back(x);
+    void addString(StringRef s, const char *Name = "<string>") {
+        auto Id = streams.size();
+        streams.emplace_back(AStringStream, Name);
+        Stream &f = streams.back();
+        f.idx = 0;
+        f.max = s.size();
+        f.s = s.data();
+        f.startLoc = getCurrentLocationSafe();
+        includeStack.push_back(Id);
     }
     void addCol() { ++streams[includeStack.back()].column; }
     void resetLine() {
@@ -512,7 +516,6 @@ REPEAT:
             return res;
         }
         if (includeStack.empty()) {
-            location_map[current_loc] = tree;
             return '\0';
         } else {
             char c = raw_read_from_stack();
@@ -637,7 +640,7 @@ RET:
             OS << "  stream[" << i << "]: Name = " << f.name << ", kind = ";
             switch (f.k) {
             case AFileStream:
-                OS << "(file stream, fd = " << f.fd << ", size = " << f.fileSize << ")\n";
+                OS << "(file stream, fd = " << f.fd << ", size = " << ")\n";
                 break;
             case AStdinStream:
                 OS << "(stdin stream)\n";

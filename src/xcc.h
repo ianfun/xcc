@@ -636,15 +636,48 @@ typedef unsigned column_t;
 typedef unsigned fileid_t;
 typedef uint32_t location_t;
 
+#define ZERO_LOC 0
+static const char hexs[] = "0123456789ABCDEF";
+static char hexed(unsigned a) { return hexs[a & 0b1111]; }
+struct SourceLine {
+    llvm::SmallString<0> buffer;
+    void clear() {
+        buffer.clear();
+    }
+    StringRef str() const {
+        return buffer.str();
+    }
+    bool push_back(char c) {
+        switch (c) {
+        case '\n':
+        case '\r': return true;
+        case '\t':
+            buffer.append(CC_SHOW_TAB_SIZE, ' ');
+            break;
+        default:
+            if (!llvm::isPrint(c)) { /*std::iscntrl(c)*/ 
+                    buffer.push_back('<');
+                    buffer.push_back('0');
+                    buffer.push_back('x');
+                    buffer.push_back(hexed(c) >> 4);
+                    buffer.push_back(hexed(c));
+                    buffer.push_back('>');
+                } else {
+                    buffer.push_back(c);
+                }
+        }
+        return false;
+    }
+};
+
 struct source_location {
     line_t line = 0;
     column_t col = 0;
     fileid_t fd = 0;
-    LocTree *tree = nullptr;;
-    char *source_line = nullptr;
-    SmallString<0> source_line;
+    struct LocTree *tree = nullptr;
+    SourceLine source_line;
     bool isValid() const { return line != 0; }
-    source_location(line_t line = 0, column_t col = 0, fileid_t fd = 0): line{line}, col{col}, id{fd} {}
+    source_location(line_t line = 0, column_t col = 0, fileid_t fd = 0): line{line}, col{col}, fd{fd} {}
     bool operator >(const source_location &rhs) {
         return line > rhs.line && col > rhs.col;
     }
@@ -698,17 +731,17 @@ struct VarDecl {
     size_t idx;
 };
 struct SwitchCase {
-    Location loc;
+    location_t loc;
     const APInt *CaseStart;
     label_t label;
-    SwitchCase(Location loc, label_t label, const APInt *CastStart) : loc{loc}, CaseStart{CastStart}, label{label} { }
+    SwitchCase(location_t loc, label_t label, const APInt *CastStart) : loc{loc}, CaseStart{CastStart}, label{label} { }
     static bool equals(const SwitchCase &lhs, const SwitchCase &rhs) {
         return *lhs.CaseStart == *rhs.CaseStart;
     }
 };
 struct GNUSwitchCase : public SwitchCase {
     APInt range;
-    GNUSwitchCase(Location loc, label_t label, const APInt *CastStart, const APInt *CaseEnd)
+    GNUSwitchCase(location_t loc, label_t label, const APInt *CastStart, const APInt *CaseEnd)
         : SwitchCase(loc, label, CastStart), range{*CaseEnd - *CastStart} { }
     bool contains(const APInt &C) const {
         return (C - *CaseStart).ule(range);
@@ -737,7 +770,7 @@ struct GNUSwitchCase : public SwitchCase {
 
 struct ReplacedExpr {
   enum ExprKind k=EConstant;
-  Location loc;
+  location_t loc;
   CType ty;
   struct {
     llvm::Constant* C;
@@ -784,8 +817,7 @@ static const char *show2(enum TagType k) {
     default: llvm_unreachable("invalid argument to show_transform()");
     }
 }
-static const char hexs[] = "0123456789ABCDEF";
-static char hexed(unsigned a) { return hexs[a & 0b1111]; }
+
 
 static bool is_declaration_specifier(Token a) { return a >= Kextern && a <= Kvolatile; }
 
@@ -939,7 +971,7 @@ struct PPMacro {
 };
 struct PPMacroDef {
     PPMacro m;
-    LocationBase loc;
+    location_t loc;
 };
 static unsigned intRank(const_CType ty) {
     return ty->getIntegerKind().asLog2();

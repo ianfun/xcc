@@ -17,12 +17,12 @@ enum StmtKind: uint8_t {
 };
 struct NullStmt {
   enum StmtKind k;
-  Location loc;
+  location_t loc;
   Stmt next;
 };
 struct OpaqueStmt {
 StmtKind k;
-Location loc;
+location_t loc;
 Stmt next;
 bool isTerminator() const {
     switch (k) {
@@ -55,7 +55,7 @@ union {
     xvector<SwitchCase> switchs;
     xvector<GNUSwitchCase> gnu_switchs;
     label_t sw_default;
-    Location sw_default_loc;
+    location_t sw_default_loc;
   };
   struct {
       CType decl;
@@ -92,13 +92,13 @@ union {
 };};
 struct HeadStmt {
   enum StmtKind k=SHead;
-  Location loc;
+  location_t loc;
   Stmt next;
  /* empty! */ 
 };
 struct CompoundStmt {
   enum StmtKind k=SCompound;
-  Location loc;
+  location_t loc;
   Stmt next;
   struct {
     Stmt inner;
@@ -106,7 +106,7 @@ struct CompoundStmt {
 };
 struct LabelStmt {
   enum StmtKind k=SLabel;
-  Location loc;
+  location_t loc;
   Stmt next;
   struct {
     label_t label;
@@ -115,7 +115,7 @@ struct LabelStmt {
 };
 struct GotoStmt {
   enum StmtKind k=SGoto;
-  Location loc;
+  location_t loc;
   Stmt next;
   struct {
     label_t location;
@@ -123,7 +123,7 @@ struct GotoStmt {
 };
 struct CondJumpStmt {
   enum StmtKind k=SCondJump;
-  Location loc;
+  location_t loc;
   Stmt next;
   struct {
     Expr test;
@@ -133,19 +133,19 @@ struct CondJumpStmt {
 };
 struct SwitchStmt {
   enum StmtKind k=SSwitch;
-  Location loc;
+  location_t loc;
   Stmt next;
   struct {
     Expr itest;
     xvector<SwitchCase> switchs;
     xvector<GNUSwitchCase> gnu_switchs;
     label_t sw_default;
-    Location sw_default_loc;
+    location_t sw_default_loc;
   };
 };
 struct DeclOnlyStmt {
   enum StmtKind k=SDeclOnly;
-  Location loc;
+  location_t loc;
   Stmt next;
   struct {
     CType decl;
@@ -153,7 +153,7 @@ struct DeclOnlyStmt {
 };
 struct ReturnStmt {
   enum StmtKind k=SReturn;
-  Location loc;
+  location_t loc;
   Stmt next;
   struct {
     Expr ret;
@@ -161,7 +161,7 @@ struct ReturnStmt {
 };
 struct ExprStmt {
   enum StmtKind k=SExpr;
-  Location loc;
+  location_t loc;
   Stmt next;
   struct {
     Expr exprbody;
@@ -169,7 +169,7 @@ struct ExprStmt {
 };
 struct AsmStmt {
   enum StmtKind k=SAsm;
-  Location loc;
+  location_t loc;
   Stmt next;
   struct {
     xstring asms;
@@ -177,7 +177,7 @@ struct AsmStmt {
 };
 struct VarDeclStmt {
   enum StmtKind k=SVarDecl;
-  Location loc;
+  location_t loc;
   Stmt next;
   struct {
     xvector<VarDecl> vars;
@@ -185,7 +185,7 @@ struct VarDeclStmt {
 };
 struct DeclStmt {
   enum StmtKind k=SDecl;
-  Location loc;
+  location_t loc;
   Stmt next;
   struct {
     size_t decl_idx;
@@ -194,7 +194,7 @@ struct DeclStmt {
 };
 struct UpdateForwardDeclStmt {
   enum StmtKind k=SUpdateForwardDecl;
-  Location loc;
+  location_t loc;
   Stmt next;
   struct {
     size_t prev_idx;
@@ -204,7 +204,7 @@ struct UpdateForwardDeclStmt {
 };
 struct FunctionStmt {
   enum StmtKind k=SFunction;
-  Location loc;
+  location_t loc;
   Stmt next;
   struct {
     size_t func_idx;

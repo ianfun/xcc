@@ -1,109 +1,20 @@
-void TextDiagnosticPrinter::printSource(const LocationBase &loc) {
-#if WINDOWS
-    LARGE_INTEGER saved_posl;
-#else
-    off_t saved_posl;
-#endif
-    Stream &stream_ref = SM->streams[loc.id];
-    if (stream_ref.k != AFileStream)
-        return;
-    uint32_t old_line = stream_ref.line;
-    uint32_t old_col = stream_ref.column;
-#if WINDOWS
-    LARGE_INTEGER seek_pos;
-    seek_pos.QuadPart = -static_cast<ULONGLONG>(stream_ref.pos);
-    if (!::SetFilePointerEx(stream_ref.fd, seek_pos, &saved_posl, FILE_CURRENT))
-        return;
-    seek_pos.QuadPart = 0;
-    ::SetFilePointerEx(stream_ref.fd, seek_pos, nullptr, FILE_BEGIN);
-#else
-    if ((saved_posl = ::lseek(stream_ref.fd, -static_cast<off_t>(stream_ref.pos), SEEK_CUR)) < 0)
-        return;
-    ::lseek(stream_ref.fd, 0, SEEK_SET);
-#endif
-    stream_ref.pos = 0;
-    stream_ref.line = 1;
-    stream_ref.column = 1;
-    {
-        while (stream_ref.line < loc.line) {
-            char c = SM->raw_read_from_id(loc.id);
-            if (c == '\r') {
-                ++stream_ref.line;
-                c = SM->raw_read_from_id(loc.id);
-                if (c != '\n')
-                    ++stream_ref.line;
-            } else if (c == '\n') {
-                ++stream_ref.line;
-            } else if (c == '\0') {
-                dbgprint("ERROR: unexpected EOF!");
-                goto EXIT;
-            }
-        }
-        {
-            char buf[13];
-            int len = snprintf(buf, sizeof(buf), "%5d", loc.line);
-            OS << StringRef(buf, (unsigned)len) << " | ";
-        }
-        unsigned line_chars = 0, displayed_chars = 0, real = 0;
-        {
-            llvm::SmallString<64> buffer;
-            for (;;) {
-                unsigned char c = SM->raw_read_from_id(loc.id);
-                if (c == '\0' || c == '\n' || c == '\r') {
-                    buffer += "\n      | ";  
-                    if (real == 0)
-                        real = displayed_chars;
-                    OS << buffer.str();
-                    buffer.assign(real, ' ');
-                    OS << buffer.str();
-                    break;
-                }
-                if (line_chars == loc.col) {
-                    real = displayed_chars;
-                }
-                if (c == '\t') {
-                    displayed_chars += CC_SHOW_TAB_SIZE;
-                    buffer.assign(CC_SHOW_TAB_SIZE, ' ');
-                } else if (!llvm::isPrint(c)) { /*std::iscntrl(c)*/ 
-                    buffer.push_back('<');
-                    buffer.push_back('0');
-                    buffer.push_back('x');
-                    buffer.push_back(hexed(c) >> 4);
-                    buffer.push_back(hexed(c));
-                    buffer.push_back('>');
-                    displayed_chars += 6;
-                } else {
-                    displayed_chars++;
-                    buffer.push_back(c);
-                }
-                ++line_chars;
-            }
-        }
-        OS.changeColor(raw_ostream::RED);
-        OS << '^';
-        OS.resetColor();
-        OS << '\n';
-    }
-
-EXIT:
-    stream_ref.pos = 0;
-    stream_ref.line = old_line;
-    stream_ref.column = old_col;
-#if WINDOWS
-    ::SetFilePointerEx(stream_ref.fd, saved_posl, nullptr, FILE_BEGIN);
-#else
-    ::lseek(stream_ref.fd, saved_posl, SEEK_SET);
-#endif
+void TextDiagnosticPrinter::printSource(const source_location &loc) {
+    OS << loc.source_line.str();
 }
-void TextDiagnosticPrinter::write_loc(const LocationBase &loc) {
+void TextDiagnosticPrinter::write_loc(const source_location &loc) {
     OS.changeColor(llvm::raw_ostream::Colors::SAVEDCOLOR, true);
-    OS << SM->getFileName(loc.id) << ':' << loc.line << ':' << loc.col << ": ";
+    OS << SM->getFileName(loc.fd) << ':' << loc.line << ':' << loc.col << ": ";
     OS.changeColor(llvm::raw_ostream::Colors::SAVEDCOLOR, false);
 }
 void TextDiagnosticPrinter::realHandleDiagnostic(const Diagnostic &Diag) {
-    enum DiagnosticLevel level = Diag.level;
-    LocTree *begin_macro = Diag.loc.getParent();
+    bool locValid = false;
+    LocTree *begin_macro = nullptr;
+    source_location loc;
     if (SM) { 
+        locValid = SM->translateLocation(Diag.loc, loc);
+        if (!locValid)
+            goto NO_LOC;
+        begin_macro = loc.tree;
         LocTree *ptr = begin_macro;
         if (ptr && ptr->isAInclude) {
             for (;ptr && ptr->isAInclude;ptr = ptr->getParent()) {
@@ -116,16 +27,14 @@ void TextDiagnosticPrinter::realHandleDiagnostic(const Diagnostic &Diag) {
             }
         }
         begin_macro = ptr;
-        if (Diag.loc.isValid()) {
-            write_loc(Diag.loc);
-            goto OK;
-        }
+        write_loc(loc);
+    } else {
+        NO_LOC:
+        OS << "xcc: ";
     }
-    OS << "xcc: ";
-    OK:
     {
         raw_ostream::Colors color;
-        switch (level) {
+        switch (Diag.level) {
         case Note: color = noteColor; break;
         case Remark: color = remarkColor; break;
         case Warning: color = warningColor; break;
@@ -135,7 +44,7 @@ void TextDiagnosticPrinter::realHandleDiagnostic(const Diagnostic &Diag) {
     }
     {
         StringRef msgtype;
-        switch (level) {
+        switch (Diag.level) {
         case Ignored: llvm_unreachable("");
         case Note: msgtype = "note: "; break;
         case Remark: msgtype = "remark: "; break;
@@ -157,22 +66,21 @@ void TextDiagnosticPrinter::realHandleDiagnostic(const Diagnostic &Diag) {
         OutStr.push_back('\n');
         OS << OutStr.str();
     }
-    if (SM) {
-        if (Diag.loc.isValid()) {
-            printSource(Diag.loc);
-            for (LocTree *ptr = begin_macro;ptr;ptr = ptr->getParent()) {
-                PPMacroDef *def = ptr->macro;
-                write_loc(def->loc);
-                OS.changeColor(noteColor, true);
-                OS << "note: ";
-                OS.resetColor();
-                OS << "in expansion of macro ";
-                OS.changeColor(llvm::raw_ostream::Colors::SAVEDCOLOR, true);
-                OS << def->m.Name->getKey();
-                OS.changeColor(llvm::raw_ostream::Colors::SAVEDCOLOR, false);
-                OS << '\n';
-                printSource(def->loc); // print where the macro is defined
-            }
+    if (locValid) {
+        printSource(loc);
+        for (LocTree *ptr = begin_macro;ptr;ptr = ptr->getParent()) {
+            PPMacroDef *def = ptr->macro;
+            SM->translateLocation(def->loc, loc);
+            write_loc(loc);
+            OS.changeColor(noteColor, true);
+            OS << "note: ";
+            OS.resetColor();
+            OS << "in expansion of macro ";
+            OS.changeColor(llvm::raw_ostream::Colors::SAVEDCOLOR, true);
+            OS << def->m.Name->getKey();
+            OS.changeColor(llvm::raw_ostream::Colors::SAVEDCOLOR, false);
+            OS << '\n';
+            printSource(loc); // print where the macro is defined
         }
     }
 }
