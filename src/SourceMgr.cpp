@@ -162,7 +162,6 @@ struct SourceMgr : public DiagnosticHelper {
             return false;
         out.fd = fd;
         auto it = location_map.lower_bound(loc);
-        if (it == location_map.end()) goto NO_TREE;
         if (it == location_map.begin()) goto NO_TREE;
         it--;
         if (it == location_map.begin()) goto NO_TREE;

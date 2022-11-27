@@ -1990,6 +1990,7 @@ TYPE_SPEC:
                     if (theTok == Ktypeof_unqual) {
                         eat_typedef = context.clone(eat_typedef);
                         eat_typedef->clearQualifiers();
+                        eat_typedef->clearTag(TYTYPEDEF);
                     }
                     if (l.tok.tok != TRbracket)
                         parse_error(loc, "missing ')'");
@@ -2028,12 +2029,14 @@ TYPE_SPEC:
             return context.getInt();
         }
         if (count == 1) {
-            if (eat_typedef) return eat_typedef;
+            if (eat_typedef) {
+                eat_typedef = context.clone(eat_typedef);
+                eat_typedef->clearTag(TYTYPEDEF);                
+                return eat_typedef;
+            }
             if (tags) {
                 warning(loc, "type-specifier missing(has type-qualifiers), defaults to 'int'");
-                CType intTy = context.clone(context.getInt());
-                intTy->addTags(tags);
-                return intTy;
+                return context.make(context.getInt()->getTags() | tags);
             }
             switch (firstTok) {
             case K_Bool: return context.getBool();
@@ -2798,7 +2801,7 @@ TYPE_SPEC:
                 return insertStmt(res);
             }
             st.ty->noralize();
-#if 0
+#if 1
             print_cdecl(st.name->getKey(), st.ty, llvm::errs(), true);
 #endif
             size_t idx = putsymtype(st.name, st.ty, full_loc);

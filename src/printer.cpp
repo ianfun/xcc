@@ -56,7 +56,7 @@ raw_ostream &operator<<(llvm::raw_ostream &OS, const_CType ty) {
     }
     case TYPOINTER: {
         if (ty->isNullPtr_t())
-            return OS << "nullptr_t";
+            return OS << (ty->hasTag(TYTYPEDEF) ? "typedef nullptr_t" : "nullptr_t");
         auto str = ty->get_pointer_qual_str();
         bool isArrType = ty->p->getKind() == TYARRAY;
         if (isArrType)
@@ -122,7 +122,7 @@ raw_ostream &operator>>(llvm::raw_ostream &OS, const_CType ty) {
     }
     case TYPOINTER: {
         if (ty->isNullPtr_t())
-            return OS << "nullptr_t";
+            return OS << (ty->hasTag(TYTYPEDEF) ? "typedef nullptr_t" : "nullptr_t");
         auto str = ty->get_pointer_qual_str();
         OS << "pointer[elementType=" << ty->p;
         if (!str.empty())
@@ -186,7 +186,7 @@ void print_cdecl(const_CType ty, raw_ostream &OS) {
     }
     case TYPOINTER: {
         if (ty->isNullPtr_t())
-            return (void)(OS << "nullptr_t");
+            return static_cast<void>(OS << (ty->hasTag(TYTYPEDEF) ? "typedef nullptr_t" : "nullptr_t"));
         auto str = ty->get_pointer_qual_str();
         if (!str.empty())
             OS << str << ' ';

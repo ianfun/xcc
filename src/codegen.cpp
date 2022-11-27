@@ -817,7 +817,7 @@ static enum TypeIndex getTypeIndex(CType ty) {
                         GV->setLinkage(InternalLinkage);
                     else if (tags & TYEXTERN) 
                         GV->setLinkage(ExternalLinkage);
-                    else if (!init)
+                    else if (!init && !(tags & TYCONST))
                         GV->setLinkage(CommonLinkage);
                     vars[idx] = GV;
 /*                    if (options.g) {
