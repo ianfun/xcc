@@ -160,10 +160,13 @@ struct SourceMgr : public DiagnosticHelper {
                 return translateLocationLineAndColumn(offset, out);
             }
         }
+        if (streams.size()) {
+            out.tree = nullptr;
+            return translateLocationLineAndColumn(loc, out);
+        }
         return false;
     }
     bool translateLocationLineAndColumn(uint64_t offset, source_location &out) {
-        printf("translateLocationLineAndColumn for %d %llu\n", out.fd, offset);
         Stream &f = streams[out.fd];
         if (f.k != AFileStream) {
             out.line = 0;
@@ -176,19 +179,15 @@ struct SourceMgr : public DiagnosticHelper {
         {
             LARGE_INTEGER seek_pos;
             seek_pos.QuadPart = -static_cast<ULONGLONG>(f.pos);
-            if (!::SetFilePointerEx(f.fd, seek_pos, &saved_posl, FILE_CURRENT)) {
-                dbgprint("SetFilePointerEx() failed!");
+            if (!::SetFilePointerEx(f.fd, seek_pos, &saved_posl, FILE_CURRENT)) 
                 return false;
-            }
             seek_pos.QuadPart = 0;
             ::SetFilePointerEx(f.fd, seek_pos, nullptr, FILE_BEGIN);
         }
 #else
         off_t saved_posl;
-        if ((saved_posl = ::lseek(f.fd, -static_cast<off_t>(f.pos), SEEK_CUR)) < 0) {
-            dbgprint("lseek() failed!");
+        if ((saved_posl = ::lseek(f.fd, -static_cast<off_t>(f.pos), SEEK_CUR)) < 0) 
             return false;
-        }
         ::lseek(f.fd, 0, SEEK_SET);
 #endif
         location_t old_loc = f.loc;
@@ -220,38 +219,31 @@ struct SourceMgr : public DiagnosticHelper {
         }
         out.line = line;
         out.col = offset - last_line_offset;
-        if (out.col < read_size) {
-            for (uint64_t i = last_line_offset;i < offset;++i) {
-                out.source_line.push_back(buffer[i]);
-            }
-        } else {
+        {
 #if WINDOWS
             LARGE_INTEGER seek_pos;
             seek_pos.QuadPart = -static_cast<uint64_t>(out.col);
-            ::SetFilePointerEx(f.fd, seek_pos, nullptr, FILE_BEGIN);
+            ::SetFilePointerEx(f.fd, seek_pos, nullptr, FILE_CURRENT);
 #else
-            
-            ::lseek(f.fd, saved_posl, SEEK_SET);
+            ::lseek(f.fd, -static_cast<off_t>(out.col), SEEK_CUR);
 #endif
         }
         // now, read source line
         for (;;) {
 #if WINDOWS
             DWORD L = 0;
-            if (!::ReadFile(f.fd, buffer, read_size, &L, nullptr) || L == 0)
+            if (!::ReadFile(f.fd, buffer, read_size, &L, nullptr) || L == 0) 
                 break;
 #else
             size_t L = ::read(f.fd, buffer, read_size);
             if (L == 0)
                 break;
 #endif
-            for (unsigned i = 0;i < L;++i) {
+            for (unsigned i = 0;i < L;++i)
                 if (out.source_line.push_back(buffer[i]))
-                    goto OUT;
-            }
+                    goto BREAK;
         }
-        OUT:
-        dbgprint("resolve location_t: line %zu, column %zu\n", out.line, out.col);
+        BREAK: ;
         f.pos = 0;
         f.loc = old_loc;
         delete [] buffer;
@@ -538,10 +530,10 @@ REPEAT:
             switch (c) {
             default: return c;
             case '\0':
+                location_map[streams[includeStack.back()].loc] = tree ? tree->getParent() : nullptr;
                 includeStack.pop_back();
                 if (includeStack.empty())
                     return '\0';
-                endTree();
                 return stream_read();
             case '\n': resetLine(); return '\n';
             case '\r': {

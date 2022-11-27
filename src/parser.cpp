@@ -2798,7 +2798,7 @@ TYPE_SPEC:
                 return insertStmt(res);
             }
             st.ty->noralize();
-#if 1
+#if 0
             print_cdecl(st.name->getKey(), st.ty, llvm::errs(), true);
 #endif
             size_t idx = putsymtype(st.name, st.ty, full_loc);

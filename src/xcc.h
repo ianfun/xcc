@@ -203,6 +203,7 @@ const char *show(enum TagType tag) {
     case TagType_Struct: return "struct";
     case TagType_Union: return "union";
     }
+    llvm_unreachable("invalid enum TagType");
 }
 enum PostFixOp {
     PostfixIncrement = 1,

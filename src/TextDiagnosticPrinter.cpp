@@ -1,5 +1,17 @@
 void TextDiagnosticPrinter::printSource(const source_location &loc) {
+    {
+        char buf[13];
+        int len = snprintf(buf, sizeof(buf), "%5d", loc.line);
+        OS << StringRef(buf, len) << " | ";
+    }
     OS << loc.source_line.str();
+    OS << "\n      | ";
+    for (unsigned i = 0;i < loc.col;++i)
+        OS << ' ';
+    OS.changeColor(raw_ostream::RED);
+    OS << '^';
+    OS.resetColor();
+    OS << '\n';
 }
 void TextDiagnosticPrinter::write_loc(const source_location &loc) {
     OS.changeColor(llvm::raw_ostream::Colors::SAVEDCOLOR, true);
