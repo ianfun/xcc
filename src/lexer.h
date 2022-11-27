@@ -337,7 +337,7 @@ END:
             }
         }
         theTok.str = str;
-        theTok.str.push_back(static_cast<char>(enc));
+        theTok.setStringPrefix(enc);
         return theTok;
     }
     void beginExpandMacro(PPMacroDef *M) {
@@ -643,7 +643,6 @@ STD_INCLUDE:
                         for (;;) {
                             eat();
                             if (c == is_std) {
-                                auto size = SM.includeStack.size();
                                 for (;;) {
                                     char c = SM.raw_read(f);
                                     if (c == '\0') {
@@ -658,14 +657,10 @@ STD_INCLUDE:
                                 }
                                 else {
                                     path.make_eos();
-                                    size = SM.includeStack.size();
-                                    SM.addIncludeFile(path.str(), is_std == '>');
-                                    if (SM.includeStack.size() == size) {
-                                        pp_error(loc, "#include file not found: %R", StringRef(path.data(), path.length() - 1));
-                                        path.free();
-                                    } else { // TODO
+                                    if (SM.addIncludeFile(path, is_std == '>', loc))
                                         SM.beginInclude(context, theFD);
-                                    }
+                                    else
+                                        path.free();
                                 }
                                 break;
                             }
@@ -739,14 +734,15 @@ STD_INCLUDE:
                 } break;
                 case PPerror:
                 case PPwarning: {
-                    SmallString<256> s;
+                    SmallString<128> s;
                     for (; c != '\n' && c != '\0';) {
                         s.push_back(c), eat();
                     }
+                    StringRef str(s.data(), s.size());
                     if (saved_tok == PPwarning)
-                        warning(loc, "#warning: %R", s.str());
+                        warning(loc, "#warning: %r", str);
                     else
-                        pp_error(loc, "#error: %R", s.str());
+                        pp_error(loc, "#error: %r", str);
                 } break;
                 default: pp_error(loc, "invalid preprocessing directive: %I", saved_name);
                 }
@@ -896,24 +892,11 @@ STD_INCLUDE:
         switch ((saved_tok = name->second.getToken())) {
         case PP__LINE__:
         case PP__COUNTER__: {
-            // 4294967295 - the highest unsigned 32 bit value, require 10 chars
-            xstring str = xstring::get_with_length(11);
-            {
-                uint32_t val = saved_tok == PP__LINE__ ? SM.getLine() : counter++;
-                str[0] = '0' + val / 1000000000;
-                str[1] = '0' + val / 100000000;
-                str[2] = '0' + val / 10000000;
-                str[3] = '0' + val / 1000000;
-                str[4] = '0' + val / 100000;
-                str[5] = '0' + val / 10000;
-                str[6] = '0' + val / 1000;
-                str[7] = '0' + val / 100;
-                str[8] = '0' + val / 10;
-                str[9] = '0' + val;
-                str[10] = '\0';
-            }
-            tok = TokenV(ATokenVStrLit, TStringLit);
-            tok.str = str;
+            unsigned val = saved_tok == PP__LINE__ ? SM.getLine() : counter++;
+            char buf[13];
+            int n = snprintf(buf, sizeof(buf), "%u", val);
+            tok = TokenV(ATokenVNumLit, PPNumber);
+            tok.str = xstring::get(StringRef(buf, n));
             return;
         }
         case PP__DATE__:
@@ -930,20 +913,19 @@ STD_INCLUDE:
                 str.msize() = snprintf(str.data(), 32, "%02d:%02d:%02d", t->tm_hour, t->tm_min, t->tm_sec);
             tok = TokenV(ATokenVStrLit, TStringLit);
             tok.str = str;
+            tok.setStringPrefix(Prefix_none);
             return;
         }
         case PP__FILE__: {
             tok = TokenV(ATokenVStrLit, TStringLit);
             tok.str = xstring::get(SM.getFileName());
+            tok.setStringPrefix(Prefix_none);
             return;
         }
         case PP_Pragma: {
             cpp();
             if (tok.tok != TLbracket)
                 return expectLB(loc);
-            cpp();
-            if (tok.tok != TStringLit)
-                return expect(loc, "expect string literal");
             cpp();
             if (tok.tok != TStringLit)
                 return expect(loc, "string literal");

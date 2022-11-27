@@ -1428,12 +1428,12 @@ ZERO : {
 ONE : {
     const StringRef allOnes = "all ones(all bits set, -1)";
     if (op == Or) {
-        warning(result->loc, "'bitsize or' to %R is always all ones", allOnes);
+        warning(result->loc, "'bitsize or' to %r is always all ones", allOnes);
         result = result =
             wrap(result->ty, ConstantInt::get(irgen.ctx, APInt::getAllOnes(result->ty->getIntegerKind().getBitWidth())), result->loc);
         return;
     }
-    warning(result->loc, "'bitsize and' to %R is always itself", allOnes);
+    warning(result->loc, "'bitsize and' to %r is always itself", allOnes);
 }
     }
     void make_mul(Expr &result, Expr &r) {
@@ -2694,7 +2694,7 @@ TYPE_SPEC:
             Variable_Info &var_info = sema.typedefs.getSym(e->sval);
             var_info.tags |= ASSIGNED;
             if (var_info.ty->hasTag(TYCONST)) {
-                type_error(getLoc(), "cannot modify const-qualified variable %R: %T", sema.typedefs.getSymName(e->sval),
+                type_error(getLoc(), "cannot modify const-qualified variable %r: %T", sema.typedefs.getSymName(e->sval),
                            var_info.ty);
                 return false;
             }
@@ -3311,7 +3311,7 @@ NEXT:
             auto it = F.convertFromString(fstr, APFloat::rmNearestTiesToEven);
             if (auto err = it.takeError()) {
                 std::string msg = llvm::toString(std::move(err));
-                lex_error(loc, "error parsing floating literal: %R", StringRef(msg));
+                lex_error(loc, "error parsing floating literal: %r", StringRef(msg));
             } else {
                 auto status = *it;
                 SmallString<20> buffer;
@@ -3319,10 +3319,10 @@ NEXT:
                     const char *diag;
                     if (status & APFloat::opOverflow) {
                         APFloat::getLargest(Format).toString(buffer);
-                        diag = "floating point constant overflow: %R";
+                        diag = "floating point constant overflow: %r";
                     } else {
                         APFloat::getSmallest(Format).toString(buffer);
-                        diag = "float point constant opUnderflow: %R";
+                        diag = "float point constant opUnderflow: %r";
                     }
                     lex_error(loc, diag, buffer.str());
                 }
@@ -3639,6 +3639,12 @@ GENERIC_END:
                 return wrap(context.getInt(), ConstantInt::get(irgen.integer_types[context.getIntLog2()], column), loc);
             }
             case K__builtin_FILE:
+                return ENEW(ConstantArrayExpr) 
+                    {
+                        .loc = loc, 
+                        .ty = context.stringty, 
+                        .array = string_pool.getAsUTF8(SM().getFileName())
+                    };
             default: llvm_unreachable("");
             }
         }

@@ -906,6 +906,9 @@ struct TokenV {
         str.pop_back();
         return r;
     }
+    void setStringPrefix(enum StringPrefix enc = Prefix_none) {
+        str.push_back(static_cast<char>(enc));
+    }
     enum StringPrefix getCharPrefix() const {
         return static_cast<enum StringPrefix>(itag);
     }

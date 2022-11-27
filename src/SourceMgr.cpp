@@ -39,7 +39,7 @@ struct Stream {
 
 struct SourceMgr : public DiagnosticHelper {
     SmallString<STREAM_BUFFER_SIZE> buf;
-    SmallVector<const char *, 16> sysPaths;
+    SmallVector<xstring, 16> sysPaths;
     SmallVector<xstring, 16> userPaths;
     std::vector<Stream> streams;
     SmallVector<fileid_t, 16> includeStack;
@@ -50,7 +50,7 @@ struct SourceMgr : public DiagnosticHelper {
     bool is_tty;
     void setLine(uint32_t line) { streams[includeStack.back()].line = line; }
     const char *getFileName(unsigned i) const { return streams[i].name; }
-    const char *getFileName() const { return streams[includeStack.back()].name; }
+    const char *getFileName() const { return includeStack.size() ? streams[includeStack.back()].name : "(unknown file)"; }
     unsigned getLine() const { return streams.empty() ? 0 : streams[includeStack.back()].line; }
     unsigned getLine(unsigned i) const { return streams[i].line; }
     void setFileName(const char *name) { streams[includeStack.back()].name = name; }
@@ -66,7 +66,7 @@ struct SourceMgr : public DiagnosticHelper {
     void beginInclude(xcc_context &context, fileid_t theFD) {
         assert(includeStack.size() >= 2 && "call beginInclude() without previous include position!");
         Include_Info *info = new (context.getAllocator()) Include_Info{.line = getLine(theFD), .fd = theFD};
-        location_map[includeStack.back().startLoc] = (tree = new (context.getAllocator()) LocTree(tree, info));
+        location_map[streams[includeStack.back()].startLoc] = (tree = new (context.getAllocator()) LocTree(tree, info));
     }
     void endTree() {
         location_map[getCurrentLocation()] = (tree = tree->getParent());
@@ -84,7 +84,9 @@ struct SourceMgr : public DiagnosticHelper {
         trigraphs = enable;
     }
     void addUsernIcludeDir(xstring path) { userPaths.push_back(path); }
-    void addSysIncludeDir(const char *path) { sysPaths.push_back(path); }
+    void addSysIncludeDir(xstring path) { sysPaths.push_back(path); }
+    void addUsernIcludeDir(StringRef path) { userPaths.push_back(xstring::get(path)); }
+    void addSysIncludeDir(StringRef path) { sysPaths.push_back(xstring::get(path)); }
     bool addFile(const char *path, bool verbose = true) {
         location_t fileSize;
 #if WINDOWS
@@ -153,17 +155,20 @@ struct SourceMgr : public DiagnosticHelper {
         return 0;
     }
     bool translateLocation(location_t loc, source_location &out) {
+        if (loc == 0) return false;
         uint64_t offset;
         fileid_t fd = getFileFromLocation(loc, offset);
         if (fd == (fileid_t)-1)
             return false;
         out.fd = fd;
-        for (const auto &it: location_map) {
-            if (it.first >= loc) {
-                out.tree = it.second;
-                return translateLocationLineAndColumn(offset, out);
-            }
-        }
+        auto it = location_map.lower_bound(loc);
+        if (it == location_map.end()) goto NO_TREE;
+        if (it == location_map.begin()) goto NO_TREE;
+        it--;
+        if (it == location_map.begin()) goto NO_TREE;
+        out.tree = it->second;
+        return translateLocationLineAndColumn(loc, out);
+NO_TREE:
         if (streams.size()) {
             out.tree = nullptr;
             return translateLocationLineAndColumn(loc, out);
@@ -467,7 +472,7 @@ REPEAT:
         }
         return false;
     }
-    void addIncludeFile(StringRef path, bool isAngled) {
+    bool addIncludeFile(StringRef path, bool isAngled, location_t loc) {
         // https://stackoverflow.com/q/21593/15886008
         // path must be null terminated
         xstring result = xstring::get_with_capacity(256);
@@ -476,27 +481,84 @@ REPEAT:
             result += '/';
             result += path;
             if (addFile(result.data(), false))
-                return resetBuffer();
+                return resetBuffer(), true;
             result.clear();
         }
         if (searchFileInDir(result, path, userPaths.data(), userPaths.size()))
-            return;
+            return true;
         if (searchFileInDir(result, path, sysPaths.data(), sysPaths.size()))
-            return;
+            return true;
         result.free();
-        return suggestPath(path, isAngled);
+        pp_error(loc, "#include file not found: %r", StringRef(path.data(), path.size() - 1));
+        return suggestPath(path, isAngled), false;
     }
     void suggestPath(StringRef path, bool isAngled) {
-        SmallString<128> result;
+        path = llvm::sys::path::filename(path);
+        if (path.empty() || path.back() == '/' || path.back() == '\\')
+            return;
+        SmallVector<std::string, 12> suggestions;
         if (!isAngled && (!lastDir.empty())) {
-            result += lastDir;
-            result.push_back('/');
-            result += path;
             std::error_code EC;
-            llvm::sys::fs::directory_iterator iter(result.str(), EC);
-            result.clear();
+            llvm::sys::fs::directory_iterator iter(lastDir, EC);
+            llvm::sys::fs::directory_iterator end;
+            while (iter != end) {
+                if (EC)
+                    break;
+                if (iter->type() ==  llvm::sys::fs::file_type::regular_file) {
+                    if (path.edit_distance_insensitive(llvm::sys::path::filename(iter->path())) < 3) {
+                        suggestions.push_back(iter->path());
+                        if (suggestions.size() == 12)
+                            goto BREAK;
+                    }
+                }
+                iter.increment(EC);
+            }
         }
-        
+        for (const auto &it: userPaths) {
+            std::error_code EC;
+            llvm::sys::fs::directory_iterator iter(it.str(), EC);
+            llvm::sys::fs::directory_iterator end;
+            while (iter != end) {
+                if (EC)
+                    break;
+                if (iter->type() ==  llvm::sys::fs::file_type::regular_file) {
+                    if (path.edit_distance_insensitive(llvm::sys::path::filename(iter->path())) < 3) {
+                        suggestions.push_back(iter->path());
+                        if (suggestions.size() == 12)
+                            goto BREAK;
+                    }
+                }
+                iter.increment(EC);
+            }
+        }
+        for (const auto &it: sysPaths) {
+            std::error_code EC;
+            llvm::sys::fs::directory_iterator iter(it.str(), EC);
+            llvm::sys::fs::directory_iterator end;
+            while (iter != end) {
+                if (EC)
+                    break;
+                if (iter->type() ==  llvm::sys::fs::file_type::regular_file) {
+                    if (path.edit_distance_insensitive(llvm::sys::path::filename(iter->path())) < 3) {
+                        suggestions.push_back(iter->path());
+                        if (suggestions.size() == 12)
+                            goto BREAK;
+                    }
+                }
+                iter.increment(EC);
+            }
+        }
+        if (suggestions.size())
+            goto BREAK;
+        return;
+        BREAK:
+        std::string Msg = "Maybe you meant:\n";
+        for (const auto &it: suggestions) {
+            Msg += "  - ";
+            Msg += it;
+        }
+        Msg += " ";
+        note("%r", StringRef(Msg));
     }
     void closeAllFiles() {
         for (const auto &f : streams) {

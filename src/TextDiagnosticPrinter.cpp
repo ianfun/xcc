@@ -22,7 +22,7 @@ void TextDiagnosticPrinter::realHandleDiagnostic(const Diagnostic &Diag) {
     bool locValid = false;
     LocTree *begin_macro = nullptr;
     source_location loc;
-    if (SM) { 
+    if (SM && Diag.loc != 0) { 
         locValid = SM->translateLocation(Diag.loc, loc);
         if (!locValid)
             goto NO_LOC;
