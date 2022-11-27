@@ -28,15 +28,13 @@ void TextDiagnosticPrinter::realHandleDiagnostic(const Diagnostic &Diag) {
             goto NO_LOC;
         begin_macro = loc.tree;
         LocTree *ptr = begin_macro;
-        if (ptr && ptr->isAInclude) {
-            for (;ptr && ptr->isAInclude;ptr = ptr->getParent()) {
-                auto it = ptr->include;
-                OS << StringRef(ptr == begin_macro ? "In file included from " : "                      ", 22);
-                OS.changeColor(llvm::raw_ostream::Colors::SAVEDCOLOR, true);
-                OS << SM->getFileName(it->fd) << ':' << it->line;
-                OS.changeColor(llvm::raw_ostream::Colors::SAVEDCOLOR, false);
-                OS << ":\n";
-            }
+        for (;ptr && ptr->isAInclude;ptr = ptr->getParent()) {
+            auto it = ptr->include;
+            OS << StringRef(ptr == begin_macro ? "In file included from " : "                      ", 22);
+            OS.changeColor(llvm::raw_ostream::Colors::SAVEDCOLOR, true);
+            OS << SM->getFileName(it->fd) << ':' << it->line;
+            OS.changeColor(llvm::raw_ostream::Colors::SAVEDCOLOR, false);
+            OS << ":\n";
         }
         begin_macro = ptr;
         write_loc(loc);

@@ -652,15 +652,21 @@ STD_INCLUDE:
                                     if (c == '\n' || c == '\r')
                                         break;
                                 }
-                                path.make_eos();
-                                size = SM.includeStack.size();
-                                SM.addIncludeFile(path.str(), is_std == '>');
-                                if (SM.includeStack.size() == size) {
-                                    pp_error(loc, "#include file not found: %R", StringRef(path.data(), path.length() - 1));
-                                    path.free(); // we no longer use it, so collect it
+                                if (path.empty()) {
+                                    pp_error("%s", "empty filename in #include");
+                                    path.free();
                                 }
-                                else  // TODO
-                                    SM.beginInclude(0, context, theFD);
+                                else {
+                                    path.make_eos();
+                                    size = SM.includeStack.size();
+                                    SM.addIncludeFile(path.str(), is_std == '>');
+                                    if (SM.includeStack.size() == size) {
+                                        pp_error(loc, "#include file not found: %R", StringRef(path.data(), path.length() - 1));
+                                        path.free();
+                                    } else { // TODO
+                                        SM.beginInclude(context, theFD);
+                                    }
+                                }
                                 break;
                             }
                             if (c == '\0' || c == '\n') {
@@ -883,7 +889,7 @@ STD_INCLUDE:
             } // end switch
             eat();
         } // end for
-    }     // end lex
+    }  // end lex
     void checkMacro() {
         IdentRef name = tok.s;
         Token saved_tok;
@@ -1008,8 +1014,14 @@ STD_INCLUDE:
                             args[i].pop_back();
                     }
                     if (m.ivarargs ? args.size() < m.params.size() : args.size() != m.params.size()) {
-                        pp_error(loc, "macro %I expect %z arguments, %z provided", name, m.params.size(), args.size());
-                        return;
+                        if (args.size() == 1 && args.front().empty() && m.params.size() <= 1) {
+                            if (m.params.size() == 0)
+                                args.clear();
+                            else
+                                args.front().clear();
+                        } else {
+                            return (void)pp_error(loc, "macro %I expect %z arguments, %z provided", name, m.params.size(), args.size());
+                        }
                     }
                     if (m.tokens.size()) {
                         beginExpandMacro(it->second);
@@ -1020,7 +1032,7 @@ STD_INCLUDE:
                                     IdentRef s = theTok.s;
                                     for (unsigned j = 0; j < m.params.size(); j++) {
                                         if (s == m.params[j]) {
-                                            for (const auto &it : args[j])
+                                            for (const auto &it : args[j]) 
                                                 tokenq.push_back(it);
                                             goto BREAK;
                                         }
@@ -1030,10 +1042,10 @@ STD_INCLUDE:
                                             theTok.tok = TIdentifier;
                                     }
                                     tokenq.push_back(theTok);
-BREAK:;
+                                } else {
+                                    tokenq.push_back(theTok);
                                 }
-                            } else {
-                                tokenq.push_back(theTok);
+                                BREAK:;
                             }
                         }
                         tokenq.push_back(SM.getLocTree());

@@ -3632,9 +3632,12 @@ GENERIC_END:
                 }
                 return getFunctionNameExpr(loc);
             case K__builtin_LINE:
-                return wrap(context.getInt(), ConstantInt::get(irgen.integer_types[context.getIntLog2()], getLocLine(loc)), loc);
+                return wrap(context.getInt(), ConstantInt::get(irgen.integer_types[context.getIntLog2()], SM().getLine()), loc);
             case K__builtin_COLUMN:
-                return wrap(context.getInt(), ConstantInt::get(irgen.integer_types[context.getIntLog2()], getLocCol(loc)), loc);
+            {
+                unsigned column = 0; // TODO
+                return wrap(context.getInt(), ConstantInt::get(irgen.integer_types[context.getIntLog2()], column), loc);
+            }
             case K__builtin_FILE:
             default: llvm_unreachable("");
             }
@@ -3644,12 +3647,6 @@ GENERIC_END:
                    nullptr;
         }
         return result;
-    }
-    unsigned getLocLine(location_t loc) {
-        return 0;
-    }
-    unsigned getLocCol(location_t loc) {
-        return 0;
     }
     Expr postfix_expression() {
         bool isarrow;

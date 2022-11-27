@@ -15,7 +15,6 @@ struct Stream {
     enum StreamType k;
     const char *name;
     line_t line = 1;
-    column_t column = 1;
     location_t startLoc, loc = 0;
     Stream(enum StreamType k, const char *Name) :k{k}, name{Name} {}    
     union {
@@ -46,12 +45,14 @@ struct SourceMgr : public DiagnosticHelper {
     SmallVector<fileid_t, 16> includeStack;
     LocTree *tree = nullptr;
     std::map<location_t, LocTree*, std::less<location_t>> location_map;
+    StringRef lastDir = StringRef();
     bool trigraphs;
     bool is_tty;
-    uint32_t getLine() const { return streams[includeStack.back()].line; }
     void setLine(uint32_t line) { streams[includeStack.back()].line = line; }
     const char *getFileName(unsigned i) const { return streams[i].name; }
     const char *getFileName() const { return streams[includeStack.back()].name; }
+    unsigned getLine() const { return streams.empty() ? 0 : streams[includeStack.back()].line; }
+    unsigned getLine(unsigned i) const { return streams[i].line; }
     void setFileName(const char *name) { streams[includeStack.back()].name = name; }
     location_t getCurrentLocation() const { return streams.back().loc;}
     location_t getCurrentLocationSafe() const {
@@ -62,10 +63,10 @@ struct SourceMgr : public DiagnosticHelper {
     void beginExpandMacro(PPMacroDef *M, xcc_context &context) {
         location_map[getCurrentLocation()] = (tree = new (context.getAllocator()) LocTree(tree, M));
     }
-    void beginInclude(unsigned line, xcc_context &context, fileid_t theFD) {
+    void beginInclude(xcc_context &context, fileid_t theFD) {
         assert(includeStack.size() >= 2 && "call beginInclude() without previous include position!");
-        Include_Info *info = new (context.getAllocator()) Include_Info{.line = line, .fd = theFD};
-        location_map[getCurrentLocation()] = (tree = new (context.getAllocator()) LocTree(tree, info));
+        Include_Info *info = new (context.getAllocator()) Include_Info{.line = getLine(theFD), .fd = theFD};
+        location_map[includeStack.back().startLoc] = (tree = new (context.getAllocator()) LocTree(tree, info));
     }
     void endTree() {
         location_map[getCurrentLocation()] = (tree = tree->getParent());
@@ -132,6 +133,9 @@ struct SourceMgr : public DiagnosticHelper {
         Stream &f = streams.back();
         f.p = 0;
         f.pos = 0;
+        lastDir = llvm::sys::path::parent_path(path, llvm::sys::path::Style::native);
+        if (lastDir.empty())
+            lastDir = ".";
         f.fd = fd;
         f.startLoc = getCurrentLocationSafe();
         includeStack.push_back(Id);
@@ -173,7 +177,6 @@ struct SourceMgr : public DiagnosticHelper {
             out.col = 0;
             return true;
         }
-        constexpr size_t read_size = 1024;
 #if WINDOWS
         LARGE_INTEGER saved_posl;
         {
@@ -193,6 +196,7 @@ struct SourceMgr : public DiagnosticHelper {
         location_t old_loc = f.loc;
         uint64_t readed = 0, last_line_offset = 0;
         unsigned line = 1;
+        constexpr size_t read_size = 1024;
         char *buffer = new char[read_size];
         for (;;) {
             uint64_t to_read = offset - readed;
@@ -219,7 +223,7 @@ struct SourceMgr : public DiagnosticHelper {
         }
         out.line = line;
         out.col = offset - last_line_offset;
-        {
+        if (out.col) {
 #if WINDOWS
             LARGE_INTEGER seek_pos;
             seek_pos.QuadPart = -static_cast<uint64_t>(out.col);
@@ -239,9 +243,14 @@ struct SourceMgr : public DiagnosticHelper {
             if (L == 0)
                 break;
 #endif
-            for (unsigned i = 0;i < L;++i)
-                if (out.source_line.push_back(buffer[i]))
+            for (unsigned i = 0;i < L;++i) {
+                const char c = buffer[i];
+                if (i == 0 && (c == '\n' || c == '\r'))
+                    continue;
+                if (out.source_line.push_back(c)) {
                     goto BREAK;
+                }
+            }
         }
         BREAK: ;
         f.pos = 0;
@@ -461,16 +470,33 @@ REPEAT:
     void addIncludeFile(StringRef path, bool isAngled) {
         // https://stackoverflow.com/q/21593/15886008
         // path must be null terminated
-        if (!isAngled && addFile(path.data())) {
-            return resetBuffer();
-        }
         xstring result = xstring::get_with_capacity(256);
+        if (!isAngled && (!lastDir.empty())) {
+            result += lastDir;
+            result += '/';
+            result += path;
+            if (addFile(result.data(), false))
+                return resetBuffer();
+            result.clear();
+        }
         if (searchFileInDir(result, path, userPaths.data(), userPaths.size()))
             return;
         if (searchFileInDir(result, path, sysPaths.data(), sysPaths.size()))
             return;
         result.free();
-        return;
+        return suggestPath(path, isAngled);
+    }
+    void suggestPath(StringRef path, bool isAngled) {
+        SmallString<128> result;
+        if (!isAngled && (!lastDir.empty())) {
+            result += lastDir;
+            result.push_back('/');
+            result += path;
+            std::error_code EC;
+            llvm::sys::fs::directory_iterator iter(result.str(), EC);
+            result.clear();
+        }
+        
     }
     void closeAllFiles() {
         for (const auto &f : streams) {
@@ -501,11 +527,9 @@ REPEAT:
         f.startLoc = getCurrentLocationSafe();
         includeStack.push_back(Id);
     }
-    void addCol() { ++streams[includeStack.back()].column; }
     void resetLine() {
         Stream &f = streams[includeStack.back()];
         ++f.line;
-        f.column = 1;
     }
     uint16_t lastc = 256, lastc2 = 256;
     char raw_read_from_stack() { return raw_read(streams[includeStack.back()]); }
@@ -526,7 +550,6 @@ REPEAT:
             return '\0';
         } else {
             char c = raw_read_from_stack();
-            addCol();
             switch (c) {
             default: return c;
             case '\0':
