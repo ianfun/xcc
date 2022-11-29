@@ -640,6 +640,34 @@ typedef uint32_t location_t;
 #define ZERO_LOC 0
 static const char hexs[] = "0123456789ABCDEF";
 static char hexed(unsigned a) { return hexs[a & 0b1111]; }
+struct SourceRange {
+    location_t start, end;
+    SourceRange(): start{0}, end{0} {};
+    SourceRange(location_t loc) : start{loc}, end{loc} {}
+    SourceRange(location_t L, location_t R): start{L}, end{R} {}
+    location_t getStart() const {
+        return start;
+    }
+    location_t getEnd() const {
+        return end;
+    }
+    bool isValid() const {
+        return start != 0 && end != 0;
+    }
+    bool isInValid() const {
+        return start == 0 || end == 0;
+    }
+};
+struct FixItHint {
+    StringRef code;
+    SourceRange insertRange;
+    static FixItHint CreateInsertion(StringRef code, SourceRange insertRange) {
+        FixItHint Hint;
+        Hint.code = code;
+        Hint.insertRange = insertRange;
+        return Hint;
+    }
+}
 struct SourceLine {
     llvm::SmallString<0> buffer;
     void clear() {

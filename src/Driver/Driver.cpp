@@ -307,7 +307,7 @@ bool BuildInputs(SourceMgr &SM, Options &opts) {
   }
   if (SM.empty())
     return fatal("no input files"), true;
-  opts.mainFileName = SM.streams[SM.includeStack[0]].name;
+  opts.mainFileName = SM.streams[SM.includeStack[0]]->name;
   return false;
 }
 bool BuildCompilation(ArrayRef<const char *> Args, Options &opts, SourceMgr &SM, int &ret) {

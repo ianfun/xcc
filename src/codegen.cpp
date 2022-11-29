@@ -709,7 +709,7 @@ static enum TypeIndex getTypeIndex(CType ty) {
             for (auto arg = currentfunction->arg_begin(); arg != currentfunction->arg_end(); ++arg) {
                 auto pty = ty->getParamType(arg_no);
                 auto p = B.CreateAlloca(pty, layout->getAllocaAddrSpace());
-                auto name = s->functy->params[arg_no].name;
+                [[maybe_unused]] auto name = s->functy->params[arg_no].name;
                 if (options.g) {
                     //auto meta = di->createParameterVariable(getLexScope(), name->getKey(), arg_no, getFile(s->loc.id),
 //                                                            s->loc.line, wrap3(s->functy->params[arg_no].ty));

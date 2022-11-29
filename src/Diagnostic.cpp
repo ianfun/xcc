@@ -14,14 +14,19 @@ enum DiagnosticLevel {
 struct Diagnostic {
     using storage_type = uintmax_t;
 
-    const char *fmt;
-    SmallVector<storage_type, 5> data;
-    location_t loc;
-    enum DiagnosticLevel level;
+    const char *fmt = nullptr;
+    SmallVector<storage_type, 5> data{};
+    SmallVector<FixItHint, 0> FixItHints{};
+    location_t loc = 0;
+    SmallVector<SourceRange> ranges{};
+    enum DiagnosticLevel level = Ignored;
     // default constructor - construct a invalid Diagnostic
-    Diagnostic(): fmt{nullptr}, data{}, loc{ZERO_LOC}, level{Ignored} {}
-    Diagnostic(const char *fmt, location_t loc = ZERO_LOC) : fmt{fmt}, data{}, loc{loc} { }
+    Diagnostic() = default;
+    Diagnostic(const char *fmt, location_t loc = 0) : fmt{fmt}, loc{loc} { }
     template <typename T> void write_impl(const T *ptr) { data.push_back(reinterpret_cast<storage_type>(ptr)); }
+    void write_impl(const SourceRange &range) {
+        ranges.push_back(range);
+    }
     void write_impl(const StringRef &str) {
         data.push_back(static_cast<storage_type>(str.size()));
         write_impl(str.data());
@@ -245,7 +250,13 @@ struct DiagnosticBuilder {
     DiagnosticsEngine &engine;
     inline DiagnosticBuilder(DiagnosticsEngine &engine) : engine{engine} {}
     ~DiagnosticBuilder() { engine.EmitCurrentDiagnostic(); }
-    void addFixHint();
+    void addFixHint(const FixItHint &Hint) {
+        engine.CurrentDiagnostic.FixItHints.push_back(Hint);
+    }
+    template <typename T> 
+    const DiagnosticBuilder &operator<<(const T &V) const {
+        engine.CurrentDiagnostic.write_impl(V);
+    }
 };
 // A helper class to emit Diagnostics
 // such as parse_error(), lex_error(), warning() functions
