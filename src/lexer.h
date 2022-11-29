@@ -28,7 +28,7 @@ struct Lexer : public EvalHelper {
     Lexer(SourceMgr &SM, Parser &parser, xcc_context &context, DiagnosticsEngine &Diag) : EvalHelper{Diag}, parser{parser}, SM{SM}, context{context} { }
     location_t getLoc() { return loc; }
     Expr constant_expression();
-    void updateLoc() { loc = SM.getLoc(); }
+    void updateLoc() { loc = SM.getLoc();}
     static bool isCSkip(char c) {
         // space, tab, new line, form feed are translate into ' '
         return c == ' ' || c == '\t' || c == '\f' || c == '\v';

@@ -1,4 +1,4 @@
-enum DiagnosticLevel {
+enum DiagnosticLevel: uint8_t {
     Ignored,
     Note,
     Remark,
@@ -156,6 +156,12 @@ struct Diagnostic {
             }
         }
     }
+    void reset(const char *msg, enum DiagnosticLevel level, location_t loc = 0) {
+        this->data.clear();
+        this->loc = loc;
+        this->level = level;
+        this->msg = msg;
+    }
 };
 struct DiagnosticConsumer {
     DiagnosticConsumer(const DiagnosticConsumer&) = delete;
@@ -271,33 +277,21 @@ struct DiagnosticHelper {
     }
 #define DIAGNOSTIC_HANDLER(HANDLER, LEVEL) \
     template <typename... Args> DiagnosticBuilder HANDLER(const char *msg, const Args &...args) { \
-        engine.CurrentDiagnostic.loc = ZERO_LOC; \
-        engine.CurrentDiagnostic.data.clear(); \
-        engine.CurrentDiagnostic.fmt = msg; \
+        engine.CurrentDiagnostic.reset(msg, LEVEL); \
         engine.CurrentDiagnostic.write(args...); \
-        engine.CurrentDiagnostic.level = LEVEL; \
         return DiagnosticBuilder(engine);\
     } \
     DiagnosticBuilder HANDLER(const char *msg) { \
-        engine.CurrentDiagnostic.loc = ZERO_LOC; \
-        engine.CurrentDiagnostic.data.clear(); \
-        engine.CurrentDiagnostic.fmt = msg; \
-        engine.CurrentDiagnostic.level = LEVEL; \
+        engine.CurrentDiagnostic.reset(msg, LEVEL); \
         return DiagnosticBuilder(engine);\
     } \
     template <typename... Args> DiagnosticBuilder HANDLER(location_t loc, const char *msg, const Args &...args) { \
-        engine.CurrentDiagnostic.loc = loc; \
-        engine.CurrentDiagnostic.data.clear(); \
-        engine.CurrentDiagnostic.fmt = msg; \
+        engine.CurrentDiagnostic.reset(msg, LEVEL, loc); \
         engine.CurrentDiagnostic.write(args...); \
-        engine.CurrentDiagnostic.level = LEVEL; \
         return DiagnosticBuilder(engine);\
     }\
     template <typename... Args> DiagnosticBuilder HANDLER(location_t loc, const char *msg) { \
-        engine.CurrentDiagnostic.loc = loc; \
-        engine.CurrentDiagnostic.data.clear(); \
-        engine.CurrentDiagnostic.fmt = msg; \
-        engine.CurrentDiagnostic.level = LEVEL; \
+        engine.CurrentDiagnostic.reset(msg, LEVEL, loc); \
         return DiagnosticBuilder(engine);\
     }
     DIAGNOSTIC_HANDLER(note, Note)

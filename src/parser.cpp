@@ -7,19 +7,19 @@
 // and Semantics(https://en.wikipedia.org/wiki/Semantics_(computer_science)).
 
 struct Parser : public EvalHelper {
-    enum {
+    enum: uint8_t {
         LBL_UNDEFINED = 0, LBL_FORWARD = 1, LBL_DECLARED = 2, LBL_OK = 4
     };
     struct Type_info {
         CType ty = nullptr;
-        location_t loc = ZERO_LOC;
+        location_t loc = 0;
     };
     struct Label_Info {
         label_t idx = 0;
         uint8_t flags = LBL_UNDEFINED;
-        location_t loc = ZERO_LOC;
+        location_t loc = 0;
     };
-    enum {
+    enum: uint8_t {
         LOCAL_GARBAGE = 0,         // just declared
         USED = 0x1,                // set if variable is used
         ASSIGNED = 0x2,            // set if assigned or initialized
@@ -28,7 +28,7 @@ struct Parser : public EvalHelper {
     };
     struct Variable_Info {
         CType ty = nullptr;
-        location_t loc = ZERO_LOC;
+        location_t loc = 0;
         llvm::Constant *val = nullptr;
         uint8_t tags = 0;
     };
@@ -71,10 +71,10 @@ struct Parser : public EvalHelper {
     template <typename T> auto getAlignof(T a) { return irgen.getAlignof(a); }
 private:
     [[nodiscard]] Expr binop(Expr a, BinOp op, Expr b, CType ty) {
-        return ENEW(BinExpr){.loc = a->loc, .ty = ty, .lhs = a, .bop = op, .rhs = b};
+        return ENEW(BinExpr){.ty = ty, .lhs = a, .bop = op, .rhs = b};
     }
     [[nodiscard]] Expr unary(Expr e, UnaryOp op, CType ty) {
-        return ENEW(UnaryExpr){.loc = e->loc, .ty = ty, .uoperand = e, .uop = op};
+        return ENEW(UnaryExpr){.loc = opLoc, .ty = ty, .uoperand = e, .uop = op};
     }
     Expr complex_from_real(Expr real, CType ty) {
         ty = context.tryGetComplexTypeFromNonComplex(ty);
@@ -98,9 +98,9 @@ private:
     Expr complex_get_real(Expr e) {
         if (e->k == EConstant) {
             if (const auto AZ = dyn_cast<ConstantAggregateZero>(e->C))
-                return wrap(e->ty, AZ->getElementValue((unsigned)0), e->loc);
+                return wrap(e->ty, AZ->getElementValue((unsigned)0), e->getBeginLoc());
             if (const auto CS = dyn_cast<llvm::ConstantStruct>(e->C))
-                return wrap(e->ty, CS->getOperand(0), e->loc);
+                return wrap(e->ty, CS->getOperand(0), e->getBeginLoc());
         }
         if (e->k == EBin && e->bop == Complex_CMPLX) {
             return e->lhs;
@@ -110,9 +110,9 @@ private:
     Expr complex_get_imag(Expr e) {
         if (e->k == EConstant) {
             if (const auto AZ = dyn_cast<ConstantAggregateZero>(e->C))
-                return wrap(e->ty, AZ->getElementValue((unsigned)1), e->loc);
+                return wrap(e->ty, AZ->getElementValue((unsigned)1), e->getBeginLoc());
             if (const auto CS = dyn_cast<llvm::ConstantStruct>(e->C))
-                return wrap(e->ty, CS->getOperand(1), e->loc);
+                return wrap(e->ty, CS->getOperand(1), e->getBeginLoc());
         }
         if (e->k == EBin && e->bop == Complex_CMPLX) {
             return e->rhs;
@@ -337,7 +337,7 @@ private:
             (l.tok.tok == TIdentifier ? gettypedef(l.tok.s) != nullptr : false);
     }
     Expr make_cast(Expr from, CastOp op, CType to) {
-        return ENEW(CastExpr){.loc = from->loc, .ty = to, .castop = op, .castval = from};
+        return ENEW(CastExpr){.ty = to, .castop = op, .castval = from};
     }
     enum Cast_Status: unsigned char {
         Cast_Ok,
@@ -413,20 +413,20 @@ private:
         auto k3 = rA > rB ? k1 : k2;
         if (rA > rB)
             return e->k == EConstant ?
-                wrap(to, llvm::ConstantExpr::getFPExtend(e->C, irgen.wrapNoComplexScalar(to)), e->loc) :
+                wrap(to, llvm::ConstantExpr::getFPExtend(e->C, irgen.wrapNoComplexScalar(to)), e->getBeginLoc()) :
                 make_cast(e, FPExt, to);
         if (rA < rB)
             return e->k == EConstant ?
-                wrap(to, llvm::ConstantExpr::getFPTrunc(e->C, irgen.wrapNoComplexScalar(to)), e->loc) :
+                wrap(to, llvm::ConstantExpr::getFPTrunc(e->C, irgen.wrapNoComplexScalar(to)), e->getBeginLoc()) :
                 make_cast(e, FPTrunc, to);
         if ((k3 >= F_Decimal32 && k3 <= F_Decimal128) || k3 == F_PPC128 || k3 == F_BFloat)
-            type_error(e->loc, "unsupported floating fast");
+            type_error(e->getBeginLoc(), "unsupported floating fast");
         return e;
     }
     Expr int_cast_promote(Expr e, bool isASigned, CType to) {
         return
             e->k == EConstant ?
-                    wrap(to, (e->ty->isSigned() ? &llvm::ConstantExpr::getSExt : &llvm::ConstantExpr::getZExt)(e->C, irgen.wrapNoComplexScalar(to), false), e->loc) :
+                    wrap(to, (e->ty->isSigned() ? &llvm::ConstantExpr::getSExt : &llvm::ConstantExpr::getZExt)(e->C, irgen.wrapNoComplexScalar(to), false), e->getBeginLoc()) :
                     make_cast(e, e->ty->isSigned() ? SExt : ZExt, to);
     }
     Expr int_cast(Expr e, CType to) {
@@ -440,15 +440,15 @@ private:
             if (rA > rB)
                 return
                     e->k == EConstant ?
-                        wrap(to, (e->ty->isSigned() ? &llvm::ConstantExpr::getSExt : &llvm::ConstantExpr::getZExt)(e->C, irgen.wrapNoComplexScalar(to), false), e->loc) :
+                        wrap(to, (e->ty->isSigned() ? &llvm::ConstantExpr::getSExt : &llvm::ConstantExpr::getZExt)(e->C, irgen.wrapNoComplexScalar(to), false), e->getBeginLoc()) :
                         make_cast(e, e->ty->isSigned() ? SExt : ZExt, to);
             if (rA < rB)
                 return e->k == EConstant ?
-                    wrap(to, llvm::ConstantExpr::getTrunc(e->C, irgen.wrapNoComplexScalar(to)), e->loc) :
+                    wrap(to, llvm::ConstantExpr::getTrunc(e->C, irgen.wrapNoComplexScalar(to)), e->getBeginLoc()) :
                     make_cast(e, Trunc, to);
             return bit_cast(e, to);
         }
-        return type_error(e->loc, "invalid conversion from %T to %T", e->ty, to), e;
+        return type_error(e->getBeginLoc(), "invalid conversion from %T to %T", e->ty, to), e;
     }
     Expr integer_to_ptr(Expr e, CType to, enum Implict_Conversion_Kind implict) {
         assert(e->ty && "cannot cast from expression with no type");
@@ -457,8 +457,8 @@ private:
         if (e->k == EConstant) {
             auto CI = cast<ConstantInt>(e->C);
             if (CI->isZero()) // A interger constant expression with the value 0 is a *null pointer constant*
-                return wrap(to, null_ptr, e->loc);
-            return wrap(to, llvm::ConstantExpr::getIntToPtr(CI, irgen.pointer_type), e->loc);
+                return wrap(to, null_ptr, e->getBeginLoc());
+            return wrap(to, llvm::ConstantExpr::getIntToPtr(CI, irgen.pointer_type), e->getBeginLoc());
         }
         if (implict != Implict_Cast) {
             CType arg1 = e->ty;
@@ -481,9 +481,9 @@ private:
                 msg = "passing %T to parameter of type %T makes pointer from integer without a cast";
                 break;
             }
-            warning(e->loc, msg, arg1, arg2);
+            warning(e->getBeginLoc(), msg, arg1, arg2);
         } else if (e->ty->getIntegerKind().asBits() < irgen.pointerSizeInBits) {
-            warning(e->loc, "cast to %T from smaller integer type %T", to, e->ty);
+            warning(e->getBeginLoc(), "cast to %T from smaller integer type %T", to, e->ty);
         }
         return make_cast(e, IntToPtr, to);
     }
@@ -512,12 +512,12 @@ private:
                 msg = "passing %T to parameter of type %T makes integer from pointer without a cast";
                 break;
             }
-            warning(e->loc, msg, arg1, arg2);
+            warning(e->getBeginLoc(), msg, arg1, arg2);
         } else if (to->getIntegerKind().asBits() < irgen.pointerSizeInBits) {
-            warning(e->loc, "cast to smaller integer type %T from %T", to, e->ty);
+            warning(e->getBeginLoc(), "cast to smaller integer type %T from %T", to, e->ty);
         }
         if (e->k == EConstant)
-            return wrap(to, llvm::ConstantExpr::getPtrToInt(e->C, irgen.wrapNoComplexScalar(to)), e->loc);
+            return wrap(to, llvm::ConstantExpr::getPtrToInt(e->C, irgen.wrapNoComplexScalar(to)), e->getBeginLoc());
         return make_cast(e, PtrToInt, to);
     }
     Expr integer_to_float(Expr e, CType to) {
@@ -526,11 +526,11 @@ private:
         assert((e->ty->isInteger()) && "bad call to integer_to_float()");
         if (e->ty->isSigned()) {
             if (e->k == EConstant)
-                return wrap(to, llvm::ConstantExpr::getSIToFP(e->C, irgen.wrapNoComplexScalar(to)), e->loc);
+                return wrap(to, llvm::ConstantExpr::getSIToFP(e->C, irgen.wrapNoComplexScalar(to)), e->getBeginLoc());
             return make_cast(e, SIToFP, to);
         }
         if (e->k == EConstant)
-            return wrap(to, llvm::ConstantExpr::getUIToFP(e->C, irgen.wrapNoComplexScalar(to)), e->loc);
+            return wrap(to, llvm::ConstantExpr::getUIToFP(e->C, irgen.wrapNoComplexScalar(to)), e->getBeginLoc());
         return make_cast(e, UIToFP, to);
     }
     Expr float_to_integer(Expr e, CType to) {
@@ -539,11 +539,11 @@ private:
         assert((to->isInteger()) && "bad call to float_to_integer()");
         if (to->isSigned()) {
             if (e->k == EConstant)
-                return wrap(to, llvm::ConstantExpr::getFPToSI(e->C, irgen.wrapNoComplexScalar(to)), e->loc);
+                return wrap(to, llvm::ConstantExpr::getFPToSI(e->C, irgen.wrapNoComplexScalar(to)), e->getBeginLoc());
             return make_cast(e, FPToSI, to);
         }
         if (e->k == EConstant) 
-            return wrap(to, llvm::ConstantExpr::getFPToUI(e->C, irgen.wrapNoComplexScalar(to)), e->loc);
+            return wrap(to, llvm::ConstantExpr::getFPToUI(e->C, irgen.wrapNoComplexScalar(to)), e->getBeginLoc());
         return make_cast(e, FPToUI, to);
     }
     Expr ptr_cast(Expr e, CType to, enum Implict_Conversion_Kind implict = Implict_Cast) {
@@ -598,7 +598,7 @@ private:
                         msg = "incompatible pointer types passing %T to parameter of type %T";
                     break;
                 }
-                warning(e->loc, msg, arg1, arg2);
+                warning(e->getBeginLoc(), msg, arg1, arg2);
             }
         }
 PTR_CAST:
@@ -650,7 +650,7 @@ PTR_CAST:
         // 2 When a value of complex type is converted to an imaginary type, the real part of the complex value is discarded and the value of the imaginary part is converted according to the conversion rules for the corresponding real types.
         if (e->ty->isImaginary()) {
             if (!(to->isComplex() || to->isImaginary()))
-                return wrap(to, llvm::Constant::getNullValue(irgen.wrapNoComplexScalar(to)), e->loc);
+                return wrap(to, llvm::Constant::getNullValue(irgen.wrapNoComplexScalar(to)), e->getBeginLoc());
             CType ty = context.make(e->ty->del(TYIMAGINARY | TYCOMPLEX));
             CType ty2 = context.make(to->del(TYCOMPLEX | TYIMAGINARY));
             Expr e2 = context.clone(e);
@@ -658,12 +658,12 @@ PTR_CAST:
             Expr res = castto(e2, ty2);
             if (to->isImaginary()) 
                 return res;
-            return complex_pair(wrap(to, llvm::Constant::getNullValue(irgen.wrapNoComplexScalar(ty2)), e->loc), res, to);
+            return complex_pair(wrap(to, llvm::Constant::getNullValue(irgen.wrapNoComplexScalar(ty2)), e->getBeginLoc()), res, to);
         }
         if (to->isImaginary()) {
             if (e->ty->isComplex()) 
                 return bit_cast(complex_get_imag(e), to);
-            return wrap(to, llvm::Constant::getNullValue(irgen.wrapNoComplexScalar(to)), e->loc);
+            return wrap(to, llvm::Constant::getNullValue(irgen.wrapNoComplexScalar(to)), e->getBeginLoc());
         }
         // if e is a complex number
         if (e->ty->isComplex()) {
@@ -733,7 +733,7 @@ PTR_CAST:
                     continue;
                 if (it.info.ty->getKind() == TYFUNCTION) {
                     if (it.info.ty->ret->hasTag(TYSTATIC))
-                        warning(it.info.loc, "static function %I' declared but not used", it.sym);
+                        warning(it.info.loc, "static function %I declared but not used", it.sym);
                 } else if (it.info.ty->hasTag(TYSTATIC)) {
                     warning(it.info.loc, "static variable %I declared but not used", it.sym);
                 }
@@ -748,7 +748,7 @@ PTR_CAST:
         if (e->ty->getKind() == TYPRIM && e->ty->isInteger()) {
             if (e->ty->getIntegerKind().asLog2() < 5) {
                 e = (e->k == EConstant ?
-                        wrap(context.getInt(), (e->ty->isSigned() ? &llvm::ConstantExpr::getSExt : &llvm::ConstantExpr::getZExt)(e->C, irgen.integer_types[4], false), e->loc) :
+                        wrap(context.getInt(), (e->ty->isSigned() ? &llvm::ConstantExpr::getSExt : &llvm::ConstantExpr::getZExt)(e->C, irgen.integer_types[4], false), e->getBeginLoc()) :
                         make_cast(e, e->ty->isSigned() ? SExt : ZExt, context.getInt()));
             }
         }
@@ -911,7 +911,7 @@ if (k2 == F) return (void)(a = float_cast(a, bt, k2, F));
             return comma(simplify(e->lhs), simplify(e->rhs));
         case EUnary:
             if (e->uop != Dereference) {
-                warning(e->loc, "unused unary expression result");
+                warning(e->getBeginLoc(), "unused unary expression result");
                 note("simplify %E to %E", e, e->uoperand);
                 return simplify(e->uoperand);
             }
@@ -924,7 +924,7 @@ if (k2 == F) return (void)(a = float_cast(a, bt, k2, F));
                 note("simplify %E to %E", e, e->cond);
                 return simplify(e->cond);
             }
-        case ECast: warning(e->loc, "unused cast expression, replace '(type)x' with 'x'"); return simplify(e->castval);
+        case ECast: warning(e->getBeginLoc(), "unused cast expression, replace '(type)x' with 'x'"); return simplify(e->castval);
         case ECall: return e;
         case ESubscript:
             if (e->right->isSimple()) {
@@ -970,13 +970,15 @@ if (k2 == F) return (void)(a = float_cast(a, bt, k2, F));
                                                        : CI->getValue().zextOrTrunc(irgen.pointerSizeInBits);
                 if (ptrPart->k == EConstantArray)
                     return ENEW(ConstantArraySubstriptExpr){
-                        .loc = ptrPart->loc, .ty = ptrPart->ty, .carray = ptrPart->array, .cidx = offset};
+                        .constantArraySubscriptLoc = lhs->getBeginLoc(), .ty = ptrPart->ty, .carray = ptrPart->array, .cidx = offset, .constantArraySubscriptLocEnd = rhs->getLocEnd()};
                 if (ptrPart->k == EConstantArraySubstript) {
                     bool overflow = false;
-                    auto result = ENEW(ConstantArraySubstriptExpr){.loc = ptrPart->loc,
+                    auto result = ENEW(ConstantArraySubstriptExpr){.constantArraySubscriptLoc = lhs->getBeginLoc(),
                                                                    .ty = ptrPart->ty,
                                                                    .carray = ptrPart->array,
-                                                                   .cidx = offset.uadd_ov(ptrPart->cidx, overflow)};
+                                                                   .cidx = offset.uadd_ov(ptrPart->cidx, overflow),
+                                                                   .constantArraySubscriptLocEnd = rhs->getLocEnd()
+                                                               };
                     if (overflow)
                         warning(ptrPart->loc, "overflow when doing addition on pointers, the result is %A", &result->cidx);
                     return result;
@@ -1857,7 +1859,7 @@ NOT_CONSTANT:
                             r, context.getBool()));
     }
     Expr boolToInt(Expr e) {
-        return ENEW(CastExpr){.loc = e->loc, .ty = context.getInt(), .castop = ZExt, .castval = e};
+        return ENEW(CastExpr){.ty = context.getInt(), .castop = ZExt, .castval = e};
     }
     enum DeclaratorFlags {
         Direct = 0,  
@@ -2878,6 +2880,7 @@ TYPE_SPEC:
     }
     Expr cast_expression() {
         if (l.tok.tok == TLbracket) {
+            location_t loc = getLoc();
             consume();
             if (istype()) {
                 CType ty;
@@ -2898,11 +2901,17 @@ TYPE_SPEC:
                 if (!(e = cast_expression()))
                     return nullptr;
                 if (ty->hasTag(TYVOID))
-                    return ENEW(VoidExpr){.loc = e->loc, .ty = context.getVoid(), .voidexpr = e};
+                    return ENEW(VoidExpr){.ty = context.getVoid(), .voidexpr = e, .voidStartLoc = loc};
                 return castto(e, ty);
             }
-            l.tokenq.push_back(l.tok);
-            l.tok = TLbracket;
+            Expr result;
+            consume();
+            if (!(result = expression()))
+                return nullptr;
+            if (l.tok.tok != TRbracket)
+                return expectRB(getLoc()), nullptr;
+            consume();
+            return postfix_expression_end(result);
         }
         return unary_expression();
     }
@@ -2953,12 +2962,12 @@ TYPE_SPEC:
                         if (auto REAL = dyn_cast<ConstantFP>(CS->getOperand(0))) {
                             const auto &i = cast<ConstantFP>(CS->getOperand(1))->getValue();
                             auto IMAG = ConstantFP::get(irgen.ctx, -i);
-                            return wrap(e->ty, llvm::ConstantStruct::get(irgen.wrapComplex(e->ty), {REAL, IMAG}), e->loc);
+                            return wrap(e->ty, llvm::ConstantStruct::get(irgen.wrapComplex(e->ty), {REAL, IMAG}), e->getBeginLoc());
                         }
                         const auto REAL = cast<ConstantInt>(CS->getOperand(0));
                         const auto &i = cast<ConstantInt>(CS->getOperand(1))->getValue();
                         auto IMAG = ConstantInt::get(irgen.ctx, -i);
-                        return wrap(e->ty, llvm::ConstantStruct::get(irgen.wrapComplexForInteger(e->ty), {REAL, IMAG}), e->loc);
+                        return wrap(e->ty, llvm::ConstantStruct::get(irgen.wrapComplexForInteger(e->ty), {REAL, IMAG}), e->getBeginLoc());
                     }
                     if (isa<ConstantAggregateZero>(e->C)) {
                         return e->ty->isFloating() ? complex_pos_neg_zero(e->ty) : complex_zero(e->ty);
@@ -3022,18 +3031,18 @@ TYPE_SPEC:
                             const auto &i = cast<ConstantFP>(CS->getOperand(1))->getValue();
                             auto REAL = ConstantFP::get(irgen.ctx, -r);
                             auto IMAG = ConstantFP::get(irgen.ctx, -i);
-                            return wrap(e->ty, llvm::ConstantStruct::get(irgen.wrapComplex(e->ty), {REAL, IMAG}), e->loc);
+                            return wrap(e->ty, llvm::ConstantStruct::get(irgen.wrapComplex(e->ty), {REAL, IMAG}), e->getBeginLoc());
                         }
                         const auto &r = cast<ConstantInt>(CS->getOperand(0))->getValue();
                         const auto &i = cast<ConstantInt>(CS->getOperand(1))->getValue();
                         auto REAL = ConstantInt::get(irgen.ctx, -r);
                         auto IMAG = ConstantInt::get(irgen.ctx, -i);
-                        return wrap(e->ty, llvm::ConstantStruct::get(irgen.wrapComplexForInteger(e->ty), {REAL, IMAG}), e->loc);
+                        return wrap(e->ty, llvm::ConstantStruct::get(irgen.wrapComplexForInteger(e->ty), {REAL, IMAG}), e->getBeginLoc());
                     }
                 } else {
                     return wrap(e->ty,
                             e->ty->isSigned() ? llvm::ConstantExpr::getNSWNeg(e->C) : llvm::ConstantExpr::getNeg(e->C),
-                            e->loc);
+                            e->getBeginLoc());
                 }
             }
             return unary(e, (e->ty->isComplex()) ? CNeg : (e->ty->isFloating() ? FNeg : (e->ty->isSigned() ? SNeg : UNeg)), e->ty);
@@ -3057,12 +3066,12 @@ TYPE_SPEC:
             if (!assignable(e))
                 return e;
             if (!e->ty->isScalar())
-                return type_error(e->loc, "expect scalar operand to '++'/'--'"), e;
+                return type_error(e->getBeginLoc(), "expect scalar operand to '++'/'--'"), e;
             CType ty = e->ty->getKind() == TYPOINTER ? context.getSize_t() : e->ty;
             Expr obj = e;
-            Expr one = e->ty->isFloating() ? wrap(ty, ConstantFP::get(irgen.wrapFloating(ty), 1.0), e->loc) : wrap(ty, ConstantInt::get(irgen.ctx, APInt(
+            Expr one = e->ty->isFloating() ? wrap(ty, ConstantFP::get(irgen.wrapFloating(ty), 1.0), e->getBeginLoc()) : wrap(ty, ConstantInt::get(irgen.ctx, APInt(
                  ty->getBitWidth(), 1)
-            ), e->loc);
+            ), e->getBeginLoc());
             (tok == TAddAdd) ? make_add(e, one) : make_sub(e, one);
             return binop(obj, Assign, e, e->ty);
         }
@@ -3135,8 +3144,8 @@ TYPE_SPEC:
             if (e->ty->isComplex())
                 return unary(e, tok == K__imag ? C__imag__ : C__real__, ty);
             if (e->ty->isImaginary())
-                return tok == K__real ? wrap(ty, llvm::Constant::getNullValue(irgen.wrapNoComplexScalar(ty)), e->loc) : e;
-            return tok == K__real ? e : wrap(ty, llvm::Constant::getNullValue(irgen.wrapNoComplexScalar(ty)), e->loc);
+                return tok == K__real ? wrap(ty, llvm::Constant::getNullValue(irgen.wrapNoComplexScalar(ty)), e->getBeginLoc()) : e;
+            return tok == K__real ? e : wrap(ty, llvm::Constant::getNullValue(irgen.wrapNoComplexScalar(ty)), e->getBeginLoc());
         }
         case K__extension__:
         {
@@ -3390,13 +3399,16 @@ NEXT:
             ty = context.tryGetImaginaryTypeFromNonImaginary(ty);
         return wrap(ty, CI, loc);
     }
-    Expr wrap(CType ty, llvm::Constant *C, location_t loc = ZERO_LOC) {
-        return ENEW(ConstantExpr){.loc = loc, .ty = ty, .C = C};
+    Expr wrap(CType ty, llvm::Constant *C, location_t loc = 0, location_t endLoc = 0) {
+        if (endLoc == 0)
+            endLoc = loc;
+        return ENEW(ConstantExpr){.constantLoc = loc, .ty = ty, .C = C, .constantEndLoc = endLoc};
     }
     Expr getIntZero() { return intzero; }
     Expr getIntOne() { return intone; }
-    Expr getFunctionNameExpr(location_t loc) {
-        return ENEW(ConstantArrayExpr) {.loc = loc, .ty = context.stringty, .array = string_pool.getAsUTF8(sema.pfunc->getKey())};
+    Expr getFunctionNameExpr(location_t loc, location_t endLoc) {
+        StringRef functionName = sema.pfunc->getKey();
+        return ENEW(ConstantArrayExpr) {.constantArrayLoc = constantArrayLoc, .ty = context.stringty, .array = string_pool.getAsUTF8(functionName), .constantArrayLocEnd = endLoc};
     }
     Expr primary_expression() {
         // primary expressions:
@@ -3445,23 +3457,23 @@ NEXT:
             switch (enc) {
             case Prefix_none:
                 result = ENEW(ConstantArrayExpr){
-                    .loc = loc, .ty = context.stringty, .array = string_pool.getAsUTF8(s)};
+                    .constantArrayLoc = loc, .ty = context.stringty, .array = string_pool.getAsUTF8(s)};
                 break;
             case Prefix_u8:
                 result = ENEW(ConstantArrayExpr){
-                    .loc = loc, .ty = context.str8ty, .array = string_pool.getAsUTF8(s)};
+                    .constantArrayLoc = loc, .ty = context.str8ty, .array = string_pool.getAsUTF8(s)};
                 break;
             case Prefix_L:
                 result = ENEW(ConstantArrayExpr){
-                    .loc = loc, .ty = context.wstringty, .array = string_pool.getAsUTF16(s, context.getWCharLog2() == 5)};
+                    .constantArrayLoc = loc, .ty = context.wstringty, .array = string_pool.getAsUTF16(s, context.getWCharLog2() == 5)};
                 break;
             case Prefix_u:
                 result = ENEW(ConstantArrayExpr){
-                    .loc = loc, .ty = context.str16ty, .array = string_pool.getAsUTF16(s, false)};
+                    .constantArrayLoc = loc, .ty = context.str16ty, .array = string_pool.getAsUTF16(s, false)};
                 break;
             case Prefix_U:
                 result = ENEW(ConstantArrayExpr){
-                    .loc = loc, .ty = context.str32ty, .array = string_pool.getAsUTF32(s)};
+                    .constantArrayLoc = loc, .ty = context.str32ty, .array = string_pool.getAsUTF32(s)};
                 break;
             default: llvm_unreachable("bad encoding");
             }
@@ -3493,7 +3505,7 @@ NEXT:
                 if (it->val) {
                     if (it->tags & CONST_VAR) {
                         ty->addTags(TYREPLACED_CONSTANT | TYLVALUE);
-                        return ENEW(ReplacedExpr){.loc = loc, .ty = ty, .C = it->val, .id = idx};
+                        return ENEW(ReplacedExpr){.ReplacedLoc = loc, .ty = ty, .C = it->val, .id = idx};
                     }
                     return wrap(ty, it->val, loc);
                 }
@@ -3501,14 +3513,14 @@ NEXT:
                 switch (ty->getKind()) {
                 case TYFUNCTION:
                     result =
-                        unary(ENEW(VarExpr){.loc = loc, .ty = ty, .sval = idx}, AddressOf, context.getPointerType(ty));
+                        unary(ENEW(VarExpr){.varLoc = loc, .ty = ty, .sval = idx, .varName = sym}, AddressOf, context.getPointerType(ty));
                     break;
                 case TYARRAY:
-                    result = ENEW(ArrToAddressExpr){.loc = loc,
+                    result = ENEW(ArrToAddressExpr){.varLoc = loc,
                                                     .ty = context.getPointerType(ty->arrtype),
-                                                    .arr3 = ENEW(VarExpr){.loc = loc, .ty = ty, .sval = idx}};
+                                                    .arr3 = ENEW(VarExpr){.loc = loc, .ty = ty, .sval = idx, .varName = sym}};
                     break;
-                default: result = ENEW(VarExpr){.loc = loc, .ty = ty, .sval = idx};
+                default: result = ENEW(VarExpr){.varLoc = loc, .ty = ty, .sval = idx, .varName = sym};
                 }
             }
         } break;
@@ -3581,12 +3593,13 @@ GENERIC_END:
             if (isTopLevel()) {
                 warning(loc, "predefined identifier is only valid inside function");
                 return ENEW(ConstantArrayExpr) {
-                    .loc = loc,
+                    .constantArrayLoc = loc,
                     .ty = context.stringty,
-                    .array = string_pool.getEmptyString()
+                    .array = string_pool.getEmptyString(),
+                    .constantArrayLocEnd = loc + 7,
                 };
             }
-            return getFunctionNameExpr(loc);
+            return getFunctionNameExpr(loc, loc + 7);
         case K__PRETTY_FUNCTION__:
         {
             consume();
@@ -3594,9 +3607,10 @@ GENERIC_END:
                 warning(loc, "predefined identifier is only valid inside function");
                 return ENEW(ConstantArrayExpr) 
                     {
-                        .loc = loc,
+                        .constantArrayLoc = loc,
                         .ty = context.stringty,
-                        .array = string_pool.getAsUTF8(StringRef("top level", 10))
+                        .array = string_pool.getAsUTF8(StringRef("top level", 10)),
+                        .constantArrayLocEnd = loc + 18,
                     };
             }
             SmallString<64> Str;
@@ -3604,9 +3618,10 @@ GENERIC_END:
             OS << sema.currentfunction;
             return ENEW(ConstantArrayExpr) 
                     {
-                        .loc = loc, 
+                        .constantArrayLoc = loc, 
                         .ty = context.stringty, 
-                        .array = string_pool.getAsUTF8(Str.str())
+                        .array = string_pool.getAsUTF8(Str.str()),
+                        .constantArrayLocEnd = loc + 18
                     };
         }
         case K__builtin_FILE:
@@ -3628,25 +3643,29 @@ GENERIC_END:
                 if (isTopLevel()) {
                     warning(loc, "predefined identifier is only valid inside function");
                     return ENEW(ConstantArrayExpr) {
-                        .loc = loc, 
+                        .constantArrayLoc = loc, 
                         .ty = context.stringty, 
-                        .array = string_pool.getEmptyString()
+                        .array = string_pool.getEmptyString(),
+                        .constantArrayLocEnd = loc + 16,
                     };
                 }
-                return getFunctionNameExpr(loc);
+                return getFunctionNameExpr(loc, loc + 16);
             case K__builtin_LINE:
-                return wrap(context.getInt(), ConstantInt::get(irgen.integer_types[context.getIntLog2()], SM().getLine()), loc);
+                return wrap(context.getInt(), ConstantInt::get(irgen.integer_types[context.getIntLog2()], SM().getLine()), loc, loc + 13);
             case K__builtin_COLUMN:
             {
-                unsigned column = 0; // TODO
-                return wrap(context.getInt(), ConstantInt::get(irgen.integer_types[context.getIntLog2()], column), loc);
+                uint64_t offset;
+                auto FD = getFileID(loc, offset);
+                SM().getLineNumber(offset, FD);
+                return wrap(context.getInt(), ConstantInt::get(irgen.integer_types[context.getIntLog2()], column), loc, loc + 15);
             }
             case K__builtin_FILE:
                 return ENEW(ConstantArrayExpr) 
                     {
-                        .loc = loc, 
+                        .constantArrayLoc = loc,
                         .ty = context.stringty, 
-                        .array = string_pool.getAsUTF8(SM().getFileName())
+                        .array = string_pool.getAsUTF8(SM().getFileName()),
+                        .constantArrayLocEnd = loc + 13
                     };
             default: llvm_unreachable("");
             }
@@ -3657,12 +3676,7 @@ GENERIC_END:
         }
         return result;
     }
-    Expr postfix_expression() {
-        bool isarrow;
-        PostFixOp isadd;
-        Expr result = primary_expression();
-        if (!result)
-            return nullptr;
+    Expr postfix_expression_end(Expr result) {
         for (;;) {
             switch (l.tok.tok) {
             case TSubSub: isadd = PostfixDecrement; goto ADD;
@@ -3672,7 +3686,7 @@ ADD:
                 if (!assignable(result))
                     return nullptr;
                 consume();
-                result = ENEW(PostFixExpr){.loc = result->loc, .ty = result->ty, .pop = isadd, .poperand = result};
+                result = ENEW(PostFixExpr){.postFixEndLoc = getLoc(), .ty = result->ty, .pop = isadd, .poperand = result};
             }
                 continue;
             case TArrow: isarrow = true; goto DOT;
@@ -3701,7 +3715,7 @@ DOT:
                     Declator pair = ty->selems[i];
                     if (l.tok.s == pair.name) {
                         result = ENEW(MemberAccessExpr) {
-                            .loc = result->loc, .ty = pair.ty, .obj = result, .idx = (unsigned)i};
+                            .memberEndLoc = getLoc(), .ty = pair.ty, .obj = result, .idx = (unsigned)i};
                         if (isLvalue) {
                             result->ty = context.clone(result->ty);
                             result->ty->addTag(TYLVALUE);
@@ -3720,7 +3734,7 @@ CONTINUE:;
                                : ((result->ty->getKind() == TYPOINTER) ? result->ty->p : result->ty);
                 Expr f = result;
                 result =
-                    ENEW(CallExpr){.loc = result->loc, .ty = ty->ret, .callfunc = f, .callargs = xvector<Expr>::get()};
+                    ENEW(CallExpr){.ty = ty->ret, .callfunc = f, .callargs = xvector<Expr>::get()};
                 if (ty->getKind() != TYFUNCTION)
                     return type_error(getLoc(), "expect function or function pointer, but the expression has type %T",
                                       ty),
@@ -3738,6 +3752,7 @@ CONTINUE:;
                             consume();
                         else if (l.tok.tok == TRbracket) {
                             consume();
+                            result->callEnd = getLoc();
                             break;
                         }
                     }
@@ -3764,7 +3779,7 @@ CONTINUE:;
                     if (params.size() != result->callargs.size())
                         return type_error(getLoc(), "expect %z parameters, %z arguments provided",
                                           (size_t)params.size(), (size_t)result->callargs.size()),
-                               nullptr;
+                               context.getInt();
                     for (size_t j = 0; j < result->callargs.size(); ++j) {
                         Expr e = castto(result->callargs[j], params[j].ty, Implict_Call);
                         if (!e)
@@ -3794,6 +3809,14 @@ CONTINUE:;
             }
         }
     }
+    Expr postfix_expression() {
+        bool isarrow;
+        PostFixOp isadd;
+        Expr result = primary_expression();
+        if (!result)
+            return nullptr;
+        return postfix_expression_end(result);
+    }
     void make_deref(Expr &e, location_t loc) {
         assert(e->ty->getKind() == TYPOINTER && "bad call to make_deref: expect a pointer");
         if ((e->ty->p->getKind() == TYINCOMPLETE) || e->ty->p->isVoid()) {
@@ -3809,7 +3832,7 @@ CONTINUE:;
                     warning(loc, "array index %A is past the end of the array (which contains %u elements)",
                             &e->cidx, numops);
                 else
-                    return (void)(e = wrap(e->ty->p, CS->getElementAsConstant(e->cidx.getZExtValue()), e->loc));
+                    return (void)(e = wrap(e->ty->p, CS->getElementAsConstant(e->cidx.getZExtValue()), e->getBeginLoc()));
 
             } else {
                 auto CA = cast<llvm::ConstantAggregate>(C);
@@ -3818,7 +3841,7 @@ CONTINUE:;
                     warning(loc, "array index %A is past the end of the array (which contains %u elements)",
                             &e->cidx, numops);
                 else
-                    return (void)(e = wrap(e->ty->p, CA->getOperand(i), e->loc));
+                    return (void)(e = wrap(e->ty->p, CA->getOperand(i), e->getBeginLoc()));
             }
         }
         CType ty = context.clone(e->ty->p);
@@ -3878,7 +3901,7 @@ CONTINUE:;
     }
     const APInt *want_integer_constant() {
         Expr e = constant_expression();
-        location_t loc = e->loc;
+        location_t loc = e->getBeginLoc();
         if (!e)
             return nullptr;
         if (e->k != EConstant)
@@ -3901,7 +3924,7 @@ CONTINUE:;
     }
     void valid_condition(Expr &e, bool reverse = false) {
         if (!e->ty->isScalar()) {
-            type_error(e->loc, "conditions requires a scalar expression");
+            type_error(e->getBeginLoc(), "conditions requires a scalar expression");
         }
         switch (e->k) {
         case EUnary:
@@ -3948,7 +3971,7 @@ CONTINUE:;
                 goto NEXT;
             }
         }
-        insertStmt(SNEW(CondJumpStmt){.loc = ZERO_LOC, .test = test, .T = dst, .F = thenBB});
+        insertStmt(SNEW(CondJumpStmt){.loc = 0, .test = test, .T = dst, .F = thenBB});
 NEXT:
         return insertLabel(thenBB);
     }
@@ -3960,19 +3983,19 @@ NEXT:
                 goto NEXT;
             }
         }
-        insertStmt(SNEW(CondJumpStmt){.loc = ZERO_LOC, .test = test, .T = thenBB, .F = dst});
+        insertStmt(SNEW(CondJumpStmt){.loc = 0, .test = test, .T = thenBB, .F = dst});
 NEXT:
         return insertLabel(thenBB);
     }
     void condJump(Expr test, label_t T, label_t F) {
-        return insertStmt(SNEW(CondJumpStmt){.loc = ZERO_LOC, .test = test, .T = T, .F = F});
+        return insertStmt(SNEW(CondJumpStmt){.loc = 0, .test = test, .T = T, .F = F});
     }
-    void insertBr(label_t L, location_t loc = ZERO_LOC) {
+    void insertBr(label_t L, location_t loc = 0) {
         return insertStmt(SNEW(GotoStmt){.loc = loc, .location = L});
     }
     void insertLabel(label_t L, IdentRef Name = nullptr) {
         sreachable = true;
-        return insertStmtInternal(SNEW(LabelStmt){.loc = ZERO_LOC, .label = L, .labelName = Name});
+        return insertStmtInternal(SNEW(LabelStmt){.loc = 0, .label = L, .labelName = Name});
     }
     void insertStmtInternal(Stmt s) {
         InsertPt->next = s;
@@ -4136,7 +4159,7 @@ NEXT:
                                            .switchs = xvector<SwitchCase>::get(),
                                            .gnu_switchs = xvector<GNUSwitchCase>::get_with_capacity(0),
                                            .sw_default = jumper.createLabel(),
-                                           .sw_default_loc = ZERO_LOC};
+                                           .sw_default_loc = 0};
                 llvm::SaveAndRestore<Stmt> saved_sw(sema.currentswitch, sw);
                 llvm::SaveAndRestore<label_t> saved_b(jumper.topBreak, LEAVE);
                 insertStmt(sw); // insert switch instruction
@@ -4254,7 +4277,7 @@ NEXT:
             insertLabel(BODY);
             statement();
             insertLabel(CMP);
-            insertStmt(SNEW(CondJumpStmt){.loc = ZERO_LOC, .test = test, .T = BODY, .F = LEAVE});
+            insertStmt(SNEW(CondJumpStmt){.loc = 0, .test = test, .T = BODY, .F = LEAVE});
             insertLabel(LEAVE);
             return;
         }
@@ -4665,7 +4688,7 @@ NEXT:
         if (start->k == EConstant)
             if (auto CI = dyn_cast<ConstantInt>(start->C))
                 return CI->isZero() ? rhs : lhs;
-        return ENEW(ConditionExpr){.loc = start->loc, .ty = lhs->ty, .cond = start, .cleft = lhs, .cright = rhs};
+        return ENEW(ConditionExpr){ .ty = lhs->ty, .cond = start, .cleft = lhs, .cright = rhs};
     }
     Expr conditional_expression() {
         Expr e = logical_OR_expression();

@@ -112,8 +112,14 @@
 #include <cstdio>
 #include <ctime>
 #include <deque>
-#include <fcntl.h>
+
+#if !WINDOWS
+#include <sys/types.h>
+#include <sys/stat.h>
 #include <unistd.h>
+#include <fcntl.h>
+#endif
+
 #include <cassert>
 #include <string>
 #include <vector>
@@ -637,7 +643,13 @@ typedef unsigned column_t;
 typedef unsigned fileid_t;
 typedef uint32_t location_t;
 
-#define ZERO_LOC 0
+static inline bool location_is_stdin(location_t loc) {
+    return loc & 0xf0000000;
+}
+static location_t location_as_index(location_t loc) {
+    return loc & 0x7fffffff;
+}
+
 static const char hexs[] = "0123456789ABCDEF";
 static char hexed(unsigned a) { return hexs[a & 0b1111]; }
 struct SourceRange {
@@ -657,6 +669,12 @@ struct SourceRange {
     bool isInValid() const {
         return start == 0 || end == 0;
     }
+    bool isSignle() const {
+        return start == end;
+    }
+    bool operator==(const SourceRange &other) {
+        return start == other.start && end == other.end;
+    }
 };
 struct FixItHint {
     StringRef code;
@@ -667,7 +685,7 @@ struct FixItHint {
         Hint.insertRange = insertRange;
         return Hint;
     }
-}
+};
 struct SourceLine {
     llvm::SmallString<0> buffer;
     void clear() {
@@ -799,10 +817,10 @@ struct GNUSwitchCase : public SwitchCase {
 
 struct ReplacedExpr {
   enum ExprKind k=EConstant;
-  location_t loc;
   CType ty;
   struct {
     llvm::Constant* C;
+    location_t ReplacedLoc;
     size_t id;
   };
 };

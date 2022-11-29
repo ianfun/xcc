@@ -96,6 +96,10 @@ Expressive diagnostics
 
 ![](diagnostic.png)
 
+Include stack information
+
+![](diagnostic2.png)
+
 Supports Windows, WSL, Linux ...
 
 ![](run.png)

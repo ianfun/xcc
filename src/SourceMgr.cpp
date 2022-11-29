@@ -15,10 +15,8 @@ enum StreamKind : uint8_t {
 };
 struct Stream {
 protected:
-    Stream(enum StreamKind k, const char *name, location_t startLoc): k{k}, name{name}, line{1}, column{1}, startLoc{startLoc}, loc{0} {}
-    void setEndLocWithOffset(location_t offset) {
-        endLoc = startLoc + offset;
-    }
+    Stream(enum StreamKind k, const char *name, location_t startLoc): k{k}, name{name}, line{1}, column{1}, startLoc{startLoc}, loc{startLoc} {}
+    void setEndLocWithOffset(location_t offset) { endLoc = startLoc + offset; }
 public:
     enum StreamKind k;
     const char *name;
@@ -57,34 +55,35 @@ struct FileStream: public Stream {
 #if WINDOWS
         LARGE_INTEGER res;
         LARGE_INTEGER seek_pos;
-        seek_pos.QuadPart = -static_cast<ULONGLONG>(f.pos);
-        if (!::SetFilePointerEx(f.fd, seek_pos, &res, FILE_CURRENT)) 
+        seek_pos.QuadPart = -static_cast<ULONGLONG>(pos);
+        if (!::SetFilePointerEx(fd, seek_pos, &res, FILE_CURRENT)) 
             return 0;
         seek_pos.QuadPart = 0;
-        if (!::SetFilePointerEx(f.fd, seek_pos, nullptr, FILE_BEGIN))
+        if (!::SetFilePointerEx(fd, seek_pos, nullptr, FILE_BEGIN))
             return 0;
         return res.QuadPart;
 #else
-        if ((saved_posl = ::lseek(f.fd, -static_cast<off_t>(f.pos), SEEK_CUR)) < 0)
+        off_t res;
+        if ((res = ::lseek(fd, -static_cast<off_t>(pos), SEEK_CUR)) < 0)
             return 0;
-        if (::lseek(f.fd, 0, SEEK_SET) != 0)
+        if (::lseek(fd, 0, SEEK_SET) != 0)
             return 0;
-#endif
         return res;
+#endif
     }
     void RestorePos(filepos_t pos) {
 #if WINDOWS
         LARGE_INTEGER seek_pos;
         seek_pos.QuadPart = pos;
-        ::SetFilePointerEx(f.fd, seek_pos, nullptr, FILE_BEGIN);
+        ::SetFilePointerEx(fd, seek_pos, nullptr, FILE_BEGIN);
 #else
-        ::lseek(f.fd, pos, SEEK_SET);
+        ::lseek(fd, pos, SEEK_SET);
 #endif
     }
     // clang::SrcMgr::LineOffsetMapping::get
     void createLineOffsetMapping() {
         constexpr size_t read_size = 4096;
-        char buffer = new char[read_size];
+        char *buffer = new char[read_size];
         assert(! hasLineOffsetMapping && "already has lineOffsetMapping!");
         bool lastCharIsCR = false;
         uint32_t I = 0;
@@ -93,10 +92,10 @@ struct FileStream: public Stream {
         for (;;) {
 #if WINDOWS
             DWORD L = 0;
-            if (!::ReadFile(f.fd, buffer, read_size, &L, nullptr) || L == 0)
+            if (!::ReadFile(fd, buffer, read_size, &L, nullptr) || L == 0)
                 break;
 #else
-            size_t L = ::read(f.fd, buffer, read_size);
+            size_t L = ::read(fd, buffer, read_size);
             if (L == 0)
                 break;
 #endif
@@ -152,7 +151,7 @@ struct StdinStream: public Stream {
 #if CC_NO_RAEADLINE
             for (;;) {
                 char c;
-                if (read(0, &c, 1) <= 0)
+                if (::read(0, &c, 1) <= 0)
                     return '\0';
                 if (c == '\n')
                     break;
@@ -166,11 +165,11 @@ struct StdinStream: public Stream {
             if (line[0] == '\0')
                 goto REPEAT;
             ::add_history(line);
-            context += line;
+            contents += line;
             free(line);
 #endif
         }
-        return context[idx++];
+        return contents[idx++];
     }
     void createLineOffsetMapping() {
         return createLineOffsetMappingForString(contents.data(), contents.size(), lineOffsetMapping);
@@ -205,7 +204,7 @@ void Stream::requestLineOffsetMapping() {
         switch (getKind()) {
         case AFileStream: return cast<FileStream>(this)->createLineOffsetMapping();
         case AStringStream: return cast<StringStream>(this)->createLineOffsetMapping();
-        case AStdinStream: return cast<AStdinStream>(this)->createLineOffsetMapping();
+        case AStdinStream: return cast<StdinStream>(this)->createLineOffsetMapping();
         }
         llvm_unreachable("invalid stream");
     }
@@ -224,12 +223,12 @@ struct SourceMgr : public DiagnosticHelper {
     void setLine(uint32_t line) { streams[includeStack.back()]->line = line; }
     const char *getFileName(unsigned i) const { return streams[i]->name; }
     const char *getFileName() const { return includeStack.size() ? streams[includeStack.back()]->name : "(unknown file)"; }
-    unsigned getLine() const { return streams.empty() ? 0 : streams[includeStack.back()]->line; }
+    unsigned getLine() const { return includeStack.empty() ? 0 : streams[includeStack.back()]->line; }
     unsigned getLine(unsigned i) const { return streams[i]->line; }
     void setFileName(const char *name) { streams[includeStack.back()]->name = name; }
-    location_t getCurrentLocation() const { return streams.back()->endLoc;}
-    location_t getCurrentLocationSafe() const {
-        return streams.empty() ? 0 : getCurrentLocation();
+    location_t getCurrentLocation() const { return streams.back()->loc;}
+    location_t getEndLoc() const {
+        return includeStack.empty() ? 0 : streams[includeStack.back()]->endLoc;
     }
     location_t getLoc() const { return includeStack.empty() ? 0 : streams[includeStack.back()]->loc; }
     inline LocTree *getLocTree() const { return tree; }
@@ -239,7 +238,7 @@ struct SourceMgr : public DiagnosticHelper {
     void beginInclude(xcc_context &context, fileid_t theFD) {
         assert(includeStack.size() >= 2 && "call beginInclude() without previous include position!");
         Include_Info *info = new (context.getAllocator()) Include_Info{.line = getLine(theFD), .fd = theFD};
-        location_map[streams[includeStack.back()]->startLoc] = (tree = new (context.getAllocator()) LocTree(tree, info));
+        location_map[getCurrentLocation()] = (tree = new (context.getAllocator()) LocTree(tree, info));
     }
     void endTree() {
         location_map[getCurrentLocation()] = (tree = tree->getParent());
@@ -275,14 +274,14 @@ struct SourceMgr : public DiagnosticHelper {
         
         DWORD highPart;
         fileSize = ::GetFileSize(fd, &highPart);
-        if (fileSize == INVALID_FILE_SIZE )
+        if (fileSize == INVALID_FILE_SIZE)
             return error("failed to get file size for %s: %w", path, (DWORD)GetLastError()), false;
         if (highPart) {
             // this can done much better in assembly code
             uint64_t total = highPart;
             total <<= 32;
             total |= fileSize;
-            return errno("file size %Z is too large for XCC", total), false;
+            return error("file size %Z is too large for XCC", total), false;
         }
 #else
         int fd = ::open(path, O_RDONLY);
@@ -303,7 +302,7 @@ struct SourceMgr : public DiagnosticHelper {
         }
 #endif  
         const size_t Id = streams.size();
-        streams.push_back(new FileStream(path, getCurrentLocationSafe(), fd, fileSize));
+        streams.push_back(new FileStream(path, getEndLoc(), fd, fileSize));
         lastDir = llvm::sys::path::parent_path(path, llvm::sys::path::Style::native);
         if (lastDir.empty())
             lastDir = ".";
@@ -311,29 +310,27 @@ struct SourceMgr : public DiagnosticHelper {
         return true;
     }
     fileid_t getFileID(location_t loc, uint64_t &offset) const {
-        if (streams.empty()) return -1;
         for (size_t i = 0;i < streams.size();++i) {
-            if (loc < streams[i]->startLoc) {
-                offset = streams[i - 1]->startLoc - loc;
-                return i - 1;
+            if (loc < streams[i]->endLoc) {
+                offset = streams[i]->endLoc - loc;
+                return i;
             }
         }
-        offset = loc;
-        return 0;
+        return (fileid_t)-1;
     }
     fileid_t lastQueryFileId_line = (fileid_t)-1;
     location_t lastQueryOffset_line = (location_t)-1;
-    unsigned lastQueryResult_line = 0;
-    unsigned getLineNumber(location_t offset, fileid_t FD) const {
+    uint32_t lastQueryResult_line = 0;
+    uint32_t getLineNumber(location_t offset, fileid_t FD) {
         Stream *f = streams[FD];
         f->requestLineOffsetMapping();
-        const uint32_t *lineStart = f->lineOffsetMapping.begin();
-        const uint32_t *lineEnd = f->lineOffsetMapping.end();
-        uint32_t *searchBegin = lineStart;
+        const uint32_t *lineStart = f->lineOffsetMapping.data();
+        const uint32_t *lineEnd = f->lineOffsetMapping.data() + f->lineOffsetMapping.size();
+        const uint32_t *searchBegin = lineStart;
         location_t QueriedFilePos = offset+1;
         if (FD == lastQueryFileId_line) {
             if (offset > lastQueryOffset_line)
-                searchBegin = lastQueryResult_line - 1;
+                searchBegin = lineStart + lastQueryResult_line - 1;
             if (searchBegin+5 < lineEnd) {
                 if (searchBegin[5] > QueriedFilePos)
                     lineEnd = searchBegin+5;
@@ -347,20 +344,20 @@ struct SourceMgr : public DiagnosticHelper {
                 }
             }
         }
-        const unsigned *Pos = std::lower_bound(searchBegin, lineEnd, QueriedFilePos);
+        const uint32_t *Pos = std::lower_bound(searchBegin, lineEnd, QueriedFilePos);
         return (lastQueryResult_line = Pos - lineStart);
     }
-    unsigned getColumnNumber(location_t offset, fileid_t FD) {
+    uint32_t getColumnNumber(location_t offset, fileid_t FD) {
         Stream *f = streams[FD];
-        if (StringStream *s = dyn_cast<StdinStream>(f)) {
+        if (StringStream *s = dyn_cast<StringStream>(f)) {
             return s->getColumnNumber(offset);
         }
         if (StdinStream *s = dyn_cast<StdinStream>(f)) {
             return s->getColumnNumber(offset);
         }
         FileStream *s = cast<FileStream>(f);
-        unsigned line = getColumnNumber(offset, FD);
-        return offset - s.lineOffsetMapping[line] + 1;
+        uint32_t line = getColumnNumber(offset, FD);
+        return offset - s->lineOffsetMapping[line] + 1;
     }
     bool translateLocation(location_t loc, source_location &out) {
         if (loc == 0) return false;
@@ -374,15 +371,15 @@ struct SourceMgr : public DiagnosticHelper {
         it--;
         if (it == location_map.begin()) goto NO_TREE;
         out.tree = it->second;
-        return get_source(loc, out);
+        return get_source(offset, out);
 NO_TREE:
         if (streams.size()) {
             out.tree = nullptr;
-            return get_source(loc, out);
+            return get_source(offset, out);
         }
         return false;
     }
-    static get_source_for_string(const char *s, size_t max, source_location &out, uint64_t offset) {
+    static void get_source_for_string(const char *s, size_t max, source_location &out, uint64_t offset) {
         size_t last_line_offset = 0;
         unsigned line = 0;
         for (size_t i = 0;i < offset;++i) {
@@ -406,10 +403,10 @@ NO_TREE:
     }
     bool get_source(uint64_t offset, source_location &out) {
         Stream *target = streams[out.fd];
-        if (StringStream *s = dyn_cast<StringStream>(target)) 
-            return get_source_for_string(s->contents.data(), s->contents.size(), offset), true;
+        if (StringStream *s = dyn_cast<StringStream>(target))
+            return get_source_for_string(s->s, s->max, out, offset), true;
         if (StdinStream *s = dyn_cast<StdinStream>(target))
-            return get_source_for_string(s->s, s->max, offset), true;
+             return get_source_for_string(s->contents.data(), s->contents.size(), out, offset), true;
         FileStream *stream = cast<FileStream>(target);
         FileStream &f = *stream;
         auto saved_location = f.SavePos();
@@ -537,9 +534,6 @@ READ_AGAIN:
 #endif
             f->pos = 0;
             return;
-        }
-        if (StdinStream *f = dyn_cast<StdinStream>(stream)) {
-            f->readed = 0;
         }
         return;
     }
@@ -670,12 +664,12 @@ READ_AGAIN:
     }
     void addStdin(const char *Name = "<stdin>") {
         const size_t Id = streams.size();
-        streams.push_back(new StdinStream(Name, getCurrentLocationSafe()));
+        streams.push_back(new StdinStream(Name, getEndLoc()));
         includeStack.push_back(Id);
     }
     void addString(StringRef s, const char *Name = "<string>") {
         const size_t Id = streams.size();
-        streams.push_back(new StringStream(Name, getCurrentLocationSafe(), s));
+        streams.push_back(new StringStream(Name, getEndLoc(), s));
         includeStack.push_back(Id);
     }
     uint16_t lastc = 256, lastc2 = 256;
@@ -700,7 +694,7 @@ READ_AGAIN:
             switch (c) {
             default: return c;
             case '\0':
-                location_map[streams[includeStack.back()]->loc] = tree ? tree->getParent() : nullptr;
+                location_map[getCurrentLocation()] = tree ? tree->getParent() : nullptr;
                 includeStack.pop_back();
                 if (includeStack.empty())
                     return '\0';

@@ -194,22 +194,22 @@ stmts = {
 	),
 }
 exprs = {
-	"EConstant": ("llvm::Constant* C",),
+	"EConstant": ("llvm::Constant* C", "location_t constantLoc", "location_t constantEndLoc",),
 	"EBin": ("Expr lhs", "enum BinOp bop", "Expr rhs",),
-	"EUnary": ("Expr uoperand", "enum UnaryOp uop",),
-	"EConstantArray": ("llvm::GlobalVariable *array",),
-	"EConstantArraySubstript": ("llvm::GlobalVariable *carray", "APInt cidx",),
+	"EUnary": ("Expr uoperand", "enum UnaryOp uop", "location_t opLoc",),
+	"EConstantArray": ("llvm::GlobalVariable *array", "location_t constantArrayLoc", "location_t constantArrayLocEnd",),
+	"EConstantArraySubstript": ("llvm::GlobalVariable *carray", "APInt cidx", "location_t constantArraySubscriptLoc", "location_t constantArraySubscriptLocEnd",),
 	"EVoid": ("Expr voidexpr",),
-	"EVar": ("size_t sval",),
+	"EVar": ("size_t sval", "IdentRef varName", "location_t varLoc",),
 	"ECondition": ("Expr cond, cleft, cright",),
 	"ECast": ("enum CastOp castop", "Expr castval",),
-	"ECall": ("Expr callfunc", "xvector<Expr> callargs",),
+	"ECall": ("Expr callfunc", "xvector<Expr> callargs", "location_t callEnd", ),
 	"ESubscript": ("Expr left, right",),
-	"EArray": ("xvector<Expr> arr",),
-	"EStruct": ("xvector<Expr> arr2",),
-	"EMemberAccess": ("Expr obj", "unsigned idx",),
+	"EArray": ("xvector<Expr> arr", "location_t ArraystartLoc", "location_t ArrayEndLoc", ),
+	"EStruct": ("xvector<Expr> arr2", "location_t StructStartLoc", "location_t StructEndLoc",),
+	"EMemberAccess": ("Expr obj", "unsigned idx", "location_t memberEndLoc",),
 	"EArrToAddress": ("Expr arr3",),
-	"EPostFix": ("enum PostFixOp pop", "Expr poperand",),
+	"EPostFix": ("enum PostFixOp pop", "Expr poperand", "location_t postFixEndLoc", ),
 }
 ctypes = {
 	"TYPRIM": (),
@@ -448,9 +448,9 @@ bool isSimple() const {
       return false;
   }
 }
+#include "exprMethods.inc"
 ExprKind k;
-location_t loc;
-CType ty;\n
+CType ty;
 union {
 """)
 	for decls in exprs.values():
