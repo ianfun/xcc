@@ -9,6 +9,7 @@ enum StmtKind: uint8_t {
   SDeclOnly,
   SReturn,
   SExpr,
+  SNoReturnCall,
   SAsm,
   SVarDecl,
   SDecl,
@@ -17,12 +18,10 @@ enum StmtKind: uint8_t {
 };
 struct NullStmt {
   enum StmtKind k;
-  location_t loc;
   Stmt next;
 };
 struct OpaqueStmt {
 StmtKind k;
-location_t loc;
 Stmt next;
 bool isTerminator() const {
     switch (k) {
@@ -67,6 +66,9 @@ union {
       Expr exprbody;
   };
   struct {
+      Expr call_expr;
+  };
+  struct {
       xstring asms;
   };
   struct {
@@ -92,13 +94,11 @@ union {
 };};
 struct HeadStmt {
   enum StmtKind k=SHead;
-  location_t loc;
   Stmt next;
  /* empty! */ 
 };
 struct CompoundStmt {
   enum StmtKind k=SCompound;
-  location_t loc;
   Stmt next;
   struct {
     Stmt inner;
@@ -106,7 +106,6 @@ struct CompoundStmt {
 };
 struct LabelStmt {
   enum StmtKind k=SLabel;
-  location_t loc;
   Stmt next;
   struct {
     label_t label;
@@ -115,7 +114,6 @@ struct LabelStmt {
 };
 struct GotoStmt {
   enum StmtKind k=SGoto;
-  location_t loc;
   Stmt next;
   struct {
     label_t location;
@@ -123,7 +121,6 @@ struct GotoStmt {
 };
 struct CondJumpStmt {
   enum StmtKind k=SCondJump;
-  location_t loc;
   Stmt next;
   struct {
     Expr test;
@@ -133,7 +130,6 @@ struct CondJumpStmt {
 };
 struct SwitchStmt {
   enum StmtKind k=SSwitch;
-  location_t loc;
   Stmt next;
   struct {
     Expr itest;
@@ -145,7 +141,6 @@ struct SwitchStmt {
 };
 struct DeclOnlyStmt {
   enum StmtKind k=SDeclOnly;
-  location_t loc;
   Stmt next;
   struct {
     CType decl;
@@ -153,7 +148,6 @@ struct DeclOnlyStmt {
 };
 struct ReturnStmt {
   enum StmtKind k=SReturn;
-  location_t loc;
   Stmt next;
   struct {
     Expr ret;
@@ -161,15 +155,20 @@ struct ReturnStmt {
 };
 struct ExprStmt {
   enum StmtKind k=SExpr;
-  location_t loc;
   Stmt next;
   struct {
     Expr exprbody;
   };
 };
+struct NoReturnCallStmt {
+  enum StmtKind k=SNoReturnCall;
+  Stmt next;
+  struct {
+    Expr call_expr;
+  };
+};
 struct AsmStmt {
   enum StmtKind k=SAsm;
-  location_t loc;
   Stmt next;
   struct {
     xstring asms;
@@ -177,7 +176,6 @@ struct AsmStmt {
 };
 struct VarDeclStmt {
   enum StmtKind k=SVarDecl;
-  location_t loc;
   Stmt next;
   struct {
     xvector<VarDecl> vars;
@@ -185,7 +183,6 @@ struct VarDeclStmt {
 };
 struct DeclStmt {
   enum StmtKind k=SDecl;
-  location_t loc;
   Stmt next;
   struct {
     size_t decl_idx;
@@ -194,7 +191,6 @@ struct DeclStmt {
 };
 struct UpdateForwardDeclStmt {
   enum StmtKind k=SUpdateForwardDecl;
-  location_t loc;
   Stmt next;
   struct {
     size_t prev_idx;
@@ -204,7 +200,6 @@ struct UpdateForwardDeclStmt {
 };
 struct FunctionStmt {
   enum StmtKind k=SFunction;
-  location_t loc;
   Stmt next;
   struct {
     size_t func_idx;
@@ -225,10 +220,11 @@ static uint8_t stmt_size_map[] = {
     sizeof(DeclOnlyStmt),
     sizeof(ReturnStmt),
     sizeof(ExprStmt),
+    sizeof(NoReturnCallStmt),
     sizeof(AsmStmt),
     sizeof(VarDeclStmt),
     sizeof(DeclStmt),
     sizeof(UpdateForwardDeclStmt),
     sizeof(FunctionStmt)
 };
-static constexpr size_t stmt_max_size = std::max({sizeof(HeadStmt), sizeof(CompoundStmt), sizeof(LabelStmt), sizeof(GotoStmt), sizeof(CondJumpStmt), sizeof(SwitchStmt), sizeof(DeclOnlyStmt), sizeof(ReturnStmt), sizeof(ExprStmt), sizeof(AsmStmt), sizeof(VarDeclStmt), sizeof(DeclStmt), sizeof(UpdateForwardDeclStmt), sizeof(FunctionStmt)});
+static constexpr size_t stmt_max_size = std::max({sizeof(HeadStmt), sizeof(CompoundStmt), sizeof(LabelStmt), sizeof(GotoStmt), sizeof(CondJumpStmt), sizeof(SwitchStmt), sizeof(DeclOnlyStmt), sizeof(ReturnStmt), sizeof(ExprStmt), sizeof(NoReturnCallStmt), sizeof(AsmStmt), sizeof(VarDeclStmt), sizeof(DeclStmt), sizeof(UpdateForwardDeclStmt), sizeof(FunctionStmt)});

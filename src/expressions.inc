@@ -32,13 +32,20 @@ bool isSimple() const {
       return false;
   }
 }
+const location_t *getParenLLoc() const;
+const location_t *getParenRLoc() const;
+location_t *getParenLLoc();
+location_t *getParenRLoc();
+location_t getBeginLoc() const ;
+location_t getEndLoc() const;
+SourceRange getSourceRange() const {return SourceRange(getBeginLoc(), getEndLoc());}
 ExprKind k;
-location_t loc;
 CType ty;
-
 union {
     struct {
       llvm::Constant* C;
+      location_t constantLoc;
+      location_t constantEndLoc;
     };
     struct {
       Expr lhs;
@@ -48,19 +55,27 @@ union {
     struct {
       Expr uoperand;
       enum UnaryOp uop;
+      location_t opLoc;
     };
     struct {
       llvm::GlobalVariable *array;
+      location_t constantArrayLoc;
+      location_t constantArrayLocEnd;
     };
     struct {
       llvm::GlobalVariable *carray;
       APInt cidx;
+      location_t constantArraySubscriptLoc;
+      location_t constantArraySubscriptLocEnd;
     };
     struct {
       Expr voidexpr;
+      location_t voidStartLoc;
     };
     struct {
       size_t sval;
+      IdentRef varName;
+      location_t varLoc;
     };
     struct {
       Expr cond, cleft, cright;
@@ -72,19 +87,25 @@ union {
     struct {
       Expr callfunc;
       xvector<Expr> callargs;
+      location_t callEnd;
     };
     struct {
       Expr left, right;
     };
     struct {
       xvector<Expr> arr;
+      location_t ArrayStartLoc;
+      location_t ArrayEndLoc;
     };
     struct {
       xvector<Expr> arr2;
+      location_t StructStartLoc;
+      location_t StructEndLoc;
     };
     struct {
       Expr obj;
       unsigned idx;
+      location_t memberEndLoc;
     };
     struct {
       Expr arr3;
@@ -92,6 +113,7 @@ union {
     struct {
       enum PostFixOp pop;
       Expr poperand;
+      location_t postFixEndLoc;
     };
 };
 };
@@ -101,6 +123,8 @@ struct ConstantExpr {
   CType ty;
   struct {
     llvm::Constant* C;
+    location_t constantLoc;
+    location_t constantEndLoc;
   };
 };
 struct BinExpr {
@@ -120,6 +144,7 @@ struct UnaryExpr {
   struct {
     Expr uoperand;
     enum UnaryOp uop;
+    location_t opLoc;
   };
 };
 struct ConstantArrayExpr {
@@ -128,6 +153,8 @@ struct ConstantArrayExpr {
   CType ty;
   struct {
     llvm::GlobalVariable *array;
+    location_t constantArrayLoc;
+    location_t constantArrayLocEnd;
   };
 };
 struct ConstantArraySubstriptExpr {
@@ -137,6 +164,8 @@ struct ConstantArraySubstriptExpr {
   struct {
     llvm::GlobalVariable *carray;
     APInt cidx;
+    location_t constantArraySubscriptLoc;
+    location_t constantArraySubscriptLocEnd;
   };
 };
 struct VoidExpr {
@@ -145,6 +174,7 @@ struct VoidExpr {
   CType ty;
   struct {
     Expr voidexpr;
+    location_t voidStartLoc;
   };
 };
 struct VarExpr {
@@ -153,6 +183,8 @@ struct VarExpr {
   CType ty;
   struct {
     size_t sval;
+    IdentRef varName;
+    location_t varLoc;
   };
 };
 struct ConditionExpr {
@@ -179,6 +211,7 @@ struct CallExpr {
   struct {
     Expr callfunc;
     xvector<Expr> callargs;
+    location_t callEnd;
   };
 };
 struct SubscriptExpr {
@@ -195,6 +228,8 @@ struct ArrayExpr {
   CType ty;
   struct {
     xvector<Expr> arr;
+    location_t ArrayStartLoc;
+    location_t ArrayEndLoc;
   };
 };
 struct StructExpr {
@@ -203,6 +238,8 @@ struct StructExpr {
   CType ty;
   struct {
     xvector<Expr> arr2;
+    location_t StructStartLoc;
+    location_t StructEndLoc;
   };
 };
 struct MemberAccessExpr {
@@ -212,6 +249,7 @@ struct MemberAccessExpr {
   struct {
     Expr obj;
     unsigned idx;
+    location_t memberEndLoc;
   };
 };
 struct ArrToAddressExpr {
@@ -229,6 +267,7 @@ struct PostFixExpr {
   struct {
     enum PostFixOp pop;
     Expr poperand;
+    location_t postFixEndLoc;
   };
 };
 static uint8_t expr_size_map[] = {

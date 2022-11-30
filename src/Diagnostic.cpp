@@ -23,8 +23,11 @@ struct Diagnostic {
     // default constructor - construct a invalid Diagnostic
     Diagnostic() = default;
     Diagnostic(const char *fmt, location_t loc = 0) : fmt{fmt}, loc{loc} { }
+    void write_impl(const FixItHint &Hint) {
+        FixItHints.push_back(Hint);
+    }
     template <typename T> void write_impl(const T *ptr) { data.push_back(reinterpret_cast<storage_type>(ptr)); }
-    void write_impl(const SourceRange &range) {
+    void write_impl(SourceRange range) {
         ranges.push_back(range);
     }
     void write_impl(const StringRef &str) {
@@ -156,11 +159,11 @@ struct Diagnostic {
             }
         }
     }
-    void reset(const char *msg, enum DiagnosticLevel level, location_t loc = 0) {
+    void reset(const char *fmt, enum DiagnosticLevel level, location_t loc = 0) {
         this->data.clear();
         this->loc = loc;
         this->level = level;
-        this->msg = msg;
+        this->fmt = fmt;
     }
 };
 struct DiagnosticConsumer {
@@ -254,14 +257,20 @@ struct DiagnosticsEngine {
 };
 struct DiagnosticBuilder {
     DiagnosticsEngine &engine;
-    inline DiagnosticBuilder(DiagnosticsEngine &engine) : engine{engine} {}
-    ~DiagnosticBuilder() { engine.EmitCurrentDiagnostic(); }
-    void addFixHint(const FixItHint &Hint) {
-        engine.CurrentDiagnostic.FixItHints.push_back(Hint);
+    bool Emited;
+    DiagnosticBuilder(const DiagnosticBuilder &other): engine{other.engine}, Emited{other.Emited} { };
+    inline DiagnosticBuilder(DiagnosticsEngine &engine) : engine{engine}, Emited{false} {}
+    ~DiagnosticBuilder() { if (!Emited) engine.EmitCurrentDiagnostic(); }
+    void Emit() {
+        if (!Emited) {
+            Emited = true;
+            engine.EmitCurrentDiagnostic();
+        }
     }
     template <typename T> 
     const DiagnosticBuilder &operator<<(const T &V) const {
         engine.CurrentDiagnostic.write_impl(V);
+        return *this;
     }
 };
 // A helper class to emit Diagnostics
@@ -311,24 +320,24 @@ struct DiagnosticHelper {
 };
 struct EvalHelper: public DiagnosticHelper {
     EvalHelper(DiagnosticsEngine &engine): DiagnosticHelper(engine) {}
-    uint64_t force_eval(Expr e, location_t cloc) {
+    uint64_t force_eval(Expr e) {
         if (e->k != EConstant) {
-            type_error(cloc, "not a constant expression: %E", e);
+            type_error(e->getBeginLoc(), "not a constant expression: %E", e) << e->getSourceRange();
             return 0;
         }
         if (const auto CI = dyn_cast<ConstantInt>(e->C)) {
             if (CI->getValue().getActiveBits() > 64)
-                warning(cloc, "integer constant expression larger exceeds 64 bit, the result is truncated");
+                warning(e->getBeginLoc(), "integer constant expression larger exceeds 64 bit, the result is truncated") << e->getSourceRange();
             return CI->getValue().getLimitedValue();
         }
-        type_error(cloc, "not a integer constant: %E", e);
+        type_error(e->getBeginLoc(), "not a integer constant: %E", e) << e->getSourceRange();
         return 0;
     }
-    uint64_t try_eval(Expr e, location_t cloc, bool &ok) {
+    uint64_t try_eval(Expr e, bool &ok) {
         if (e->k == EConstant) {
             if (const auto CI = dyn_cast<ConstantInt>(e->C)) {
                 if (CI->getValue().getActiveBits() > 64)
-                    warning(cloc, "integer constant expression larger exceeds 64 bit, the result is truncated");
+                    warning(e->getBeginLoc(), "integer constant expression larger exceeds 64 bit, the result is truncated") << e->getSourceRange();
                 ok = true;
                 return CI->getValue().getLimitedValue();
             }

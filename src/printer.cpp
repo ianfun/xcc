@@ -17,7 +17,7 @@ raw_ostream &operator<<(llvm::raw_ostream &OS, const_Expr e) {
     case EVoid: return OS << e->voidexpr;
     case EVar: return OS << e->sval;
     case ECondition: return OS << e->cond << " ? " << e->cleft << " : " << e->cright;
-    case ECast: return OS << '(' << e->ty << ')' << e->castval;
+    case ECast: return OS << '(' << e->ty << ", op = " << show(e->castop) << ')' << e->castval;
     case ECall:
         OS << e->callfunc << '(';
         if (e->callargs.empty())

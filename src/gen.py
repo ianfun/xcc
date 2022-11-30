@@ -23,7 +23,8 @@ type_tags = (
 	"TYCOMPLEX",
 	"TYIMAGINARY",
 	"TYNULLPTR",
-	"TYREPLACED_CONSTANT"
+	"TYREPLACED_CONSTANT",
+	"TYPAREN"
 )
 
 keywords = (
@@ -180,6 +181,7 @@ stmts = {
 	"SDeclOnly": ("CType decl",),
 	"SReturn": ("Expr ret",),
 	"SExpr": ("Expr exprbody",),
+	"SNoReturnCall": ("Expr call_expr",),
 	"SAsm": ("xstring asms",),
 	"SVarDecl": ("xvector<VarDecl> vars",),
 	"SDecl": ("size_t decl_idx", "CType decl_ty",),
@@ -199,13 +201,13 @@ exprs = {
 	"EUnary": ("Expr uoperand", "enum UnaryOp uop", "location_t opLoc",),
 	"EConstantArray": ("llvm::GlobalVariable *array", "location_t constantArrayLoc", "location_t constantArrayLocEnd",),
 	"EConstantArraySubstript": ("llvm::GlobalVariable *carray", "APInt cidx", "location_t constantArraySubscriptLoc", "location_t constantArraySubscriptLocEnd",),
-	"EVoid": ("Expr voidexpr",),
+	"EVoid": ("Expr voidexpr", "location_t voidStartLoc"),
 	"EVar": ("size_t sval", "IdentRef varName", "location_t varLoc",),
 	"ECondition": ("Expr cond, cleft, cright",),
 	"ECast": ("enum CastOp castop", "Expr castval",),
 	"ECall": ("Expr callfunc", "xvector<Expr> callargs", "location_t callEnd", ),
 	"ESubscript": ("Expr left, right",),
-	"EArray": ("xvector<Expr> arr", "location_t ArraystartLoc", "location_t ArrayEndLoc", ),
+	"EArray": ("xvector<Expr> arr", "location_t ArrayStartLoc", "location_t ArrayEndLoc", ),
 	"EStruct": ("xvector<Expr> arr2", "location_t StructStartLoc", "location_t StructEndLoc",),
 	"EMemberAccess": ("Expr obj", "unsigned idx", "location_t memberEndLoc",),
 	"EArrToAddress": ("Expr arr3",),
@@ -448,7 +450,13 @@ bool isSimple() const {
       return false;
   }
 }
-#include "exprMethods.inc"
+const location_t *getParenLLoc() const;
+const location_t *getParenRLoc() const;
+location_t *getParenLLoc();
+location_t *getParenRLoc();
+location_t getBeginLoc() const ;
+location_t getEndLoc() const;
+SourceRange getSourceRange() const {return SourceRange(getBeginLoc(), getEndLoc());}
 ExprKind k;
 CType ty;
 union {
@@ -483,12 +491,10 @@ def gen_stmt():
 	f.write("""\
 struct NullStmt {
   enum StmtKind k;
-  location_t loc;
   Stmt next;
 };
 struct OpaqueStmt {
 StmtKind k;
-location_t loc;
 Stmt next;
 bool isTerminator() const {
     switch (k) {
@@ -511,11 +517,11 @@ union {
 		realname = name[1::] + "Stmt"
 		l.append(realname)
 		if decls:
-			f.write("struct " + realname + " {\n  enum StmtKind k=" + name + ";\n  location_t loc;\n  Stmt next;\n  struct {\n  ")
+			f.write("struct " + realname + " {\n  enum StmtKind k=" + name + ";\n  Stmt next;\n  struct {\n  ")
 			f.write('  ' + ';\n    '.join(decls) + ';')
 			f.write("\n  };\n};\n")
 		else:
-			f.write("struct " + realname + " {\n  enum StmtKind k=" + name + ";\n  location_t loc;\n  Stmt next;\n /* empty! */ \n};\n")
+			f.write("struct " + realname + " {\n  enum StmtKind k=" + name + ";\n  Stmt next;\n /* empty! */ \n};\n")
 
 	f.write("static uint8_t stmt_size_map[] = {\n    " + 
 		',\n    '.join(sizeof(l)) + 

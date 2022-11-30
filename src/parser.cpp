@@ -7,6 +7,14 @@
 // and Semantics(https://en.wikipedia.org/wiki/Semantics_(computer_science)).
 
 struct Parser : public EvalHelper {
+    enum UnreachableReason: uint8_t {
+        UR_break,
+        UR_continue,
+        UR_goto,
+        UR_switch,
+        UR_return,
+        UR_noreturn
+    } u_unreachable_reason;
     enum: uint8_t {
         LBL_UNDEFINED = 0, LBL_FORWARD = 1, LBL_DECLARED = 2, LBL_OK = 4
     };
@@ -62,7 +70,7 @@ struct Parser : public EvalHelper {
     IRGen &irgen;
     Stmt InsertPt = nullptr;
     bool sreachable;
-    Stmt unreachable_reason = nullptr;
+    location_t unreachable_reason = 0, current_stmt_loc = 0;
     Expr intzero, intone, size_t_one, cfalse, ctrue;
     StringPool string_pool;
     llvm::ConstantPointerNull *null_ptr;
@@ -73,21 +81,21 @@ private:
     [[nodiscard]] Expr binop(Expr a, BinOp op, Expr b, CType ty) {
         return ENEW(BinExpr){.ty = ty, .lhs = a, .bop = op, .rhs = b};
     }
-    [[nodiscard]] Expr unary(Expr e, UnaryOp op, CType ty) {
-        return ENEW(UnaryExpr){.loc = opLoc, .ty = ty, .uoperand = e, .uop = op};
+    [[nodiscard]] Expr unary(Expr e, UnaryOp op, CType ty, location_t opLoc = 0) {
+        return ENEW(UnaryExpr){.ty = ty, .uoperand = e, .uop = op, .opLoc = opLoc};
     }
     Expr complex_from_real(Expr real, CType ty) {
         ty = context.tryGetComplexTypeFromNonComplex(ty);
         auto zero = llvm::Constant::getNullValue(irgen.wrapNoComplexScalar(ty));
         if (real->k == EConstant)
-            return wrap(ty, llvm::ConstantStruct::get(irgen.wrapComplex(ty), {real->C, zero}), real->loc);
+            return wrap(ty, llvm::ConstantStruct::get(irgen.wrapComplex(ty), {real->C, zero}), real->getBeginLoc(), real->getEndLoc());
         return binop(real, Complex_CMPLX, wrap(ty, zero), ty);
     }
     Expr complex_from_imag(Expr imag, CType ty) {
         ty = context.tryGetComplexTypeFromNonComplex(ty);
         auto zero = ConstantFP::getZero(irgen.wrapNoComplexScalar(ty));
         if (imag->k == EConstant)
-            return wrap(ty, llvm::ConstantStruct::get(irgen.wrapComplex(ty), {zero, imag->C}), imag->loc);
+            return wrap(ty, llvm::ConstantStruct::get(irgen.wrapComplex(ty), {zero, imag->C}), imag->getBeginLoc(), imag->getEndLoc());
         return binop(wrap(ty, zero), Complex_CMPLX, imag, ty);
     }
     Expr complex_pair(Expr a, Expr b, CType ty) {
@@ -215,7 +223,7 @@ private:
             result = TNEW(IncompleteType){.tag = transform(expected), .name = Name};
             result->setKind(TYINCOMPLETE);
             Type_info info = Type_info{.ty = result, .loc = full_loc};
-            insertStmt(SNEW(DeclStmt){.loc = full_loc, .decl_idx = sema.tags.putSym(Name, info), .decl_ty = result});
+            insertStmt(SNEW(DeclStmt){.decl_idx = sema.tags.putSym(Name, info), .decl_ty = result});
         }
         return result;
     }
@@ -237,7 +245,6 @@ private:
                 old->ty = ty;
                 old->loc = loc;
                 insertStmt(SNEW(UpdateForwardDeclStmt){
-                    .loc = loc,
                     .prev_idx = prev,
                     .now = ty,
                 });
@@ -246,7 +253,7 @@ private:
         }
         size_t Idx = sema.tags.putSym(Name ? Name : reinterpret_cast<IdentRef>(ty), Type_info{.ty = ty, .loc = loc});
         if (!found) {
-            insertStmt(SNEW(DeclStmt){.loc = loc, .decl_idx = Idx, .decl_ty = ty});
+            insertStmt(SNEW(DeclStmt){.decl_idx = Idx, .decl_ty = ty});
         }
         return Idx;
     }
@@ -259,7 +266,6 @@ private:
         }
         sema.typedefs.putSym(Name, Variable_Info{
                                        .ty = context.getConstInt(),
-                                       .loc = full_loc,
                                        .val = ConstantInt::get(irgen.integer_types[5], val),
                                        .tags = ASSIGNED | USED, // enums are used by default ignore warnings
                                    });
@@ -899,20 +905,17 @@ if (k2 == F) return (void)(a = float_cast(a, bt, k2, F));
             if (isAssignOp(e->bop) || e->bop == LogicalAnd || e->bop == LogicalOr)
                 return e;
             if (e->rhs->isSimple()) {
-                warning(e->rhs->loc, "unused binary expression result in right-hand side (%E)", e->rhs);
-                note("simplify %E to %E", e, e->lhs);
+                warning(e->rhs->getBeginLoc(), "unused binary expression result in right-hand side (%E)", e->rhs) << e->rhs->getSourceRange();
                 return simplify(e->lhs);
             }
             if (e->lhs->isSimple()) {
-                warning(e->rhs->loc, "unused binary expression result in left-hand side (%E)", e->rhs);
-                note("simplify %E to %E", e, e->rhs);
+                warning(e->lhs->getBeginLoc(), "unused binary expression result in left-hand side (%E)", e->rhs) << e->lhs->getSourceRange();
                 return simplify(e->rhs);
             }
             return comma(simplify(e->lhs), simplify(e->rhs));
         case EUnary:
             if (e->uop != Dereference) {
-                warning(e->getBeginLoc(), "unused unary expression result");
-                note("simplify %E to %E", e, e->uoperand);
+                warning(e->getBeginLoc(), "unused unary expression result") << e->getSourceRange();
                 return simplify(e->uoperand);
             }
             return e;
@@ -960,7 +963,7 @@ if (k2 == F) return (void)(a = float_cast(a, bt, k2, F));
             intPart = lhs;
         }
         if (!checkInteger(intPart->ty)) {
-            type_error(lhs->loc, "integer type expected");
+            type_error(lhs->getBeginLoc(), "integer type expected") << rhs->getSourceRange() << lhs->getSourceRange();
             return ptrPart;
         }
         make_ptr_arith(ptrPart);
@@ -970,17 +973,18 @@ if (k2 == F) return (void)(a = float_cast(a, bt, k2, F));
                                                        : CI->getValue().zextOrTrunc(irgen.pointerSizeInBits);
                 if (ptrPart->k == EConstantArray)
                     return ENEW(ConstantArraySubstriptExpr){
-                        .constantArraySubscriptLoc = lhs->getBeginLoc(), .ty = ptrPart->ty, .carray = ptrPart->array, .cidx = offset, .constantArraySubscriptLocEnd = rhs->getLocEnd()};
+                        .ty = ptrPart->ty, .carray = ptrPart->array, .cidx = offset, .constantArraySubscriptLoc = lhs->getBeginLoc(), .constantArraySubscriptLocEnd = rhs->getEndLoc()};
                 if (ptrPart->k == EConstantArraySubstript) {
                     bool overflow = false;
-                    auto result = ENEW(ConstantArraySubstriptExpr){.constantArraySubscriptLoc = lhs->getBeginLoc(),
+                    auto result = ENEW(ConstantArraySubstriptExpr){
                                                                    .ty = ptrPart->ty,
                                                                    .carray = ptrPart->array,
                                                                    .cidx = offset.uadd_ov(ptrPart->cidx, overflow),
-                                                                   .constantArraySubscriptLocEnd = rhs->getLocEnd()
+                                                                   .constantArraySubscriptLoc = lhs->getBeginLoc(),
+                                                                   .constantArraySubscriptLocEnd = rhs->getEndLoc()
                                                                };
                     if (overflow)
-                        warning(ptrPart->loc, "overflow when doing addition on pointers, the result is %A", &result->cidx);
+                        warning(ptrPart->getBeginLoc(), "overflow when doing addition on pointers, the result is %A", &result->cidx) << ptrPart->getSourceRange() << intPart->getSourceRange();
                     return result;
                 }
             }
@@ -990,7 +994,7 @@ if (k2 == F) return (void)(a = float_cast(a, bt, k2, F));
     void make_add(Expr &result, Expr &r) {
         if (result->ty->getKind() == TYPOINTER || r->ty->getKind() == TYPOINTER) {
             if (result->ty->getKind() == r->ty->getKind())
-                return (void)type_error(result->loc, "adding two pointers are not allowed");
+                return (void)(type_error(result->getBeginLoc(), "adding two pointers are not allowed") << result->getSourceRange(), r->getSourceRange());
             result = make_add_pointer(result, r);
             return;
         }
@@ -1054,7 +1058,7 @@ if (k2 == F) return (void)(a = float_cast(a, bt, k2, F));
                             APFloat IMAG = b;
                             handleOpStatus(IMAG.add(d, APFloat::rmNearestTiesToEven));
         
-                            result = wrap(r->ty, llvm::ConstantStruct::get(irgen.wrapComplex(r->ty),  ConstantFP::get(irgen.ctx, REAL), ConstantFP::get(irgen.ctx, IMAG)), result->loc);
+                            result = wrap(r->ty, llvm::ConstantStruct::get(irgen.wrapComplex(r->ty),  ConstantFP::get(irgen.ctx, REAL), ConstantFP::get(irgen.ctx, IMAG)), result->getBeginLoc(), result->getEndLoc());
                             return;
                         }
                     }
@@ -1079,7 +1083,8 @@ if (k2 == F) return (void)(a = float_cast(a, bt, k2, F));
                             irgen.wrapComplex(r->ty), 
                             ConstantInt::get(irgen.ctx, a + c), 
                             ConstantInt::get(irgen.ctx, b + d)),
-                            result->loc
+                            result->getBeginLoc(),
+                            result->getEndLoc()
                         );
                         return;
                     }
@@ -1094,7 +1099,7 @@ if (k2 == F) return (void)(a = float_cast(a, bt, k2, F));
                 auto CF2 = cast<ConstantFP>(r->C);
                 APFloat F = CF1->getValue();
                 handleOpStatus(F.add(CF2->getValue(), APFloat::rmNearestTiesToEven));
-                result = wrap(r->ty, ConstantFP::get(irgen.ctx, F), r->loc);
+                result = wrap(r->ty, ConstantFP::get(irgen.ctx, F), r->getBeginLoc(), r->getEndLoc());
                 return;
             }
             result = binop(result, FAdd, r, r->ty);
@@ -1119,7 +1124,7 @@ if (k2 == F) return (void)(a = float_cast(a, bt, k2, F));
                     return;
                 }
             }
-            result = wrap(r->ty, llvm::ConstantExpr::getAdd(result->C, r->C, false, r->ty->isSigned()), r->loc);
+            result = wrap(r->ty, llvm::ConstantExpr::getAdd(result->C, r->C, false, r->ty->isSigned()), r->getBeginLoc(), r->getEndLoc());
             return;
         }
         result = binop(result, r->ty->isSigned() ? SAdd : UAdd, r, r->ty);
@@ -1138,7 +1143,7 @@ if (k2 == F) return (void)(a = float_cast(a, bt, k2, F));
             Expr intPart = p1 ? r : result;
             Expr ptrPart = p1 ? result : r;
             if (intPart->k == EConstant) {
-                intPart = wrap(intPart->ty, llvm::ConstantExpr::getNeg(intPart->C), intPart->loc);
+                intPart = wrap(intPart->ty, llvm::ConstantExpr::getNeg(intPart->C), intPart->getBeginLoc(), intPart->getEndLoc());
             } else {
                 intPart = unary(intPart, UNeg, intPart->ty);
             }
@@ -1169,7 +1174,7 @@ if (k2 == F) return (void)(a = float_cast(a, bt, k2, F));
                 // e.g., (3i) - (4) => -4 + 3i
                 conv(e2, r);
                 if (e2->k == EConstant) {
-                    return (void)(result = complex_pair(wrap(e2->ty, llvm::ConstantExpr::getNeg(e2->C), e2->loc), r));
+                    return (void)(result = complex_pair(wrap(e2->ty, llvm::ConstantExpr::getNeg(e2->C), e2->getBeginLoc(), e2->getEndLoc()), r));
                 } else {
                     return (void)(result = complex_pair(unary(e2, e2->ty->isFloating() ? FNeg : UNeg, e2->ty), r));
                 }
@@ -1188,7 +1193,7 @@ if (k2 == F) return (void)(a = float_cast(a, bt, k2, F));
             // e.g, 4 - 3i
             conv(result, e2);
             if (e2->k == EConstant) {
-                e2 = wrap(e2->ty, llvm::ConstantExpr::getNeg(e2->C), e2->loc);
+                e2 = wrap(e2->ty, llvm::ConstantExpr::getNeg(e2->C), e2->getBeginLoc(), e2->getEndLoc());
             } else {
                 e2 = unary(e2, e2->ty->isFloating() ? FNeg : UNeg, e2->ty);
             }
@@ -1204,11 +1209,11 @@ if (k2 == F) return (void)(a = float_cast(a, bt, k2, F));
                     const auto CS = cast<ConstantStruct>(r->C);
                     if (auto CI = dyn_cast<ConstantInt>(CS->getOperand(0))) {
                         auto CI2 = cast<ConstantInt>(CS->getOperand(1));
-                        return (void)(result = wrap(r->ty, llvm::ConstantStruct::get(irgen.wrapComplexForInteger(r->ty), {ConstantInt::get(irgen.ctx, -CI->getValue()), ConstantInt::get(irgen.ctx, -CI2->getValue())}), result->loc));
+                        return (void)(result = wrap(r->ty, llvm::ConstantStruct::get(irgen.wrapComplexForInteger(r->ty), {ConstantInt::get(irgen.ctx, -CI->getValue()), ConstantInt::get(irgen.ctx, -CI2->getValue())}), result->getBeginLoc(), result->getEndLoc()));
                     }
                     auto CF = cast<ConstantFP>(CS->getOperand(0));
                     auto CF2 = cast<ConstantFP>(CS->getOperand(1));
-                    return (void)(result = wrap(r->ty, llvm::ConstantStruct::get(irgen.wrapComplex(r->ty), {ConstantFP::get(irgen.ctx, -CF->getValue()), ConstantFP::get(irgen.ctx, -CF2->getValue())}), result->loc));
+                    return (void)(result = wrap(r->ty, llvm::ConstantStruct::get(irgen.wrapComplex(r->ty), {ConstantFP::get(irgen.ctx, -CF->getValue()), ConstantFP::get(irgen.ctx, -CF2->getValue())}), result->getBeginLoc(), result->getEndLoc()));
                 }
                 if (isa<ConstantAggregateZero>(r->C))
                     return /* (void)(result = result) */;
@@ -1227,7 +1232,7 @@ if (k2 == F) return (void)(a = float_cast(a, bt, k2, F));
                             APFloat IMAG = b;
                             handleOpStatus(IMAG.subtract(d, APFloat::rmNearestTiesToEven));
         
-                            result = wrap(r->ty, llvm::ConstantStruct::get(irgen.wrapComplex(r->ty), {ConstantFP::get(irgen.ctx, REAL), ConstantFP::get(irgen.ctx, IMAG)}), result->loc);
+                            result = wrap(r->ty, llvm::ConstantStruct::get(irgen.wrapComplex(r->ty), {ConstantFP::get(irgen.ctx, REAL), ConstantFP::get(irgen.ctx, IMAG)}), result->getBeginLoc(), result->getEndLoc());
                             return;
                         }
                     }
@@ -1248,7 +1253,8 @@ if (k2 == F) return (void)(a = float_cast(a, bt, k2, F));
                             irgen.wrapComplex(r->ty), 
                             ConstantInt::get(irgen.ctx, a - c), 
                             ConstantInt::get(irgen.ctx, b - d)),
-                            result->loc
+                            result->getBeginLoc(),
+                            result->getEndLoc()
                         );
                         return;
                     }
@@ -1263,7 +1269,7 @@ if (k2 == F) return (void)(a = float_cast(a, bt, k2, F));
                 auto CF2 = cast<ConstantFP>(r->C);
                 APFloat F = CF1->getValue();
                 handleOpStatus(F.subtract(CF2->getValue(), APFloat::rmNearestTiesToEven));
-                result = wrap(r->ty, ConstantFP::get(irgen.ctx, F), r->loc);
+                result = wrap(r->ty, ConstantFP::get(irgen.ctx, F), r->getBeginLoc(), r->getEndLoc());
                 return;
             }
             conv(result, r);
@@ -1289,7 +1295,7 @@ if (k2 == F) return (void)(a = float_cast(a, bt, k2, F));
                     return;
                 }
             }
-            result = wrap(r->ty, llvm::ConstantExpr::getSub(result->C, r->C, false, r->ty->isSigned()), r->loc);
+            result = wrap(r->ty, llvm::ConstantExpr::getSub(result->C, r->C, false, r->ty->isSigned()), r->getBeginLoc(), r->getEndLoc());
             return;
         }
         result = binop(result, r->ty->isSigned() ? SSub : USub, r, r->ty);
@@ -1304,11 +1310,11 @@ if (k2 == F) return (void)(a = float_cast(a, bt, k2, F));
             auto width = result->ty->getIntegerKind().getBitWidth();
             const APInt &shift = CI->getValue();
             if (r->ty->isSigned() && shift.isNegative()) {
-                warning(r->loc, "negative shift count is undefined");
+                warning(r->getBeginLoc(), "negative shift count is undefined") << result->getSourceRange() << r->getSourceRange();
                 goto BAD;
             }
             if (shift.uge(width)) {
-                warning(result->loc, "shift count(%A) >= width of type(%z)", &shift, (size_t)width);
+                warning(result->getBeginLoc(), "shift count(%A) >= width of type(%z)", &shift, (size_t)width) << result->getSourceRange() << r->getSourceRange();
                 goto BAD;
             }
             if (result->k != EConstant)
@@ -1317,23 +1323,23 @@ if (k2 == F) return (void)(a = float_cast(a, bt, k2, F));
                 const APInt &obj = cast<ConstantInt>(result->C)->getValue();
                 bool overflow = false;
                 if (result->ty->isSigned() && obj.isNegative())
-                    warning(result->loc, "shifting a negative signed value is undefined");
+                    warning(result->getBeginLoc(), "shifting a negative signed value is undefined");
                 result = wrap(
                     result->ty,
                     ConstantInt::get(irgen.ctx, result->ty->isSigned() ? obj.sshl_ov(shift, overflow) : obj << shift),
-                    result->loc);
+                    result->getBeginLoc(), result->getEndLoc());
                 if (overflow)
-                    warning(result->loc, "shift-left overflow, result is %A",
-                            &cast<ConstantInt>(result->C)->getValue());
+                    warning(result->getBeginLoc(), "shift-left overflow, result is %A",
+                            &cast<ConstantInt>(result->C)->getValue()) << result->getSourceRange() << r->getSourceRange();
                 return;
             }
 BAD:
-            result = wrap(result->ty, ConstantInt::get(irgen.ctx, APInt::getZero(width)), result->loc);
+            result = wrap(result->ty, ConstantInt::get(irgen.ctx, APInt::getZero(width)), result->getBeginLoc(), result->getEndLoc());
             return;
         }
         if (result->k != EConstant)
             goto NOT_CONSTANT;
-        result = wrap(r->ty, llvm::ConstantExpr::getShl(result->C, r->C), r->loc);
+        result = wrap(r->ty, llvm::ConstantExpr::getShl(result->C, r->C), r->getBeginLoc(), r->getEndLoc());
         return;
 NOT_CONSTANT:
         result = binop(result, Shl, r, result->ty);
@@ -1348,11 +1354,11 @@ NOT_CONSTANT:
             auto width = result->ty->getIntegerKind().getBitWidth();
             const APInt &shift = CI->getValue();
             if (r->ty->isSigned() && shift.isNegative()) {
-                warning(r->loc, "negative shift count is undefined");
+                warning(r->getBeginLoc(), "negative shift count is undefined") << result->getSourceRange() << r->getSourceRange();
                 goto BAD;
             }
             if (shift.uge(width)) {
-                warning(result->loc, "shift count(%A) >= width of type(%z)", &shift, (size_t)width);
+                warning(result->getBeginLoc(), "shift count(%A) >= width of type(%z)", &shift, (size_t)width) << result->getSourceRange() << r->getSourceRange();
                 goto BAD;
             }
             if (result->k != EConstant)
@@ -1363,16 +1369,16 @@ NOT_CONSTANT:
                     obj.ashrInPlace((unsigned)shift.getZExtValue());
                 else
                     obj.lshrInPlace((unsigned)shift.getZExtValue());
-                result = wrap(result->ty, ConstantInt::get(irgen.ctx, obj), result->loc);
+                result = wrap(result->ty, ConstantInt::get(irgen.ctx, obj), result->getBeginLoc(), result->getEndLoc());
                 return;
             }
 BAD:
-            result = wrap(result->ty, ConstantInt::get(irgen.ctx, APInt::getZero(width)), result->loc);
+            result = wrap(result->ty, ConstantInt::get(irgen.ctx, APInt::getZero(width)), result->getBeginLoc(), result->getEndLoc());
             return;
         }
         if (result->k != EConstant)
             goto NOT_CONSTANT;
-        result = wrap(r->ty, llvm::ConstantExpr::getShl(result->C, r->C), r->loc);
+        result = wrap(r->ty, llvm::ConstantExpr::getShl(result->C, r->C), r->getBeginLoc(), r->getEndLoc());
         return;
 NOT_CONSTANT:
         result = binop(result, result->ty->isSigned() ? AShr : Shr, r, result->ty);
@@ -1400,7 +1406,7 @@ NOT_CONSTANT:
                         case Xor: val ^= CI2->getValue(); break;
                         default: llvm_unreachable("");
                         }
-                        result = wrap(result->ty, ConstantInt::get(irgen.ctx, val), result->loc);
+                        result = wrap(result->ty, ConstantInt::get(irgen.ctx, val), result->getBeginLoc(), result->getEndLoc());
                         return;
                     }
                 }
@@ -1423,19 +1429,19 @@ ZERO : {
         msg = "'bitwise and' to to zero is always zero";
     else
         msg = "'bitwise xor' to zero is always itself";
-    warning(result->loc, msg);
-    result = wrap(result->ty, ConstantInt::get(irgen.ctx, result->ty->getIntegerKind().getZero()), result->loc);
+    warning(result->getBeginLoc(), msg)<< result->getSourceRange() << r->getSourceRange();
+    result = wrap(result->ty, ConstantInt::get(irgen.ctx, result->ty->getIntegerKind().getZero()), result->getBeginLoc(), getEndLoc());
     return;
 }
 ONE : {
     const StringRef allOnes = "all ones(all bits set, -1)";
     if (op == Or) {
-        warning(result->loc, "'bitsize or' to %r is always all ones", allOnes);
+        warning(result->getBeginLoc(), "'bitsize or' to %r is always all ones", allOnes)<< result->getSourceRange() << r->getSourceRange();
         result = result =
-            wrap(result->ty, ConstantInt::get(irgen.ctx, APInt::getAllOnes(result->ty->getIntegerKind().getBitWidth())), result->loc);
+            wrap(result->ty, ConstantInt::get(irgen.ctx, APInt::getAllOnes(result->ty->getIntegerKind().getBitWidth())), result->getBeginLoc(), result->getEndLoc());
         return;
     }
-    warning(result->loc, "'bitsize and' to %r is always itself", allOnes);
+    warning(result->getBeginLoc(), "'bitsize and' to %r is always itself", allOnes)<< result->getSourceRange() << r->getSourceRange();
 }
     }
     void make_mul(Expr &result, Expr &r) {
@@ -1456,7 +1462,7 @@ ONE : {
                     Expr e3 = bit_cast(r, context.getImaginaryElementType(r->ty));
                     make_mul(e2, e3);
                     if (e2->k == EConstant)
-                        result = wrap(e2->ty, llvm::ConstantExpr::getNeg(e2->C), e2->loc);
+                        result = wrap(e2->ty, llvm::ConstantExpr::getNeg(e2->C), e2->getBeginLoc(), e2->getEndLoc());
                      else 
                         result = unary(e2, e2->ty->isFloating() ? FNeg : UNeg , e2->ty);
                     return;
@@ -1503,7 +1509,8 @@ ONE : {
                                 irgen.wrapComplex(r->ty),  
                                 ConstantFP::get(irgen.ctx, a * c - b * d), 
                                 ConstantFP::get(irgen.ctx, b * c + a * d)), 
-                                result->loc
+                                result->getBeginLoc(),
+                                result->getEndLoc()
                             );
                             return;
                         }
@@ -1524,7 +1531,8 @@ ONE : {
                             irgen.wrapComplex(r->ty), 
                             ConstantInt::get(irgen.ctx, a * c - b * d), 
                             ConstantInt::get(irgen.ctx, b * c + a * d)),
-                            result->loc
+                            result->getBeginLoc(),
+                            result->getEndLoc()
                         );
                         return;
                     }
@@ -1548,9 +1556,9 @@ ONE : {
                               ConstantInt::get(irgen.ctx, r->ty->isSigned()
                                                               ? lhs->getValue().smul_ov(rhs->getValue(), overflow)
                                                               : lhs->getValue().umul_ov(rhs->getValue(), overflow)),
-                              result->loc);
+                              result->getBeginLoc(), result->getEndLoc());
                 if (overflow)
-                    warning(result->loc, "multiplication overflow");
+                    warning(result->getBeginLoc(), "multiplication overflow")<< result->getSourceRange() << r->getSourceRange();
                 return;
             }
         } else if (const auto lhs = dyn_cast<ConstantFP>(result->C)) {
@@ -1559,17 +1567,17 @@ ONE : {
             if (const auto rhs = dyn_cast<ConstantFP>(result->C)) {
                 APFloat F = lhs->getValue();
                 handleOpStatus(F.multiply(rhs->getValue(), APFloat::rmNearestTiesToEven));
-                result = wrap(r->ty, ConstantFP::get(irgen.ctx, F), result->loc);
+                result = wrap(r->ty, ConstantFP::get(irgen.ctx, F), result->getBeginLoc(), result->getEndLoc());
                 return;
             }
-            result = wrap(r->ty, llvm::ConstantExpr::getMul(result->C, r->C), result->loc);
+            result = wrap(r->ty, llvm::ConstantExpr::getMul(result->C, r->C), result->getBeginLoc(), result->getEndLoc());
             return;
         }
 NOT_CONSTANT:
         result = binop(result, r->ty->isFloating() ? FMul : (r->ty->isSigned() ? SMul : UMul), r, r->ty);
         return;
 ZERO:
-        warning(result->loc, "multiplying by zero is always zero (zero-product property)");
+        warning(result->getBeginLoc(), "multiplying by zero is always zero (zero-product property)")<< result->getSourceRange() << r->getSourceRange();
     }
     void make_div(Expr &result, Expr &r) {
         checkArithmetic(result, r);
@@ -1632,7 +1640,7 @@ ZERO:
                 }
                 goto NEXT_NEXT;
                 CINT_ZERO:
-                warning(result->loc, "complx int division by zero, the result is zero");
+                warning(result->getBeginLoc(), "complx int division by zero, the result is zero")<< result->getSourceRange() << r->getSourceRange();
                 result = complex_zero(r->ty);
                 return;
             }
@@ -1651,7 +1659,8 @@ ZERO:
                             ConstantFP::get(irgen.ctx, (a * c + b * d) / tmp), 
                             ConstantFP::get(irgen.ctx, (b * c - a * d) / tmp)
                             ), 
-                            result->loc
+                            result->getBeginLoc(),
+                            result->getEndLoc()
                         );
                         return;
                         }
@@ -1675,7 +1684,8 @@ ZERO:
                             irgen.wrapComplex(r->ty), 
                             ConstantInt::get(irgen.ctx, isSigned ? tmp1.sdiv(tmp0) : tmp1.udiv(tmp0)), 
                             ConstantInt::get(irgen.ctx, isSigned ? tmp2.sdiv(tmp0) : tmp2.udiv(tmp0))),
-                            result->loc
+                            result->getBeginLoc(),
+                            result->getEndLoc()
                         );
                         return;
                     }
@@ -1688,8 +1698,8 @@ ZERO:
             goto NOT_CONSTANT;
         if (const auto CI = dyn_cast<ConstantInt>(r->C)) {
             if (CI->getValue().isZero()) {
-                warning(result->loc, "integer division by zero is undefined");
-                result = wrap(r->ty, llvm::UndefValue::get(CI->getType()), result->loc);
+                warning(result->getBeginLoc(), "integer division by zero is undefined")<< result->getSourceRange() << r->getSourceRange();
+                result = wrap(r->ty, llvm::UndefValue::get(CI->getType()), result->getBeginLoc(), result->getEndLoc());
                 return;
             }
             if (result->k != EConstant)
@@ -1697,17 +1707,17 @@ ZERO:
             result = wrap(r->ty,
                           llvm::ConstantExpr::get(r->ty->isSigned() ? llvm::Instruction::SDiv : llvm::Instruction::UDiv,
                                                   result->C, r->C),
-                          result->loc);
+                          result->getBeginLoc(), result->getEndLoc());
             return;
         } else if (const auto CFP = dyn_cast<ConstantFP>(r->C)) {
             if (CFP->isZero()) {
-                warning(result->loc, "floating division by zero is undefined");
-                result = wrap(r->ty, llvm::UndefValue::get(CFP->getType()), result->loc);
+                warning(result->getBeginLoc(), "floating division by zero is undefined")<< result->getSourceRange() << r->getSourceRange();
+                result = wrap(r->ty, llvm::UndefValue::get(CFP->getType()), result->getBeginLoc(), result->getEndLoc());
                 return;
             }
             if (result->k != EConstant)
                 goto NOT_CONSTANT;
-            result = wrap(r->ty, llvm::ConstantExpr::get(llvm::Instruction::FDiv, result->C, r->C), result->loc);
+            result = wrap(r->ty, llvm::ConstantExpr::get(llvm::Instruction::FDiv, result->C, r->C), result->getBeginLoc(), result->getEndLoc());
             return;
         }
 NOT_CONSTANT:
@@ -1720,23 +1730,23 @@ NOT_CONSTANT:
         if (result->k == EConstant && r->k == EConstant) {
             if (const auto CI = dyn_cast<ConstantInt>(r->C)) {
                 if (CI->getValue().isZero()) {
-                    warning("integer remainder by zero is undefined");
-                    result = wrap(r->ty, llvm::UndefValue::get(CI->getType()), result->loc);
+                    warning("integer remainder by zero is undefined")<< result->getSourceRange() << r->getSourceRange();
+                    result = wrap(r->ty, llvm::UndefValue::get(CI->getType()), result->getBeginLoc(), result->getEndLoc());
                     return;
                 }
                 result =
                     wrap(r->ty,
                          llvm::ConstantExpr::get(r->ty->isSigned() ? llvm::Instruction::SRem : llvm::Instruction::URem,
                                                  result->C, r->C),
-                         result->loc);
+                         result->getBeginLoc(), result->getEndLoc());
                 return;
             } else if (const auto CFP = dyn_cast<ConstantFP>(r->C)) {
                 if (CFP->isZero()) {
-                    warning("integer remainder by zero is undefined");
-                    result = wrap(r->ty, llvm::UndefValue::get(CFP->getType()), result->loc);
+                    warning("integer remainder by zero is undefined")<< result->getSourceRange() << r->getSourceRange();
+                    result = wrap(r->ty, llvm::UndefValue::get(CFP->getType()), result->getBeginLoc(), result->getEndLoc());
                     return;
                 }
-                result = wrap(r->ty, llvm::ConstantExpr::get(llvm::Instruction::FRem, result->C, r->C), result->loc);
+                result = wrap(r->ty, llvm::ConstantExpr::get(llvm::Instruction::FRem, result->C, r->C), result->getBeginLoc(), result->getEndLoc());
                 return;
             }
         }
@@ -1760,7 +1770,7 @@ NOT_CONSTANT:
             return;
         checkSpec(result, r);
         if ((result->ty->isComplex()) && !isEq)
-            return (void)type_error(result->loc, "complex numbers unsupported in relational-expression");
+            return (void)(type_error(result->getBeginLoc(), "complex numbers unsupported in relational-expression") << result->getSourceRange() << r->getSourceRange());
         if (result->k == EConstant && r->k == EConstant) {
             if (const auto CI = dyn_cast<ConstantInt>(result->C)) {
                 auto CI2 = dyn_cast<ConstantInt>(r->C);
@@ -1875,6 +1885,7 @@ NOT_CONSTANT:
             l.tok.tok = TIdentifier;
     }
     SourceMgr &SM() { return l.SM; }
+    location_t getEndLoc() { return l.getEndLoc(); }
     location_t getLoc() { return l.getLoc(); }
     void checkSemicolon() {
         if (l.tok.tok != TSemicolon)
@@ -2268,7 +2279,7 @@ TYPE_SPEC:
          result = k == TYSTRUCT
                      ? ENEW(StructExpr){.ty = sema.currentInitTy, .arr2 = xvector<Expr>::get()}
                      : ENEW(ArrayExpr){.ty = sema.currentInitTy, .arr = xvector<Expr>::get()};
-        result->loc = getLoc();
+        result->StructStartLoc = getLoc();
         consume();
         if (k == TYARRAY) {
             if (sema.currentInitTy->hassize) {
@@ -2285,6 +2296,7 @@ TYPE_SPEC:
         for (unsigned i = 0;; i++) {
             CType ty;
             if (l.tok.tok == TRcurlyBracket) {
+                result->StructEndLoc = getLoc() + 1;
                 consume();
                 break;
             }
@@ -2372,13 +2384,12 @@ TYPE_SPEC:
             if (l.tok.tok != TRSquareBrackets) {
                 Expr e;
                 bool ok;
-                location_t cloc = getLoc();
                 if (!(e = assignment_expression()))
                     return Declator();
                 if ((!e->ty->getKind()) == TYPRIM && e->ty->isInteger())
                     return type_error(getLoc(), "size of array has non-integer type %T", e->ty), Declator();
                 ty->hassize = true;
-                ty->arrsize = try_eval(e, cloc, ok);
+                ty->arrsize = try_eval(e, ok);
                 if (!ok) {
                     ty->vla = e;
                 }
@@ -2412,10 +2423,9 @@ TYPE_SPEC:
             Expr e;
             unsigned bitsize;
             consume();
-            location_t cloc = getLoc();
             if (!(e = constant_expression()))
                 return Declator();
-            bitsize = force_eval(e, cloc);
+            bitsize = force_eval(e);
             Declator res = Declator(nullptr, TNEW(BitfieldType){.bittype = base, .bitsize = bitsize});
             res.ty->setKind(TYBITFIELD);
             return res;
@@ -2427,10 +2437,9 @@ TYPE_SPEC:
             unsigned bitsize;
             Expr e;
             consume();
-            location_t cloc = getLoc();
             if (!(e = constant_expression()))
                 return Declator();
-            bitsize = force_eval(e, cloc);
+            bitsize = force_eval(e);
             Declator res = Declator(nullptr, TNEW(BitfieldType){.bittype = base, .bitsize = bitsize});
             res.ty->setKind(TYBITFIELD);
             return res;
@@ -2633,11 +2642,10 @@ TYPE_SPEC:
             }
         } else {
             uint64_t a;
-            location_t cloc = getLoc();
             Expr e = expression();
             if (!e)
                 return false;
-            a = force_eval(e, cloc);
+            a = force_eval(e);
             if (e->ty->isSigned() && (int64_t)a <= 0)
                 type_error(getLoc(), "alignment %u too small", (unsigned)a);
             else {
@@ -2658,7 +2666,7 @@ TYPE_SPEC:
         consume(); // eat '('
         if (l.tok.tok != TStringLit)
             return expect(getLoc(), "string literal"), nullptr;
-        result = SNEW(AsmStmt){.loc = getLoc(), .asms = l.tok.str};
+        result = SNEW(AsmStmt){.asms = l.tok.str};
         consume(); // eat string
         if (l.tok.tok != TRbracket)
             return expectRB(getLoc()), nullptr;
@@ -2675,7 +2683,7 @@ TYPE_SPEC:
         Expr e = constant_expression();
         if (!e)
             return false;
-        ok = force_eval(e, loc);
+        ok = force_eval(e);
         if (l.tok.tok == TRbracket) { // no message
             if (ok == 0)
                 parse_error(loc, "%s", "static assert failed!");
@@ -2742,9 +2750,9 @@ TYPE_SPEC:
             consume();
             if (base->getAlignLog2Value())
                 warning(loc, "'_Alignas' can only used in variables");
-            return insertStmt(SNEW(DeclOnlyStmt){.loc = loc, .decl = base});
+            return insertStmt(SNEW(DeclOnlyStmt){.decl = base});
         }
-        result = SNEW(VarDeclStmt){.loc = loc, .vars = xvector<VarDecl>::get()};
+        result = SNEW(VarDeclStmt){.vars = xvector<VarDecl>::get()};
         for (;;) {
             location_t full_loc = getLoc();
             Declator st = declarator(base, Direct);
@@ -2784,7 +2792,7 @@ TYPE_SPEC:
                 size_t idx = putsymtype2(st.name, st.ty, full_loc);
                 if (!isTopLevel())
                     return (void)parse_error(full_loc, "function definition is not allowed here");
-                Stmt res = SNEW(FunctionStmt){.loc = full_loc,
+                Stmt res = SNEW(FunctionStmt){
                                               .func_idx = idx,
                                               .funcname = st.name,
                                               .functy = st.ty,
@@ -2848,7 +2856,7 @@ TYPE_SPEC:
                         (init->k == EVar && 
                             (
                                 sema.typedefs.isInGlobalScope(init->sval) || 
-                                sema.typedefs.getSym(init->sval).ty->hasTag(TYEXTERN | TYSTATIC)
+                                sema.typedefs.getSym(init->sval).ty->isGlobalStorage()
                             )
                         )
                         ) {
@@ -2904,14 +2912,8 @@ TYPE_SPEC:
                     return ENEW(VoidExpr){.ty = context.getVoid(), .voidexpr = e, .voidStartLoc = loc};
                 return castto(e, ty);
             }
-            Expr result;
-            consume();
-            if (!(result = expression()))
-                return nullptr;
-            if (l.tok.tok != TRbracket)
-                return expectRB(getLoc()), nullptr;
-            consume();
-            return postfix_expression_end(result);
+            l.tokenq.push_back(l.tok);
+            l.tok = TLbracket;
         }
         return unary_expression();
     }
@@ -3399,22 +3401,27 @@ NEXT:
             ty = context.tryGetImaginaryTypeFromNonImaginary(ty);
         return wrap(ty, CI, loc);
     }
-    Expr wrap(CType ty, llvm::Constant *C, location_t loc = 0, location_t endLoc = 0) {
-        if (endLoc == 0)
-            endLoc = loc;
-        return ENEW(ConstantExpr){.constantLoc = loc, .ty = ty, .C = C, .constantEndLoc = endLoc};
+    Expr wrap(CType ty, llvm::Constant *C) {
+        return ENEW(ConstantExpr){.ty = ty, .C = C, .constantLoc = 0, .constantEndLoc = 0};
+    }
+    Expr wrap(CType ty, llvm::Constant *C, location_t loc) {
+        return ENEW(ConstantExpr){.ty = ty, .C = C, .constantLoc = loc, .constantEndLoc = loc};
+    }
+    Expr wrap(CType ty, llvm::Constant *C, location_t loc, location_t endLoc) {
+        return ENEW(ConstantExpr){.ty = ty, .C = C, .constantLoc = loc, .constantEndLoc = endLoc};
     }
     Expr getIntZero() { return intzero; }
     Expr getIntOne() { return intone; }
     Expr getFunctionNameExpr(location_t loc, location_t endLoc) {
         StringRef functionName = sema.pfunc->getKey();
-        return ENEW(ConstantArrayExpr) {.constantArrayLoc = constantArrayLoc, .ty = context.stringty, .array = string_pool.getAsUTF8(functionName), .constantArrayLocEnd = endLoc};
+        return ENEW(ConstantArrayExpr) {
+            .ty = context.stringty, 
+            .array = string_pool.getAsUTF8(functionName), 
+            .constantArrayLoc = loc,
+            .constantArrayLocEnd = endLoc
+        };
     }
     Expr primary_expression() {
-        // primary expressions:
-        //      constant
-        //      `(` expression `)`
-        //      identfier
         Expr result;
         location_t loc = getLoc();
         const Token theTok = l.tok.tok;
@@ -3443,47 +3450,50 @@ NEXT:
             consume();
         } break;
         case TStringLit: {
+            location_t endLoc;
             xstring s = l.tok.str;
             auto enc = l.tok.getStringPrefix();
+            endLoc = getEndLoc();
             consume();
             while (l.tok.tok == TStringLit) {
                 auto enc2 = l.tok.getStringPrefix();
                 s.push_back(l.tok.str);
                 if (enc2 != enc)
                     type_error(getLoc(), "unsupported non-standard concatenation of string literals");
+                endLoc = getEndLoc();
                 consume();
             }
             s.make_eos();
             switch (enc) {
             case Prefix_none:
                 result = ENEW(ConstantArrayExpr){
-                    .constantArrayLoc = loc, .ty = context.stringty, .array = string_pool.getAsUTF8(s)};
+                    .ty = context.stringty, .array = string_pool.getAsUTF8(s)};
                 break;
             case Prefix_u8:
                 result = ENEW(ConstantArrayExpr){
-                    .constantArrayLoc = loc, .ty = context.str8ty, .array = string_pool.getAsUTF8(s)};
+                    .ty = context.str8ty, .array = string_pool.getAsUTF8(s)};
                 break;
             case Prefix_L:
                 result = ENEW(ConstantArrayExpr){
-                    .constantArrayLoc = loc, .ty = context.wstringty, .array = string_pool.getAsUTF16(s, context.getWCharLog2() == 5)};
+                    .ty = context.wstringty, .array = string_pool.getAsUTF16(s, context.getWCharLog2() == 5)};
                 break;
             case Prefix_u:
                 result = ENEW(ConstantArrayExpr){
-                    .constantArrayLoc = loc, .ty = context.str16ty, .array = string_pool.getAsUTF16(s, false)};
+                    .ty = context.str16ty, .array = string_pool.getAsUTF16(s, false)};
                 break;
             case Prefix_U:
                 result = ENEW(ConstantArrayExpr){
-                    .constantArrayLoc = loc, .ty = context.str32ty, .array = string_pool.getAsUTF32(s)};
+                    .ty = context.str32ty, .array = string_pool.getAsUTF32(s)};
                 break;
             default: llvm_unreachable("bad encoding");
             }
+            result->constantArrayLoc = loc;
+            result->constantArrayLocEnd = endLoc;
         } break;
         case PPNumber: {
             result = parse_pp_number(l.tok.str);
-            if (result)
-                result->loc = getLoc();
-            else
-                result = getIntZero();
+            result->constantLoc = loc;
+            result->constantEndLoc = getEndLoc();
             consume();
         } break;
         case TIdentifier: {
@@ -3505,7 +3515,7 @@ NEXT:
                 if (it->val) {
                     if (it->tags & CONST_VAR) {
                         ty->addTags(TYREPLACED_CONSTANT | TYLVALUE);
-                        return ENEW(ReplacedExpr){.ReplacedLoc = loc, .ty = ty, .C = it->val, .id = idx};
+                        return ENEW(ReplacedExpr){.ty = ty, .C = it->val, .id = idx, .ReplacedLoc = loc};
                     }
                     return wrap(ty, it->val, loc);
                 }
@@ -3513,24 +3523,38 @@ NEXT:
                 switch (ty->getKind()) {
                 case TYFUNCTION:
                     result =
-                        unary(ENEW(VarExpr){.varLoc = loc, .ty = ty, .sval = idx, .varName = sym}, AddressOf, context.getPointerType(ty));
+                        unary(ENEW(VarExpr){.ty = ty, .sval = idx, .varName = sym, .varLoc = loc}, AddressOf, context.getPointerType(ty));
                     break;
                 case TYARRAY:
-                    result = ENEW(ArrToAddressExpr){.varLoc = loc,
-                                                    .ty = context.getPointerType(ty->arrtype),
-                                                    .arr3 = ENEW(VarExpr){.loc = loc, .ty = ty, .sval = idx, .varName = sym}};
+                    result = ENEW(ArrToAddressExpr){.ty = context.getPointerType(ty->arrtype),
+                                                    .arr3 = ENEW(VarExpr){.ty = ty, .sval = idx, .varName = sym, .varLoc = loc}};
                     break;
-                default: result = ENEW(VarExpr){.varLoc = loc, .ty = ty, .sval = idx, .varName = sym};
+                default: result = ENEW(VarExpr){.ty = ty, .sval = idx, .varName = sym, .varLoc = loc, };
                 }
             }
         } break;
-        case TLbracket: {
+        case TLbracket:
+        {
             consume();
             if (!(result = expression()))
-                return nullptr;
+                return getIntZero();
             if (l.tok.tok != TRbracket)
-                return expectRB(getLoc()), nullptr;
+                expectRB(getLoc());
+            location_t endLoc = getEndLoc();
             consume();
+            if (result->ty->hasTag(TYPAREN)) {
+                location_t * const Ptr = result->getParenLLoc();
+                Ptr[0] = loc;
+                Ptr[1] = endLoc;
+            } else {
+                if (result->ty->hasTag(TYREPLACED_CONSTANT)) {
+                    location_t * const Ptr = reinterpret_cast<ReplacedExprParen*>(result)->paren_loc;
+                    Ptr[0] = loc;
+                    Ptr[1] = endLoc;
+                } else {
+                    result = context.createParenExpr(result, loc, endLoc);
+                }
+            }
         } break;
         case K_Generic: {
             Expr test, defaults, e;
@@ -3589,28 +3613,32 @@ GENERIC_END:
             consume();
             return ctrue;
         case K__func__:
+        {
+            location_t endLoc = getEndLoc();
             consume();
             if (isTopLevel()) {
                 warning(loc, "predefined identifier is only valid inside function");
                 return ENEW(ConstantArrayExpr) {
-                    .constantArrayLoc = loc,
                     .ty = context.stringty,
                     .array = string_pool.getEmptyString(),
-                    .constantArrayLocEnd = loc + 7,
+                    .constantArrayLoc = loc,
+                    .constantArrayLocEnd = endLoc,
                 };
             }
-            return getFunctionNameExpr(loc, loc + 7);
+            return getFunctionNameExpr(loc, endLoc);
+        }
         case K__PRETTY_FUNCTION__:
         {
+            location_t endLoc = getEndLoc();
             consume();
             if (isTopLevel()) {
                 warning(loc, "predefined identifier is only valid inside function");
                 return ENEW(ConstantArrayExpr) 
                     {
-                        .constantArrayLoc = loc,
                         .ty = context.stringty,
                         .array = string_pool.getAsUTF8(StringRef("top level", 10)),
-                        .constantArrayLocEnd = loc + 18,
+                        .constantArrayLoc = loc,
+                        .constantArrayLocEnd = endLoc
                     };
             }
             SmallString<64> Str;
@@ -3618,10 +3646,10 @@ GENERIC_END:
             OS << sema.currentfunction;
             return ENEW(ConstantArrayExpr) 
                     {
-                        .constantArrayLoc = loc, 
                         .ty = context.stringty, 
                         .array = string_pool.getAsUTF8(Str.str()),
-                        .constantArrayLocEnd = loc + 18
+                        .constantArrayLoc = loc, 
+                        .constantArrayLocEnd = endLoc
                     };
         }
         case K__builtin_FILE:
@@ -3637,35 +3665,36 @@ GENERIC_END:
             if (l.tok.tok != TRbracket) {
                 parse_error(loc, "expect ')' after %s", show(theTok));
             }
+            location_t endLoc = getLoc() + 1;
             consume(); // eat ')'
             switch (theTok) {
             case K__builtin_FUNCTION:
                 if (isTopLevel()) {
                     warning(loc, "predefined identifier is only valid inside function");
                     return ENEW(ConstantArrayExpr) {
-                        .constantArrayLoc = loc, 
                         .ty = context.stringty, 
                         .array = string_pool.getEmptyString(),
-                        .constantArrayLocEnd = loc + 16,
+                        .constantArrayLoc = loc, 
+                        .constantArrayLocEnd = endLoc,
                     };
                 }
-                return getFunctionNameExpr(loc, loc + 16);
+                return getFunctionNameExpr(loc, endLoc);
             case K__builtin_LINE:
-                return wrap(context.getInt(), ConstantInt::get(irgen.integer_types[context.getIntLog2()], SM().getLine()), loc, loc + 13);
+                return wrap(context.getInt(), ConstantInt::get(irgen.integer_types[context.getIntLog2()], SM().getLine()), loc, endLoc);
             case K__builtin_COLUMN:
             {
                 uint64_t offset;
-                auto FD = getFileID(loc, offset);
-                SM().getLineNumber(offset, FD);
-                return wrap(context.getInt(), ConstantInt::get(irgen.integer_types[context.getIntLog2()], column), loc, loc + 15);
+                const auto FD = SM().getFileID(loc, offset);
+                const auto column = SM().getLineNumber(offset, FD);
+                return wrap(context.getInt(), ConstantInt::get(irgen.integer_types[context.getIntLog2()], column), loc, endLoc);
             }
             case K__builtin_FILE:
                 return ENEW(ConstantArrayExpr) 
                     {
-                        .constantArrayLoc = loc,
                         .ty = context.stringty, 
                         .array = string_pool.getAsUTF8(SM().getFileName()),
-                        .constantArrayLocEnd = loc + 13
+                        .constantArrayLoc = loc,
+                        .constantArrayLocEnd = endLoc
                     };
             default: llvm_unreachable("");
             }
@@ -3677,6 +3706,8 @@ GENERIC_END:
         return result;
     }
     Expr postfix_expression_end(Expr result) {
+        bool isarrow;
+        PostFixOp isadd;
         for (;;) {
             switch (l.tok.tok) {
             case TSubSub: isadd = PostfixDecrement; goto ADD;
@@ -3685,8 +3716,9 @@ GENERIC_END:
 ADD:
                 if (!assignable(result))
                     return nullptr;
+                location_t endLoc = getLoc() + 2;
                 consume();
-                result = ENEW(PostFixExpr){.postFixEndLoc = getLoc(), .ty = result->ty, .pop = isadd, .poperand = result};
+                result = ENEW(PostFixExpr){.ty = result->ty, .pop = isadd, .poperand = result, .postFixEndLoc = endLoc};
             }
                 continue;
             case TArrow: isarrow = true; goto DOT;
@@ -3715,7 +3747,7 @@ DOT:
                     Declator pair = ty->selems[i];
                     if (l.tok.s == pair.name) {
                         result = ENEW(MemberAccessExpr) {
-                            .memberEndLoc = getLoc(), .ty = pair.ty, .obj = result, .idx = (unsigned)i};
+                            .ty = pair.ty, .obj = result, .idx = (unsigned)i, .memberEndLoc = getLoc()};
                         if (isLvalue) {
                             result->ty = context.clone(result->ty);
                             result->ty->addTag(TYLVALUE);
@@ -3751,8 +3783,8 @@ CONTINUE:;
                         if (l.tok.tok == TComma)
                             consume();
                         else if (l.tok.tok == TRbracket) {
+                            result->callEnd = getLoc() + 1;
                             consume();
-                            result->callEnd = getLoc();
                             break;
                         }
                     }
@@ -3779,7 +3811,7 @@ CONTINUE:;
                     if (params.size() != result->callargs.size())
                         return type_error(getLoc(), "expect %z parameters, %z arguments provided",
                                           (size_t)params.size(), (size_t)result->callargs.size()),
-                               context.getInt();
+                               getIntZero();
                     for (size_t j = 0; j < result->callargs.size(); ++j) {
                         Expr e = castto(result->callargs[j], params[j].ty, Implict_Call);
                         if (!e)
@@ -3810,8 +3842,6 @@ CONTINUE:;
         }
     }
     Expr postfix_expression() {
-        bool isarrow;
-        PostFixOp isadd;
         Expr result = primary_expression();
         if (!result)
             return nullptr;
@@ -3971,7 +4001,7 @@ CONTINUE:;
                 goto NEXT;
             }
         }
-        insertStmt(SNEW(CondJumpStmt){.loc = 0, .test = test, .T = dst, .F = thenBB});
+        insertStmt(SNEW(CondJumpStmt){.test = test, .T = dst, .F = thenBB});
 NEXT:
         return insertLabel(thenBB);
     }
@@ -3983,19 +4013,19 @@ NEXT:
                 goto NEXT;
             }
         }
-        insertStmt(SNEW(CondJumpStmt){.loc = 0, .test = test, .T = thenBB, .F = dst});
+        insertStmt(SNEW(CondJumpStmt){.test = test, .T = thenBB, .F = dst});
 NEXT:
         return insertLabel(thenBB);
     }
     void condJump(Expr test, label_t T, label_t F) {
-        return insertStmt(SNEW(CondJumpStmt){.loc = 0, .test = test, .T = T, .F = F});
+        return insertStmt(SNEW(CondJumpStmt){.test = test, .T = T, .F = F});
     }
-    void insertBr(label_t L, location_t loc = 0) {
-        return insertStmt(SNEW(GotoStmt){.loc = loc, .location = L});
+    void insertBr(label_t L) {
+        return insertStmt(SNEW(GotoStmt){.location = L});
     }
     void insertLabel(label_t L, IdentRef Name = nullptr) {
         sreachable = true;
-        return insertStmtInternal(SNEW(LabelStmt){.loc = 0, .label = L, .labelName = Name});
+        return insertStmtInternal(SNEW(LabelStmt){.label = L, .labelName = Name});
     }
     void insertStmtInternal(Stmt s) {
         InsertPt->next = s;
@@ -4004,15 +4034,14 @@ NEXT:
     void insertStmt(Stmt s) {
         if (sreachable || s->k == SCompound) {
             insertStmtInternal(s);
-            if (s->isTerminator()) {
-                unreachable_reason = s;
+            if (s->isTerminator()) 
                 sreachable = false;
-            }
         } else {
-            if (unreachable_reason && s->loc != 0) {
-                warning(s->loc, "this statement is unreachable");
-                note(unreachable_reason->loc, "after this *terminator* statement is unreachable");
-                unreachable_reason = nullptr;
+            if (unreachable_reason != 0) {
+                const char *desc_table[] = {"break statement", "continue statement", "goto statement", "switch statement", "return statement", "call to noreturn function"};
+                warning(current_stmt_loc, "this statement is unreachable");
+                note(unreachable_reason, "after %s is unreachable", desc_table[u_unreachable_reason]);
+                unreachable_reason = 0;
             }
         }
     }
@@ -4020,6 +4049,7 @@ NEXT:
     void statement() {
         // parse a statement
         location_t loc = getLoc();
+        current_stmt_loc = loc;
         switch (l.tok.tok) {
         case TSemicolon: return consume();
         case Kasm: return parse_asm(), checkSemicolon();
@@ -4095,35 +4125,42 @@ NEXT:
             label_t L = getLabel(Name);
             consume();
             checkSemicolon();
-            return insertBr(L, loc);
+            u_unreachable_reason = UR_goto;
+            unreachable_reason = loc;
+            return insertBr(L);
         }
         case Kcontinue:
             tryContinue();
             consume();
             checkSemicolon();
-            return insertBr(jumper.topContinue, loc);
+            u_unreachable_reason = UR_continue;
+            unreachable_reason = loc;
+            return insertBr(jumper.topContinue);
         case Kbreak: {
             consume();
             checkSemicolon();
             if (jumper.topBreak == INVALID_LABEL)
                 type_error(getLoc(), "%s", "connot break: no outer for/while/switch/do-while");
             else {
-                return insertBr(jumper.topBreak, loc);
+                u_unreachable_reason = UR_break;
+                unreachable_reason = loc;
+                return insertBr(jumper.topBreak);
             }
             return;
         }
         case Kreturn: {
+            u_unreachable_reason = UR_return;
+            unreachable_reason = loc;
             consume();
             if (l.tok.tok == TSemicolon) {
                 consume();
                 if (sema.currentfunction->ret->isVoid())
-                    return insertStmt(SNEW(ReturnStmt){.loc = loc, .ret = nullptr});
+                    return insertStmt(SNEW(ReturnStmt){.ret = nullptr});
 
                 return warning(loc, "function should not return void in a function return %T", sema.currentfunction->ret),
                        note("%s", "A return statement without an expression shall only appear in a function whose "
                                   "return type is void"),
                        insertStmt(SNEW(ReturnStmt){
-                           .loc = loc,
                            .ret = wrap(sema.currentfunction->ret,
                                        llvm::UndefValue::get(irgen.wrap2(sema.currentfunction->ret)), loc)});
             }
@@ -4135,8 +4172,8 @@ NEXT:
                 return warning(loc, "function should return a value in a function return void"),
                        note("A return statement with an expression shall not appear in a function whose return type is "
                             "void"),
-                       insertStmt(SNEW(ReturnStmt){.loc = loc, .ret = nullptr});
-            return insertStmt(SNEW(ReturnStmt){.loc = loc, .ret = castto(e, sema.currentfunction->ret, Implict_Return)});
+                       insertStmt(SNEW(ReturnStmt){ .ret = nullptr});
+            return insertStmt(SNEW(ReturnStmt){.ret = castto(e, sema.currentfunction->ret, Implict_Return)});
         }
         case Kwhile:
         case Kswitch: {
@@ -4146,15 +4183,15 @@ NEXT:
                 return;
             if (tok == Kswitch) {
                 if (test->ty->isBool()) 
-                    warning(test->loc, "switch condition has boolean value");
+                    warning(test->getBeginLoc(), "switch condition has boolean value") << test->getSourceRange();
                 CType origintestTy = test->ty;
                 integer_promotions(test);
                 if (test->ty->getKind() != TYPRIM && !test->ty->isInteger()) {
-                    type_error(test->loc, "switch requires expression of integer type (%T invalid)", test->ty);
+                    type_error(test->getBeginLoc(), "switch requires expression of integer type (%T invalid)", test->ty) << test->getSourceRange();
                     test->ty = context.getInt();
                 }
                 label_t LEAVE = jumper.createLabel();
-                Stmt sw = SNEW(SwitchStmt){.loc = loc,
+                Stmt sw = SNEW(SwitchStmt){
                                            .itest = test,
                                            .switchs = xvector<SwitchCase>::get(),
                                            .gnu_switchs = xvector<GNUSwitchCase>::get_with_capacity(0),
@@ -4163,7 +4200,8 @@ NEXT:
                 llvm::SaveAndRestore<Stmt> saved_sw(sema.currentswitch, sw);
                 llvm::SaveAndRestore<label_t> saved_b(jumper.topBreak, LEAVE);
                 insertStmt(sw); // insert switch instruction
-                unreachable_reason = sw;
+                u_unreachable_reason = UR_switch;
+                unreachable_reason = loc;
                 sreachable = false;
                 statement();
                 bool hasDefault = true;
@@ -4277,7 +4315,7 @@ NEXT:
             insertLabel(BODY);
             statement();
             insertLabel(CMP);
-            insertStmt(SNEW(CondJumpStmt){.loc = 0, .test = test, .T = BODY, .F = LEAVE});
+            insertStmt(SNEW(CondJumpStmt){.test = test, .T = BODY, .F = LEAVE});
             insertLabel(LEAVE);
             return;
         }
@@ -4299,7 +4337,7 @@ NEXT:
                     if (ex->isSimple())
                         warning(loc, "expression in for-clause-1(for loop initialization) has no effect");
                     else
-                        insertStmt(SNEW(ExprStmt){.loc = ex->loc, .exprbody = ex});
+                        insertStmt(SNEW(ExprStmt){.exprbody = ex});
                     if (l.tok.tok != TSemicolon)
                         warning(getLoc(), "missing ';' after for-clause-1 expression");
                 }
@@ -4336,7 +4374,7 @@ NEXT:
                 insertBr(BODY);
             insertLabel(BODY);
             if (forincl)
-                insertStmt(SNEW(ExprStmt){.loc = forincl->loc, .exprbody = forincl});
+                insertStmt(SNEW(ExprStmt){.exprbody = forincl});
             statement();
             insertBr(CMP);
             insertLabel(LEAVE);
@@ -4406,11 +4444,20 @@ NEXT:
         Expr e = expression();
         if (!e)
             return;
-        e = simplify(e);
-        if (e->isSimple())
-            warning(loc, "expression statement has no effect");
         checkSemicolon();
-        return insertStmt(SNEW(ExprStmt){.loc = loc, .exprbody = e});
+        e = simplify(e);
+        if (e->isSimple()) {
+            warning(loc, "expression statement has no effect") << e->getSourceRange();
+            return;
+        }
+        if (e->k == ECall) {
+            if (LLVM_UNLIKELY(e->callfunc->ty->hasTag(TYNORETURN))) {
+                unreachable_reason = loc;
+                u_unreachable_reason = UR_noreturn;
+                return insertStmt(SNEW(NoReturnCallStmt){.call_expr = e});
+            }
+        }
+        return insertStmt(SNEW(ExprStmt){.exprbody = e});
     }
     Expr multiplicative_expression() {
         Expr r, result = cast_expression();
@@ -4484,7 +4531,7 @@ NEXT:
             case TLt:
             case TLe:
             case TGt:
-            case TGe: make_cmp(result, l.tok.tok);
+            case TGe: make_cmp(result, l.tok.tok); continue;
             default: return result;
             }
         }
@@ -4496,7 +4543,7 @@ NEXT:
         for (;;) {
             switch (l.tok.tok) {
             case TEq:
-            case TNe: make_cmp(result, l.tok.tok, true);
+            case TNe: make_cmp(result, l.tok.tok, true); continue;
             default: return result;
             }
         }
@@ -4547,6 +4594,7 @@ NEXT:
         if (!result)
             return nullptr;
         for (;;) {
+            location_t opLoc = getLoc();
             if (l.tok.tok == TLogicalAnd) {
                 consume();
                 if (!(r = inclusive_OR_expression()))
@@ -4556,14 +4604,14 @@ NEXT:
                 if (result->k == EConstant) {
                     if (auto CI = dyn_cast<ConstantInt>(result->C)) {
                         if (CI->isZero()) {
-                            warning(result->loc, "logical AND first operand is zero always evaluates to zero");
+                            warning(opLoc, "logical AND first operand is zero always evaluates to zero") << r->getSourceRange() << result->getSourceRange();
                             result = getIntZero();
                             continue;
                         }
                         if (r->k == EConstant) {
                             if (auto CI2 = dyn_cast<ConstantInt>(r->C)) {
-                                warning(result->loc, "use of logical '&&' with constant operand");
-                                note(result->loc, "use '&' for a bitwise operation");
+                                warning(opLoc, "use of logical '&&' with constant operand") << r->getSourceRange() << result->getSourceRange();
+                                note(opLoc, "use '&' for a bitwise operation") << FixItHint::CreateInsertion("&", SourceRange(opLoc));
                                 result = CI2->isZero() ? getIntZero() : getIntOne();
                             }
                             else {
@@ -4575,16 +4623,14 @@ NEXT:
                 } else if (r->k == EConstant) {
                     if (auto CI = dyn_cast<ConstantInt>(r->C)) {
                         if (CI->isZero()) {
-                            warning(result->loc, "logical AND second operand is zero always evaluates to zero");
+                            warning(opLoc, "logical AND second operand is zero always evaluates to zero") << result->getSourceRange() << r->getSourceRange();
                             result = getIntZero();
                         }
                         /* else { result = result; }*/
                         continue;
                     }
                 }
-                if (result->k == EConstant && r->k == EConstant) {
-                    result = wrap(context.getInt(), llvm::ConstantExpr::getAnd(result->C, r->C), result->loc);
-                } else if (result->k == ECast && result->castop == ZExt && r->k == ECast && r->castop == ZExt) {
+                if (result->k == ECast && result->castop == ZExt && r->k == ECast && r->castop == ZExt) {
                     result = boolToInt(binop(result->castval, LogicalAnd, r->castval, context.getInt()));
                 } else {
                     result = boolToInt(binop(result, LogicalAnd, r, context.getInt()));
@@ -4598,6 +4644,7 @@ NEXT:
         if (!result)
             return nullptr;
         for (;;) {
+            location_t opLoc = getLoc();
             if (l.tok.tok == TLogicalOr) {
                 consume();
                 r = logical_AND_expression();
@@ -4608,14 +4655,14 @@ NEXT:
                 if (result->k == EConstant) {
                     if (auto CI = dyn_cast<ConstantInt>(result->C)) {
                         if (!CI->isZero()) {
-                            warning(result->loc, "logical OR first operand is non-zero always evaluates to non-zero");
+                            warning(opLoc, "logical OR first operand is non-zero always evaluates to non-zero") << result->getSourceRange() << r->getSourceRange();
                             result = getIntOne();
                             continue;
                         }
                         if (r->k == EConstant) {
                             if (auto CI2 = dyn_cast<ConstantInt>(r->C)) {
-                                warning(result->loc, "use of logical '||' with constant operand");
-                                note(result->loc, "use '|' for a bitwise operation");
+                                warning(opLoc, "use of logical '||' with constant operand") << result->getSourceRange() << r->getSourceRange();
+                                note(opLoc, "use '|' for a bitwise operation");
                                 result = CI2->isZero() ? getIntZero() : getIntOne();
                             }
                             else {
@@ -4627,16 +4674,14 @@ NEXT:
                 } else if (r->k == EConstant) {
                     if (auto CI = dyn_cast<ConstantInt>(r->C)) {
                         if (!CI->isZero()) {
-                            warning(result->loc, "logical OR second operand is non-zero always evaluates to non-zero");
+                            warning(opLoc, "logical OR second operand is non-zero always evaluates to non-zero") << result->getSourceRange() << r->getSourceRange();
                             result = getIntZero();
                         }
                         /* else { result = result; }*/
                         continue;
                     }
                 }
-                if (result->k == EConstant && r->k == EConstant) {
-                    result = wrap(context.getInt(), llvm::ConstantExpr::getOr(result->C, r->C), result->loc);
-                } else if (result->k == ECast && result->castop == ZExt && r->k == ECast && r->castop == ZExt) {
+                if (result->k == ECast && result->castop == ZExt && r->k == ECast && r->castop == ZExt) {
                     result = boolToInt(binop(result->castval, LogicalOr, r->castval, context.getInt()));
                 } else {
                     result = boolToInt(binop(result, LogicalOr, r, context.getInt()));
@@ -4652,12 +4697,13 @@ NEXT:
             return nullptr;
         for (;;) {
             if (l.tok.tok == TComma) {
+                location_t opLoc = getLoc();
                 consume();
                 if (!(r = assignment_expression()))
                     return nullptr;
                 if (result->isSimple()) {
-                    warning(result->loc,
-                            "left-hand side of comma expression has no effect, replace with right-hand side");
+                    warning(opLoc,
+                            "left-hand side of comma expression has no effect") << result->getSourceRange() << r->getSourceRange();
                     result = r;
                 } else
                     result = binop(result, Comma, r, result->ty);
@@ -4682,7 +4728,7 @@ NEXT:
         else if (!(rhs = conditional_expression()))
             return nullptr;
         if (!compatible(lhs->ty, rhs->ty))
-            warning(getLoc(), "incompatible type for conditional-expression: (%T and %T)", lhs->ty, rhs->ty);
+            warning(getLoc(), "incompatible type for conditional-expression: (%T and %T)", lhs->ty, rhs->ty) << lhs->getSourceRange() << rhs->getSourceRange();
         conv(lhs, rhs);
         valid_condition(start);
         if (start->k == EConstant)
@@ -4772,7 +4818,7 @@ NEXT:
             return result;
     }
     Stmt translation_unit() {
-        Stmt head = SNEW(HeadStmt){.loc = getLoc()};
+        Stmt head = SNEW(HeadStmt){};
         setInsertPoint(head);
         sreachable = true;
         while (l.tok.tok != TEOF) {
@@ -4790,7 +4836,7 @@ NEXT:
         consume();
         enterBlock();
         NullStmt nullstmt{.k = SHead}; // make a dummy statement in stack, remove it when scope leaves
-        Stmt head = SNEW(CompoundStmt){.loc = getLoc(), .inner = reinterpret_cast<Stmt>(&nullstmt)};
+        Stmt head = SNEW(CompoundStmt){.inner = reinterpret_cast<Stmt>(&nullstmt)};
         {
             llvm::SaveAndRestore<Stmt> saved_ip(InsertPt, head->inner);
             bool old = sreachable;
@@ -4815,7 +4861,7 @@ NEXT:
     }
     Stmt function_body(const xvector<Param> params, xvector<size_t> &args, location_t loc) {
         consume();
-        Stmt head = SNEW(HeadStmt){.loc = loc};
+        Stmt head = SNEW(HeadStmt){};
         sema.typedefs.push_function();
         enterBlock();
         assert(jumper.cur == 0 && "labels scope should be empty in start of function");
@@ -4830,7 +4876,7 @@ NEXT:
                 Stmt s = getInsertPoint();
                 location_t loc2 = getLoc();
                 if (sema.pfunc->second.getToken() == PP_main) {
-                    insertStmt(SNEW(ReturnStmt){.loc = loc2, .ret = getIntZero()});
+                    insertStmt(SNEW(ReturnStmt){.ret = getIntZero()});
                 } else {
                     if (!(sema.currentfunction->ret->isVoid())) {
                         if (s->k != SLabel) {

@@ -116,9 +116,9 @@
 #if !WINDOWS
 #include <sys/types.h>
 #include <sys/stat.h>
+#endif
 #include <unistd.h>
 #include <fcntl.h>
-#endif
 
 #include <cassert>
 #include <string>
@@ -433,6 +433,23 @@ static const char *show(enum PostFixOp o) {
     default: return "(unknown postfix operator)";
     }
 }
+static const char *show(enum CastOp op) {
+    switch (op) {
+        case Trunc: return "trunc";
+        case ZExt: return "zext";
+        case SExt: return "sext";
+        case FPToUI: return "fptoui";
+        case FPToSI: return "fptosi";
+        case UIToFP: return "uitosp";
+        case SIToFP: return "sitofp";
+        case FPTrunc: return "fptrunc";
+        case FPExt: return "fpext";
+        case PtrToInt: return "ptrToInt";
+        case IntToPtr: return "intToPtr";
+        case BitCast: return "bitcast";
+    }
+    llvm_unreachable("invalid CastOp");
+}
 static void bin(uint64_t a) {
     putchar(a & 1 ? '1' : '0');
     putchar(a & 2 ? '1' : '0');
@@ -643,7 +660,7 @@ typedef unsigned column_t;
 typedef unsigned fileid_t;
 typedef uint32_t location_t;
 
-static inline bool location_is_stdin(location_t loc) {
+static bool location_is_stdin(location_t loc) {
     return loc & 0xf0000000;
 }
 static location_t location_as_index(location_t loc) {
@@ -808,22 +825,110 @@ struct GNUSwitchCase : public SwitchCase {
         return (*CaseStart + range).ule(*G.CaseStart);
     }
 };
-
 #include "ctypes.inc"
 #include "expressions.inc"
 #include "printer.cpp"
 #include "statements.inc"
 #include "utf8.cpp"
-
+struct ReplacedExprParen {
+  enum ExprKind k=EConstant;
+  CType ty;
+  struct {
+    llvm::Constant* C;
+    size_t id;
+    IdentRef varName;
+    location_t ReplacedLoc;
+    location_t paren_loc[2];
+  };
+};
 struct ReplacedExpr {
   enum ExprKind k=EConstant;
   CType ty;
   struct {
     llvm::Constant* C;
-    location_t ReplacedLoc;
     size_t id;
+    IdentRef varName;
+    location_t ReplacedLoc;
   };
 };
+location_t *OpaqueExpr::getParenLLoc() {
+    if (ty->hasTag(TYREPLACED_CONSTANT)) {
+        return reinterpret_cast<ReplacedExprParen*>(this)->paren_loc;
+    }
+    const size_t Size = expr_size_map[k];
+    return reinterpret_cast<location_t*>(reinterpret_cast<uintptr_t>(this) + Size);
+}
+const location_t *OpaqueExpr::getParenLLoc() const {
+    return const_cast<Expr>(this)->getParenLLoc();
+}
+const location_t *OpaqueExpr::getParenRLoc() const {
+    return getParenLLoc() + 1;
+}
+location_t *OpaqueExpr::getParenRLoc() {
+    return getParenLLoc() + 1;
+}
+location_t OpaqueExpr::getBeginLoc() const {
+    if (ty->hasTag(TYPAREN)) 
+        return *getParenLLoc();
+    switch (k) {
+    case EVar: return varLoc;
+    case EBin: return rhs->getBeginLoc();
+    case EUnary: return opLoc;
+    case ECast: return castval->getBeginLoc();
+    case ESubscript: return left->getBeginLoc();
+    case EConstant: return constantLoc;
+    case ECondition: return cond->getBeginLoc();
+    case ECall: return callfunc->getBeginLoc();
+    case EConstantArray: return constantArrayLoc;
+    case EMemberAccess: return obj->getBeginLoc();
+    case EArrToAddress: return arr3->getBeginLoc();
+    case EPostFix: return poperand->getBeginLoc();
+    case EArray: return ArrayStartLoc;
+    case EStruct: return StructStartLoc;
+    case EVoid: return voidStartLoc;
+    case EConstantArraySubstript: return constantArraySubscriptLoc;
+    }
+    llvm_unreachable("invalid Expr");
+}
+location_t OpaqueExpr::getEndLoc() const {
+    if (ty->hasTag(TYPAREN)) 
+        return *getParenRLoc();
+    switch (k) {
+    case EConstant:
+        return constantEndLoc;
+    case EBin:
+        return rhs->getEndLoc();
+    case EUnary:
+        return uoperand->getEndLoc();
+    case ESubscript:
+        return right->getEndLoc();
+    case EConstantArraySubstript:
+        return constantArraySubscriptLocEnd;
+    case EConstantArray:
+        return constantArrayLocEnd;
+    case EVoid:
+        return voidexpr->getEndLoc();
+    case ECast:
+        return castval->getEndLoc();
+    case EVar:
+        return varLoc + varName->getKey().size() - 1;
+    case EMemberAccess:
+        return memberEndLoc;
+    case EArrToAddress:
+        return arr3->getEndLoc();
+    case ECondition: 
+        return cright->getEndLoc();
+    case ECall:
+        return callEnd;
+    case EPostFix:
+        return postFixEndLoc;
+    case EArray:
+        return ArrayEndLoc;
+    case EStruct:
+        return StructEndLoc;
+    }
+    llvm_unreachable("invalid Expr");
+}
 static constexpr uint64_t build_integer(IntegerKind kind, bool Signed) {
     const uint64_t log2size = kind.asLog2();
     return (log2size << 47) | (Signed ? OpaqueCType::sign_bit : 0ULL);

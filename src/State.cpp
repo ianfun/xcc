@@ -286,6 +286,18 @@ struct xcc_context {
         (void)memcpy(mem, src, size);
         return mem;
     }
+    [[nodiscard]] Expr createParenExpr(Expr e, location_t L, location_t R) {
+        const size_t Size = expr_size_map[e->k];
+        void * const mem = getAllocator().Allocate(Size + sizeof(location_t) * 2, 1);
+        (void)memcpy(mem, e, Size);
+        location_t * const Ptr = reinterpret_cast<location_t*>(reinterpret_cast<uintptr_t>(mem) + Size);
+        Ptr[0] = L;
+        Ptr[1] = R;
+        Expr res = reinterpret_cast<Expr>(mem);
+        res->ty = clone(e->ty);
+        res->ty->addTag(TYPAREN);
+        return res;
+    }
     [[nodiscard]] CType clone(CType ty) { return reinterpret_cast<CType>(new_memcpy(ctype_size_map[ty->getKind()], ty)); }
     [[nodiscard]] Stmt clone(Stmt s) { return reinterpret_cast<Stmt>(new_memcpy(stmt_size_map[s->k], s)); }
     [[nodiscard]] Expr clone(Expr e) { return reinterpret_cast<Expr>(new_memcpy(expr_size_map[e->k], e)); }

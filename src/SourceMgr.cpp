@@ -268,14 +268,14 @@ struct SourceMgr : public DiagnosticHelper {
                                   FILE_ATTRIBUTE_NORMAL, nullptr);
         if (fd == INVALID_HANDLE_VALUE) {
             if (verbose)
-                pp_error("cannot open %s: %w", path, static_cast<uint32_t>(GetLastError()));
+                pp_error("cannot open %s: %w", path, static_cast<unsigned>(GetLastError()));
             return false;
         }
         
         DWORD highPart;
         fileSize = ::GetFileSize(fd, &highPart);
         if (fileSize == INVALID_FILE_SIZE)
-            return error("failed to get file size for %s: %w", path, (DWORD)GetLastError()), false;
+            return error("failed to get file size for %s: %w", path, static_cast<unsigned>(GetLastError())), false;
         if (highPart) {
             // this can done much better in assembly code
             uint64_t total = highPart;
@@ -312,7 +312,7 @@ struct SourceMgr : public DiagnosticHelper {
     fileid_t getFileID(location_t loc, uint64_t &offset) const {
         for (size_t i = 0;i < streams.size();++i) {
             if (loc < streams[i]->endLoc) {
-                offset = streams[i]->endLoc - loc;
+                offset = loc - streams[i]->startLoc;
                 return i;
             }
         }
@@ -360,12 +360,25 @@ struct SourceMgr : public DiagnosticHelper {
         return offset - s->lineOffsetMapping[line] + 1;
     }
     bool translateLocation(location_t loc, source_location &out) {
-        if (loc == 0) return false;
         uint64_t offset;
-        fileid_t fd = getFileID(loc, offset);
-        if (fd == (fileid_t)-1)
-            return false;
-        out.fd = fd;
+        if (location_is_stdin(loc)) {
+            for (size_t i = 0;i < streams.size();++i) {
+                if (StdinStream *s = dyn_cast<StdinStream>(streams[i])) {
+                    loc = location_as_index(loc);
+                    offset = loc - s->startLoc;
+                    out.fd = i;
+                    goto FOUND;
+                }
+            }
+            llvm_unreachable("no stdin stream found");
+        } else {
+            if (loc == 0) return false;
+            fileid_t fd = getFileID(loc, offset);
+            if (fd == (fileid_t)-1)
+                return false;
+            out.fd = fd;
+        }
+FOUND:
         auto it = location_map.lower_bound(loc);
         if (it == location_map.begin()) goto NO_TREE;
         it--;

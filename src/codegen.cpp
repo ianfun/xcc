@@ -273,16 +273,8 @@ static enum TypeIndex getTypeIndex(CType ty) {
         }
         return result;
     }
-    void emitDebugLocation(Expr e) {
-        debugLoc = e->loc;
-        if (options.g)
-            B.SetCurrentDebugLocation(wrap(e->loc));
-    }
-    void emitDebugLocation(Stmt e) {
-        debugLoc = e->loc;
-        if (options.g)
-            B.SetCurrentDebugLocation(wrap(e->loc));
-    }
+    void emitDebugLocation(Expr e) {}
+    void emitDebugLocation(Stmt e) {}
     unsigned getLine(location_t loc) {
         return 0;
     }
@@ -639,12 +631,12 @@ static enum TypeIndex getTypeIndex(CType ty) {
         } break;
         case SHead: llvm_unreachable("");
         case SCompound: {
-            if (options.g)
-                lexBlocks.push_back(di->createLexicalBlock(getLexScope(), getFile(s->loc), getLine(s->loc), getCol(s->loc)));
+//            if (options.g)
+//                lexBlocks.push_back(di->createLexicalBlock(getLexScope(), getFile(s->loc), getLine(s->loc), getCol(s->loc)));
             for (Stmt ptr = s->inner; ptr; ptr = ptr->next)
                 gen(ptr);
-            if (options.g)
-                lexBlocks.pop_back();
+//            if (options.g)
+//                lexBlocks.pop_back();
         } break;
         case SDecl: {
             if (s->decl_ty->getKind() == TYINCOMPLETE) {
@@ -652,18 +644,18 @@ static enum TypeIndex getTypeIndex(CType ty) {
                     auto T = llvm::StructType::create(ctx, s->decl_ty->name->getKey());
                     tags[s->decl_idx] = T;
                 }
-                if (options.g) {
-                    unsigned tag;
-                    switch (s->decl_ty->tag) {
-                    case TagType_Struct: tag = llvm::dwarf::DW_TAG_structure_type; break;
-                    case TagType_Enum: tag = llvm::dwarf::DW_TAG_enumeration_type; break;
-                    case TagType_Union: tag = llvm::dwarf::DW_TAG_union_type; break;
-                    default: llvm_unreachable("invalid type tag");
-                    }
+                //if (options.g) {
+                //    unsigned tag;
+                //    switch (s->decl_ty->tag) {
+                //    case TagType_Struct: tag = llvm::dwarf::DW_TAG_structure_type; break;
+                //    case TagType_Enum: tag = llvm::dwarf::DW_TAG_enumeration_type; break;
+                //    case TagType_Union: tag = llvm::dwarf::DW_TAG_union_type; break;
+                //    default: llvm_unreachable("invalid type tag");
+                //    }
                     //auto MD = di->createReplaceableCompositeType(tag, s->decl_ty->name->getKey(), getLexScope(),
 //                                                                 getFile(s->loc), s->loc.line);
                     //dtags[s->decl_idx] = MD;
-                }
+                //}
             } else {
                 if (s->decl_ty->getKind() != TYENUM) {
                     size_t l = s->decl_ty->selems.size();
@@ -687,6 +679,10 @@ static enum TypeIndex getTypeIndex(CType ty) {
             }
             // replaceAllUsesWith
         } break;
+        case SNoReturnCall:
+            (void)gen(s->call_expr);
+            B.CreateUnreachable();
+            break;
         case SExpr: (void)gen(s->exprbody); break;
         case SFunction: {
             assert(this->labels.empty());

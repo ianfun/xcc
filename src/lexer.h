@@ -22,11 +22,12 @@ struct Lexer : public EvalHelper {
     std::vector<PPMacroDef*> expansion_list;
     xstring lexIdnetBuffer = xstring::get_with_capacity(20);
     uint32_t counter = 0;
-    location_t loc;
+    location_t loc = 0, endLoc = 0;
     xcc_context &context;
 
     Lexer(SourceMgr &SM, Parser &parser, xcc_context &context, DiagnosticsEngine &Diag) : EvalHelper{Diag}, parser{parser}, SM{SM}, context{context} { }
     location_t getLoc() { return loc; }
+    location_t getEndLoc() { return endLoc; }
     Expr constant_expression();
     void updateLoc() { loc = SM.getLoc();}
     static bool isCSkip(char c) {
@@ -153,6 +154,7 @@ struct Lexer : public EvalHelper {
         }
         if (c != '\'')
             warning(loc, "missing terminating " lquote "'" rquote " character in character literal");
+        endLoc = getLoc();
         eat();
         return theTok;
     }
@@ -185,6 +187,7 @@ struct Lexer : public EvalHelper {
     TokenV lexIdent() {
         TokenV theTok = TokenV(ATokenIdent, PPIdent);
         for (;;) {
+            endLoc = getLoc();
             unsigned n = 8;
             if (c == '\\') {
                 eat();
@@ -292,6 +295,7 @@ R:
 END:
                 return lexPPNumberEnd(s);
             }
+            endLoc = getLoc() - 1;
             s.make_eos();
             TokenV theTok = TokenV(ATokenVNumLit, PPNumber);
             theTok.str = s;
@@ -322,6 +326,7 @@ END:
         eat(); // eat "
         TokenV theTok = TokenV(ATokenVStrLit, TStringLit);
         for (;;) {
+            endLoc = getLoc();
             if (c == '\\')
                 cat_codepoint(str, lexEscape());
             else if (c == '"') {
@@ -551,7 +556,7 @@ RUN:
                     want_expr = true;
                     e = constant_expression();
                     want_expr = false;
-                    ok = force_eval(e, e->loc);
+                    ok = force_eval(e);
                     dbgprint("#if: %s\n", ok ? "true" : "false");
                     ppstack.push_back(ok);
                     (void)e;
@@ -598,7 +603,6 @@ RUN:
                         break;
                     }
                     if (!ok) {
-                        location_t cloc = getLoc();
                         Expr e;
                         want_expr = true;
                         e = constant_expression();
@@ -607,7 +611,7 @@ RUN:
                         if (!e)
                             pp_error(loc, "%s", "expect constant_expression");
                         else {
-                            ok = force_eval(e, cloc);
+                            ok = force_eval(e);
                             dbgprint("#if: %s\n", ok ? "true" : "false");
                         }
                     } else
