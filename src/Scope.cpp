@@ -59,12 +59,10 @@ template <typename T> struct BlockScope : public ScopeBase<T> {
         this->data.resize(blocks.back());
         blocks.pop_back();
     }
-    void finalizeGlobalScope() {
-        maxSyms = std::max(maxSyms, this->data.size());
-    }
+    void finalizeGlobalScope() { maxSyms = std::max(maxSyms, this->data.size()); }
     bool isInGlobalScope(IdentRef Name) {
         assert(blocks.size() && "no global scope");
-        for (size_t i = 0;i < blocks.size();i++) {
+        for (size_t i = 0; i < blocks.size(); i++) {
             if (this->data[i].sym == Name)
                 return true;
         }

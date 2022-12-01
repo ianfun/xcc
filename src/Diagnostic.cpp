@@ -1,4 +1,4 @@
-enum DiagnosticLevel: uint8_t {
+enum DiagnosticLevel : uint8_t {
     Ignored,
     Note,
     Remark,
@@ -23,13 +23,9 @@ struct Diagnostic {
     // default constructor - construct a invalid Diagnostic
     Diagnostic() = default;
     Diagnostic(const char *fmt, location_t loc = 0) : fmt{fmt}, loc{loc} { }
-    void write_impl(const FixItHint &Hint) {
-        FixItHints.push_back(Hint);
-    }
+    void write_impl(const FixItHint &Hint) { FixItHints.push_back(Hint); }
     template <typename T> void write_impl(const T *ptr) { data.push_back(reinterpret_cast<storage_type>(ptr)); }
-    void write_impl(SourceRange range) {
-        ranges.push_back(range);
-    }
+    void write_impl(SourceRange range) { ranges.push_back(range); }
     void write_impl(const StringRef &str) {
         data.push_back(static_cast<storage_type>(str.size()));
         write_impl(str.data());
@@ -167,7 +163,7 @@ struct Diagnostic {
     }
 };
 struct DiagnosticConsumer {
-    DiagnosticConsumer(const DiagnosticConsumer&) = delete;
+    DiagnosticConsumer(const DiagnosticConsumer &) = delete;
     unsigned NumWarnings = 0;
     unsigned NumErrors = 0;
     unsigned getNumErrors() const { return NumErrors; }
@@ -225,32 +221,24 @@ struct TextDiagnosticPrinter : public DiagnosticConsumer {
 struct DiagnosticsEngine {
     unsigned ErrorLimit = 0;
     Diagnostic CurrentDiagnostic;
-    SmallVector<DiagnosticConsumer*, 1> consumers;
-    void addConsumer(DiagnosticConsumer *C) {
-        consumers.push_back(C);
-    }
-    unsigned getNumConsumers() {
-        return consumers.size();
-    }
-    DiagnosticConsumer *getFirstConsumer() {
-        return consumers.front();
-    }
-    DiagnosticConsumer *getLastConsumer() {
-        return consumers.back();
-    }
+    SmallVector<DiagnosticConsumer *, 1> consumers;
+    void addConsumer(DiagnosticConsumer *C) { consumers.push_back(C); }
+    unsigned getNumConsumers() { return consumers.size(); }
+    DiagnosticConsumer *getFirstConsumer() { return consumers.front(); }
+    DiagnosticConsumer *getLastConsumer() { return consumers.back(); }
     void EmitCurrentDiagnostic() {
-        for (const auto C: consumers)
+        for (const auto C : consumers)
             C->HandleDiagnostic(CurrentDiagnostic);
     }
     unsigned getNumWarnings() const {
         unsigned total = 0;
-        for (const auto C: consumers)
+        for (const auto C : consumers)
             total += C->getNumWarnings();
         return total;
     }
     unsigned getNumErrors() const {
         unsigned total = 0;
-        for (const auto C: consumers)
+        for (const auto C : consumers)
             total += C->getNumErrors();
         return total;
     }
@@ -258,17 +246,19 @@ struct DiagnosticsEngine {
 struct DiagnosticBuilder {
     DiagnosticsEngine &engine;
     bool Emited;
-    DiagnosticBuilder(const DiagnosticBuilder &other): engine{other.engine}, Emited{other.Emited} { };
-    inline DiagnosticBuilder(DiagnosticsEngine &engine) : engine{engine}, Emited{false} {}
-    ~DiagnosticBuilder() { if (!Emited) engine.EmitCurrentDiagnostic(); }
+    DiagnosticBuilder(const DiagnosticBuilder &other) : engine{other.engine}, Emited{other.Emited} {};
+    inline DiagnosticBuilder(DiagnosticsEngine &engine) : engine{engine}, Emited{false} { }
+    ~DiagnosticBuilder() {
+        if (!Emited)
+            engine.EmitCurrentDiagnostic();
+    }
     void Emit() {
         if (!Emited) {
             Emited = true;
             engine.EmitCurrentDiagnostic();
         }
     }
-    template <typename T> 
-    const DiagnosticBuilder &operator<<(const T &V) const {
+    template <typename T> const DiagnosticBuilder &operator<<(const T &V) const {
         engine.CurrentDiagnostic.write_impl(V);
         return *this;
     }
@@ -277,31 +267,27 @@ struct DiagnosticBuilder {
 // such as parse_error(), lex_error(), warning() functions
 struct DiagnosticHelper {
     DiagnosticsEngine &engine;
-    DiagnosticHelper(DiagnosticsEngine &engine): engine{engine} {}
-    unsigned getNumErrors() const {
-        return engine.getNumErrors();
-    }
-    unsigned getNumWarnings() const {
-        return engine.getNumWarnings();
-    }
-#define DIAGNOSTIC_HANDLER(HANDLER, LEVEL) \
-    template <typename... Args> DiagnosticBuilder HANDLER(const char *msg, const Args &...args) { \
-        engine.CurrentDiagnostic.reset(msg, LEVEL); \
-        engine.CurrentDiagnostic.write(args...); \
-        return DiagnosticBuilder(engine);\
-    } \
-    DiagnosticBuilder HANDLER(const char *msg) { \
-        engine.CurrentDiagnostic.reset(msg, LEVEL); \
-        return DiagnosticBuilder(engine);\
-    } \
-    template <typename... Args> DiagnosticBuilder HANDLER(location_t loc, const char *msg, const Args &...args) { \
-        engine.CurrentDiagnostic.reset(msg, LEVEL, loc); \
-        engine.CurrentDiagnostic.write(args...); \
-        return DiagnosticBuilder(engine);\
-    }\
-    template <typename... Args> DiagnosticBuilder HANDLER(location_t loc, const char *msg) { \
-        engine.CurrentDiagnostic.reset(msg, LEVEL, loc); \
-        return DiagnosticBuilder(engine);\
+    DiagnosticHelper(DiagnosticsEngine &engine) : engine{engine} { }
+    unsigned getNumErrors() const { return engine.getNumErrors(); }
+    unsigned getNumWarnings() const { return engine.getNumWarnings(); }
+#define DIAGNOSTIC_HANDLER(HANDLER, LEVEL)                                                                             \
+    template <typename... Args> DiagnosticBuilder HANDLER(const char *msg, const Args &...args) {                      \
+        engine.CurrentDiagnostic.reset(msg, LEVEL);                                                                    \
+        engine.CurrentDiagnostic.write(args...);                                                                       \
+        return DiagnosticBuilder(engine);                                                                              \
+    }                                                                                                                  \
+    DiagnosticBuilder HANDLER(const char *msg) {                                                                       \
+        engine.CurrentDiagnostic.reset(msg, LEVEL);                                                                    \
+        return DiagnosticBuilder(engine);                                                                              \
+    }                                                                                                                  \
+    template <typename... Args> DiagnosticBuilder HANDLER(location_t loc, const char *msg, const Args &...args) {      \
+        engine.CurrentDiagnostic.reset(msg, LEVEL, loc);                                                               \
+        engine.CurrentDiagnostic.write(args...);                                                                       \
+        return DiagnosticBuilder(engine);                                                                              \
+    }                                                                                                                  \
+    template <typename... Args> DiagnosticBuilder HANDLER(location_t loc, const char *msg) {                           \
+        engine.CurrentDiagnostic.reset(msg, LEVEL, loc);                                                               \
+        return DiagnosticBuilder(engine);                                                                              \
     }
     DIAGNOSTIC_HANDLER(note, Note)
     DIAGNOSTIC_HANDLER(remark, Remark)
@@ -312,14 +298,14 @@ struct DiagnosticHelper {
     DIAGNOSTIC_HANDLER(type_error, TypeError)
     DIAGNOSTIC_HANDLER(error, Error)
     DIAGNOSTIC_HANDLER(fatal, Fatal)
-    void expect(location_t loc, const char *item) {  parse_error(loc, "%s expected", item); }
-    void expectExpression(location_t loc) {  parse_error(loc, "%s", "expected expression"); }
-    void expectStatement(location_t loc) {  parse_error(loc, "%s", "expected statement"); }
-    void expectLB(location_t loc) {  parse_error(loc, "%s", "missing " lquote "(" rquote); }
-    void expectRB(location_t loc) {  parse_error(loc, "%s", "missing " lquote ")" rquote); }
+    void expect(location_t loc, const char *item) { parse_error(loc, "%s expected", item); }
+    void expectExpression(location_t loc) { parse_error(loc, "%s", "expected expression"); }
+    void expectStatement(location_t loc) { parse_error(loc, "%s", "expected statement"); }
+    void expectLB(location_t loc) { parse_error(loc, "%s", "missing " lquote "(" rquote); }
+    void expectRB(location_t loc) { parse_error(loc, "%s", "missing " lquote ")" rquote); }
 };
-struct EvalHelper: public DiagnosticHelper {
-    EvalHelper(DiagnosticsEngine &engine): DiagnosticHelper(engine) {}
+struct EvalHelper : public DiagnosticHelper {
+    EvalHelper(DiagnosticsEngine &engine) : DiagnosticHelper(engine) { }
     uint64_t force_eval(Expr e) {
         if (e->k != EConstant) {
             type_error(e->getBeginLoc(), "not a constant expression: %E", e) << e->getSourceRange();
@@ -327,7 +313,8 @@ struct EvalHelper: public DiagnosticHelper {
         }
         if (const auto CI = dyn_cast<ConstantInt>(e->C)) {
             if (CI->getValue().getActiveBits() > 64)
-                warning(e->getBeginLoc(), "integer constant expression larger exceeds 64 bit, the result is truncated") << e->getSourceRange();
+                warning(e->getBeginLoc(), "integer constant expression larger exceeds 64 bit, the result is truncated")
+                    << e->getSourceRange();
             return CI->getValue().getLimitedValue();
         }
         type_error(e->getBeginLoc(), "not a integer constant: %E", e) << e->getSourceRange();
@@ -337,7 +324,9 @@ struct EvalHelper: public DiagnosticHelper {
         if (e->k == EConstant) {
             if (const auto CI = dyn_cast<ConstantInt>(e->C)) {
                 if (CI->getValue().getActiveBits() > 64)
-                    warning(e->getBeginLoc(), "integer constant expression larger exceeds 64 bit, the result is truncated") << e->getSourceRange();
+                    warning(e->getBeginLoc(),
+                            "integer constant expression larger exceeds 64 bit, the result is truncated")
+                        << e->getSourceRange();
                 ok = true;
                 return CI->getValue().getLimitedValue();
             }

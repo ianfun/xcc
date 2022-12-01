@@ -1,10 +1,10 @@
-/* 
+/*
  * codegen.cpp
- * 
+ *
  * Code generation to LLVM IR, and Debug Info
  * implements getAlignof() and getsizeof() method(used by Sema and constant folding).
  */
-struct IRGen: public DiagnosticHelper {
+struct IRGen : public DiagnosticHelper {
     static constexpr auto ExternalLinkage = llvm::GlobalValue::ExternalLinkage,
                           PrivateLinkage = llvm::GlobalValue::PrivateLinkage,
                           CommonLinkage = llvm::GlobalValue::CommonLinkage,
@@ -13,50 +13,51 @@ struct IRGen: public DiagnosticHelper {
     static constexpr auto DefaultStorageClass = llvm::GlobalValue::DefaultStorageClass,
                           DLLImportStorageClass = llvm::GlobalValue::DLLImportStorageClass,
                           DLLExportStorageClass = llvm::GlobalValue::DLLExportStorageClass;
-enum TypeIndex {
-    voidty,
-    i1ty,
-    i8ty,
-    u8ty,
-    i16ty,
-    u16ty,
-    i32ty,
-    u32ty,
-    i64ty,
-    u64ty,
-    i128ty,
-    u128ty,
-    bfloatty,
-    halfty,
-    floatty,
-    doublety,
-    fp80ty,
-    fp128ty,
-    fp128ppcty,
-    fdecimal32ty,
-    fdecimal64ty,
-    fdecimal128ty,
-    ptrty,
-    TypeIndexHigh
-};
-static enum TypeIndex getTypeIndex(CType ty) {
-    // TODO: Complex, Imaginary
-    if (ty->hasTag(TYVOID)) return voidty;
-    if (ty->isInteger()) {
-        bool s = ty->isSigned();
-        auto k = ty->getIntegerKind();
-        switch (k.asLog2()) {
-        case 1: return s ? i1ty : i1ty;
-        case 3: return s ? i8ty : u8ty;
-        case 4: return s ? i16ty : u16ty;
-        case 5: return s ? i32ty : u32ty;
-        case 6: return s ? i64ty : u64ty;
-        case 7: return s ? i128ty : u128ty;
-        default: llvm_unreachable("invalid IntegerKind");
+    enum TypeIndex {
+        voidty,
+        i1ty,
+        i8ty,
+        u8ty,
+        i16ty,
+        u16ty,
+        i32ty,
+        u32ty,
+        i64ty,
+        u64ty,
+        i128ty,
+        u128ty,
+        bfloatty,
+        halfty,
+        floatty,
+        doublety,
+        fp80ty,
+        fp128ty,
+        fp128ppcty,
+        fdecimal32ty,
+        fdecimal64ty,
+        fdecimal128ty,
+        ptrty,
+        TypeIndexHigh
+    };
+    static enum TypeIndex getTypeIndex(CType ty) {
+        // TODO: Complex, Imaginary
+        if (ty->hasTag(TYVOID))
+            return voidty;
+        if (ty->isInteger()) {
+            bool s = ty->isSigned();
+            auto k = ty->getIntegerKind();
+            switch (k.asLog2()) {
+            case 1: return s ? i1ty : i1ty;
+            case 3: return s ? i8ty : u8ty;
+            case 4: return s ? i16ty : u16ty;
+            case 5: return s ? i32ty : u32ty;
+            case 6: return s ? i64ty : u64ty;
+            case 7: return s ? i128ty : u128ty;
+            default: llvm_unreachable("invalid IntegerKind");
+            }
         }
-    }
-    auto k = ty->getFloatKind();
-    switch (k.asEnum()) {
+        auto k = ty->getFloatKind();
+        switch (k.asEnum()) {
         case F_Half: return halfty;
         case F_BFloat: return bfloatty;
         case F_Float: return floatty;
@@ -68,17 +69,17 @@ static enum TypeIndex getTypeIndex(CType ty) {
         case F_Decimal64: return fdecimal64ty;
         case F_Decimal128: return fdecimal128ty;
         case F_Invalid: break;
+        }
+        llvm_unreachable("invalid FloatKind");
     }
-    llvm_unreachable("invalid FloatKind");
-}
     IRGen(xcc_context &context, DiagnosticsEngine &Diag, SourceMgr &SM, LLVMContext &ctx, const Options &options)
         : DiagnosticHelper{Diag}, context{context}, SM{SM}, ctx{ctx}, B{ctx}, options{options} {
         auto CPU = "generic";
         auto Features = "";
         llvm::TargetOptions opt;
 
-        machine = options.theTarget->createTargetMachine(options.triple.str(), CPU, Features, opt, llvm::Reloc::PIC_, llvm::None,
-                                              llvm::CodeGenOpt::Aggressive);
+        machine = options.theTarget->createTargetMachine(options.triple.str(), CPU, Features, opt, llvm::Reloc::PIC_,
+                                                         llvm::None, llvm::CodeGenOpt::Aggressive);
         if (!machine) {
             fatal("Target::createTargetMachine failed!");
             return;
@@ -121,7 +122,7 @@ static enum TypeIndex getTypeIndex(CType ty) {
     SourceMgr &SM;
     LLVMContext &ctx;
     llvm::IRBuilder<> B;
-    SmallVector<llvm::DIScope*, 7> lexBlocks{};
+    SmallVector<llvm::DIScope *, 7> lexBlocks{};
     llvm::DIBuilder *di = nullptr;
 
     llvm::TargetMachine *machine = nullptr;
@@ -155,32 +156,30 @@ static enum TypeIndex getTypeIndex(CType ty) {
     location_t debugLoc;
     DenseMap<CType, llvm::FunctionType *> function_type_cache{};
 
-    inline void store(llvm::Value* p, llvm::Value* v) {
-        (void)B.CreateStore(v, p);
-    }
-    inline llvm::LoadInst *load(llvm::Value* p, llvm::Type* t) {
+    inline void store(llvm::Value *p, llvm::Value *v) { (void)B.CreateStore(v, p); }
+    inline llvm::LoadInst *load(llvm::Value *p, llvm::Type *t) {
         assert(p);
         assert(t);
         llvm::LoadInst *i = B.CreateLoad(t, p, false);
         return i;
     }
-    inline void store(llvm::Value* p, llvm::Value* v, llvm::Align align) {
+    inline void store(llvm::Value *p, llvm::Value *v, llvm::Align align) {
         llvm::StoreInst *s = B.CreateStore(v, p);
         s->setAlignment(align);
     }
-    inline llvm::LoadInst *load(llvm::Value* p, llvm::Type *t, llvm::Align align) {
+    inline llvm::LoadInst *load(llvm::Value *p, llvm::Type *t, llvm::Align align) {
         assert(p);
         assert(t);
         llvm::LoadInst *i = B.CreateLoad(t, p, false);
         i->setAlignment(align);
         return i;
     }
-    inline void store(llvm::Value* p, llvm::Value* v, llvm::MaybeAlign align) {
+    inline void store(llvm::Value *p, llvm::Value *v, llvm::MaybeAlign align) {
         llvm::StoreInst *s = B.CreateStore(v, p);
         if (align.hasValue())
             s->setAlignment(*align);
     }
-    inline llvm::LoadInst *load(llvm::Value* p, llvm::Type * t, llvm::MaybeAlign align) {
+    inline llvm::LoadInst *load(llvm::Value *p, llvm::Type *t, llvm::MaybeAlign align) {
         assert(p);
         assert(t);
         llvm::LoadInst *i = B.CreateLoad(t, p, false);
@@ -190,10 +189,10 @@ static enum TypeIndex getTypeIndex(CType ty) {
     }
     const llvm::Instruction *getTerminator() { return B.GetInsertBlock()->getTerminator(); }
     llvm::ValueAsMetadata *mdNum(uint64_t num) {
-        llvm::Value* v = llvm::ConstantInt::get(integer_types[context.getIntLog2()], num);
+        llvm::Value *v = llvm::ConstantInt::get(integer_types[context.getIntLog2()], num);
         return llvm::ValueAsMetadata::get(v);
     }
-    llvm::DIScope* getLexScope() { return lexBlocks.back(); }
+    llvm::DIScope *getLexScope() { return lexBlocks.back(); }
     StringRef getFileStr(unsigned ID) { return SM.getFileName(ID); }
     llvm::DIFile *getFile(unsigned ID) {
         if (lastFileID != ID)
@@ -206,13 +205,15 @@ static enum TypeIndex getTypeIndex(CType ty) {
         currentfunction->getBasicBlockList().push_back(theBB);
         B.SetInsertPoint(theBB);
     }
-    void after(llvm::BasicBlock * loc) { B.SetInsertPoint(loc); }
+    void after(llvm::BasicBlock *loc) { B.SetInsertPoint(loc); }
     void emitDebugLocation() { B.SetCurrentDebugLocation(llvm::DebugLoc()); }
     llvm::StructType *wrapComplex(const_CType ty) {
         if (ty->isFloating()) {
             FloatKind k = ty->getFloatKind();
-            if (k.equals(F_Double)) return _complex_double;
-            if (k.equals(F_Float)) return _complex_float;
+            if (k.equals(F_Double))
+                return _complex_double;
+            if (k.equals(F_Float))
+                return _complex_float;
             auto T = float_types[(uint64_t)k];
             return llvm::StructType::get(T, T);
         }
@@ -222,12 +223,11 @@ static enum TypeIndex getTypeIndex(CType ty) {
         auto T = integer_types[ty->getIntegerKind().asLog2()];
         return llvm::StructType::get(T, T);
     }
-    llvm::Type * wrap(CType ty) {
+    llvm::Type *wrap(CType ty) {
         // wrap a CType to LLVM Type
         assert(ty && "wrap a nullptr");
         switch (ty->getKind()) {
-        case TYPRIM:
-            return wrapPrim(ty);
+        case TYPRIM: return wrapPrim(ty);
         case TYPOINTER: return pointer_type;
         case TYFUNCTION: {
             // fast case: search cached
@@ -236,11 +236,11 @@ static enum TypeIndex getTypeIndex(CType ty) {
                 return it->second;
             // slow case: wrap all
             size_t l = ty->params.size();
-            llvm::Type **buf = alloc.Allocate<llvm::Type*>(l);
+            llvm::Type **buf = alloc.Allocate<llvm::Type *>(l);
             size_t i = 0;
             for (const auto &it : ty->params)
                 buf[i++] = wrap(it.ty);
-            auto T = llvm::FunctionType::get(wrap(ty->ret), ArrayRef<llvm::Type*>{buf, i}, ty->isVarArg);
+            auto T = llvm::FunctionType::get(wrap(ty->ret), ArrayRef<llvm::Type *>{buf, i}, ty->isVarArg);
             function_type_cache[ty] = T; // add to cache
             return T;
         }
@@ -248,16 +248,14 @@ static enum TypeIndex getTypeIndex(CType ty) {
         case TYENUM: return integer_types[context.getIntLog2()];
         case TYINCOMPLETE:
             switch (ty->tag) {
-            case TagType_Struct: 
+            case TagType_Struct:
             case TagType_Union: return tags[ty->iidx];
             case TagType_Enum: return integer_types[context.getIntLog2()];
             default: llvm_unreachable("bad TagType");
             }
         case TYBITFIELD:
-        case TYSTRUCT:
-            return tags[ty->sidx];
-        case TYUNION:
-            return tags[ty->uidx];
+        case TYSTRUCT: return tags[ty->sidx];
+        case TYUNION: return tags[ty->uidx];
         default: llvm_unreachable("unexpected type!");
         }
     }
@@ -273,14 +271,10 @@ static enum TypeIndex getTypeIndex(CType ty) {
         }
         return result;
     }
-    void emitDebugLocation(Expr e) {}
-    void emitDebugLocation(Stmt e) {}
-    unsigned getLine(location_t loc) {
-        return 0;
-    }
-    unsigned getCol(location_t loc) {
-        return 0;
-    }
+    void emitDebugLocation(Expr e) { }
+    void emitDebugLocation(Stmt e) { }
+    unsigned getLine(location_t loc) { return 0; }
+    unsigned getCol(location_t loc) { return 0; }
     llvm::Function *addFunction(llvm::FunctionType *ty, const Twine &N) {
         return llvm::Function::Create(ty, ExternalLinkage, N, module);
     }
@@ -301,13 +295,13 @@ static enum TypeIndex getTypeIndex(CType ty) {
             buf[i] = wrap3(ty->params[i].ty);
         return di->createSubroutineType(di->getOrCreateTypeArray(ArrayRef<llvm::Metadata *>(buf, L)));
     }
-    auto getSizeInBits(llvm::Type* ty) { return layout->getTypeSizeInBits(ty); }
+    auto getSizeInBits(llvm::Type *ty) { return layout->getTypeSizeInBits(ty); }
     auto getSizeInBits(CType ty) { return getSizeInBits(wrap2(ty)); }
     auto getSizeInBits(Expr e) { return getSizeInBits(e->ty); }
-    auto getsizeof(llvm::Type* ty) { return layout->getTypeStoreSize(ty); }
+    auto getsizeof(llvm::Type *ty) { return layout->getTypeStoreSize(ty); }
     auto getsizeof(CType ty) { return getsizeof(wrap2(ty)); }
     auto getsizeof(Expr e) { return getsizeof(e->ty); }
-    auto getAlignof(llvm::Type* ty) { return layout->getPrefTypeAlign(ty).value(); }
+    auto getAlignof(llvm::Type *ty) { return layout->getPrefTypeAlign(ty).value(); }
     auto getAlignof(CType ty) { return getAlignof(wrap2(ty)); }
     auto getAlignof(Expr e) { return getAlignof(e->ty); }
     llvm::MDString *mdStr(StringRef str) { return llvm::MDString::get(ctx, str); }
@@ -331,7 +325,7 @@ static enum TypeIndex getTypeIndex(CType ty) {
             di = new llvm::DIBuilder(*module);
             llvm::DIFile *file = di->createFile(source_file, options.CWD.str());
             lexBlocks.push_back(di->createCompileUnit(llvm::dwarf::DW_LANG_C99, file, CC_VERSION_FULL, false, "", 0));
-            ditypes = new llvm::DIType*[(size_t)TypeIndexHigh]; // not initialized!
+            ditypes = new llvm::DIType *[(size_t)TypeIndexHigh]; // not initialized!
             ditypes[voidty] = nullptr;
             ditypes[i1ty] = di->createBasicType("_Bool", 1, llvm::dwarf::DW_ATE_boolean);
             ditypes[i8ty] = di->createBasicType("char", 8, llvm::dwarf::DW_ATE_signed_char);
@@ -367,36 +361,32 @@ static enum TypeIndex getTypeIndex(CType ty) {
             delete[] dtags;
     }
     void run(Stmt s, size_t num_typedefs, size_t num_tags) {
-        vars = new llvm::Value*[num_typedefs]; // not initialized!
+        vars = new llvm::Value *[num_typedefs]; // not initialized!
         tags = new llvm::Type *[num_tags];      // not initialized!
         if (options.g)
-            dtags = new llvm::DIType*[num_tags]; // not initialized!
+            dtags = new llvm::DIType *[num_tags]; // not initialized!
         for (Stmt ptr = s->next; ptr; ptr = ptr->next)
             gen(ptr);
         finalsizeCodeGen();
     }
-    llvm::Value* gen_complex_real(llvm::Value* v) {
-        return B.CreateExtractValue(v, {0});
-    }
-    llvm::Value* gen_complex_imag(llvm::Value* v) {
-        return B.CreateExtractValue(v, {1});
-    }
-    llvm::Value* make_complex_pair(llvm::Type *ty, llvm::Value* a, llvm::Value* b) {
+    llvm::Value *gen_complex_real(llvm::Value *v) { return B.CreateExtractValue(v, {0}); }
+    llvm::Value *gen_complex_imag(llvm::Value *v) { return B.CreateExtractValue(v, {1}); }
+    llvm::Value *make_complex_pair(llvm::Type *ty, llvm::Value *a, llvm::Value *b) {
         auto T = cast<llvm::StructType>(ty);
         if (!currentfunction)
             return llvm::ConstantStruct::get(T, {cast<llvm::Constant>(a), cast<llvm::Constant>(b)});
         return B.CreateInsertValue(B.CreateInsertValue(PoisonValue::get(T), a, {0}), b, {1});
     }
-    llvm::Value* make_complex_pair(CType ty, llvm::Value* a, llvm::Value* b) {
+    llvm::Value *make_complex_pair(CType ty, llvm::Value *a, llvm::Value *b) {
         return make_complex_pair(wrapComplex(ty), a, b);
     }
-    llvm::Value* gen_cond(Expr e) {
-        llvm::Value* V = gen(e);
+    llvm::Value *gen_cond(Expr e) {
+        llvm::Value *V = gen(e);
         if (e->ty->isBool())
             return V;
         if (e->ty->isComplex()) {
-           llvm::Value*a = gen_complex_real(V);
-           llvm::Value*b = gen_complex_imag(V);
+            llvm::Value *a = gen_complex_real(V);
+            llvm::Value *b = gen_complex_imag(V);
             if (e->ty->isFloating()) {
                 auto zero = ConstantFP::getZero(a->getType());
                 a = B.CreateFCmpUNO(a, zero);
@@ -409,42 +399,40 @@ static enum TypeIndex getTypeIndex(CType ty) {
             return B.CreateOr(a, b);
         }
         auto T = V->getType();
-        if (auto I = dyn_cast<llvm::IntegerType>(T)) 
+        if (auto I = dyn_cast<llvm::IntegerType>(T))
             return B.CreateICmpNE(V, ConstantInt::get(I, 0));
         return B.CreateFCmpONE(V, ConstantFP::getZero(T, false));
     }
-    llvm::Type * wrapNoComplexScalar(CType ty) {
+    llvm::Type *wrapNoComplexScalar(CType ty) {
         assert(ty->getKind() == TYPRIM);
         if (ty->isInteger())
             return integer_types[ty->getIntegerKind().asLog2()];
         return float_types[static_cast<uint64_t>(ty->getFloatKind())];
     }
-    llvm::Type *wrapFloating(CType ty) {
-        return float_types[static_cast<uint64_t>(ty->getFloatKind())];
-    }
+    llvm::Type *wrapFloating(CType ty) { return float_types[static_cast<uint64_t>(ty->getFloatKind())]; }
     llvm::Type *wrapPrim(const_CType ty) {
         assert(ty->getKind() == TYPRIM);
         if (LLVM_UNLIKELY(ty->isComplex()))
             return wrapComplex(ty);
-        if (ty->isVoid()) return void_type;
+        if (ty->isVoid())
+            return void_type;
         // for _Imaginary types, they are just reprsentationed as floating types(or interger types as a extension).
         if (ty->isInteger()) {
             return integer_types[ty->getIntegerKind().asLog2()];
         }
         return float_types[static_cast<uint64_t>(ty->getFloatKind())];
     }
-    llvm::Type * wrap2(CType ty) {
+    llvm::Type *wrap2(CType ty) {
         switch (ty->getKind()) {
-        case TYPRIM:
-            return wrapPrim(ty);
+        case TYPRIM: return wrapPrim(ty);
         case TYPOINTER: return pointer_type;
         case TYSTRUCT:
         case TYUNION: {
             size_t L = ty->selems.size();
-            llvm::Type * *buf = alloc.Allocate<llvm::Type*>(L);
+            llvm::Type **buf = alloc.Allocate<llvm::Type *>(L);
             for (size_t i = 0; i < L; ++i)
                 buf[i] = wrap2(ty->selems[i].ty);
-            return llvm::StructType::create(ctx, ArrayRef<llvm::Type*>(buf, L));
+            return llvm::StructType::create(ctx, ArrayRef<llvm::Type *>(buf, L));
         }
         case TYARRAY: return llvm::ArrayType::get(wrap(ty->arrtype), ty->arrsize);
         case TYENUM: return integer_types[context.getIntLog2()];
@@ -534,10 +522,10 @@ static enum TypeIndex getTypeIndex(CType ty) {
         }
     }
     llvm::PHINode *gen_logical(Expr lhs, Expr rhs, bool isand = true) {
-        llvm::BasicBlock * rightBB = llvm::BasicBlock::Create(ctx);
-        llvm::BasicBlock * phiBB = llvm::BasicBlock::Create(ctx);
+        llvm::BasicBlock *rightBB = llvm::BasicBlock::Create(ctx);
+        llvm::BasicBlock *phiBB = llvm::BasicBlock::Create(ctx);
         auto R = gen_cond(lhs);
-        llvm::BasicBlock * leftBB = B.GetInsertBlock();
+        llvm::BasicBlock *leftBB = B.GetInsertBlock();
 
         isand ? B.CreateCondBr(R, rightBB, phiBB) : B.CreateCondBr(R, phiBB, rightBB);
 
@@ -610,7 +598,8 @@ static enum TypeIndex getTypeIndex(CType ty) {
                     if (it.range.ult(CC_SITCH_RANGE_UNROLL_MAX)) {
                         const uint64_t range_end = it.CaseStart->getZExtValue() + it.range.getZExtValue();
                         for (uint64_t i = it.CaseStart->getZExtValue(); i <= range_end;) {
-                            sw->addCase(ConstantInt::get(ctx, APInt(it.CaseStart->getBitWidth(), i++)), labels[it.label]);
+                            sw->addCase(ConstantInt::get(ctx, APInt(it.CaseStart->getBitWidth(), i++)),
+                                        labels[it.label]);
                         }
                         continue;
                     }
@@ -631,12 +620,13 @@ static enum TypeIndex getTypeIndex(CType ty) {
         } break;
         case SHead: llvm_unreachable("");
         case SCompound: {
-//            if (options.g)
-//                lexBlocks.push_back(di->createLexicalBlock(getLexScope(), getFile(s->loc), getLine(s->loc), getCol(s->loc)));
+            //            if (options.g)
+            //                lexBlocks.push_back(di->createLexicalBlock(getLexScope(), getFile(s->loc),
+            //                getLine(s->loc), getCol(s->loc)));
             for (Stmt ptr = s->inner; ptr; ptr = ptr->next)
                 gen(ptr);
-//            if (options.g)
-//                lexBlocks.pop_back();
+            //            if (options.g)
+            //                lexBlocks.pop_back();
         } break;
         case SDecl: {
             if (s->decl_ty->getKind() == TYINCOMPLETE) {
@@ -644,27 +634,28 @@ static enum TypeIndex getTypeIndex(CType ty) {
                     auto T = llvm::StructType::create(ctx, s->decl_ty->name->getKey());
                     tags[s->decl_idx] = T;
                 }
-                //if (options.g) {
-                //    unsigned tag;
-                //    switch (s->decl_ty->tag) {
-                //    case TagType_Struct: tag = llvm::dwarf::DW_TAG_structure_type; break;
-                //    case TagType_Enum: tag = llvm::dwarf::DW_TAG_enumeration_type; break;
-                //    case TagType_Union: tag = llvm::dwarf::DW_TAG_union_type; break;
-                //    default: llvm_unreachable("invalid type tag");
-                //    }
-                    //auto MD = di->createReplaceableCompositeType(tag, s->decl_ty->name->getKey(), getLexScope(),
-//                                                                 getFile(s->loc), s->loc.line);
-                    //dtags[s->decl_idx] = MD;
+                // if (options.g) {
+                //     unsigned tag;
+                //     switch (s->decl_ty->tag) {
+                //     case TagType_Struct: tag = llvm::dwarf::DW_TAG_structure_type; break;
+                //     case TagType_Enum: tag = llvm::dwarf::DW_TAG_enumeration_type; break;
+                //     case TagType_Union: tag = llvm::dwarf::DW_TAG_union_type; break;
+                //     default: llvm_unreachable("invalid type tag");
+                //     }
+                // auto MD = di->createReplaceableCompositeType(tag, s->decl_ty->name->getKey(), getLexScope(),
+                //                                                                 getFile(s->loc), s->loc.line);
+                // dtags[s->decl_idx] = MD;
                 //}
             } else {
                 if (s->decl_ty->getKind() != TYENUM) {
                     size_t l = s->decl_ty->selems.size();
-                    llvm::Type * *buf = alloc.Allocate<llvm::Type*>(l);
+                    llvm::Type **buf = alloc.Allocate<llvm::Type *>(l);
                     for (size_t i = 0; i < l; ++i)
                         buf[i] = wrap(s->decl_ty->selems[i].ty);
-                    ArrayRef<llvm::Type*> arr(buf, l);
-                    tags[s->decl_idx] = s->decl_ty->sname ? llvm::StructType::create(ctx, arr, s->decl_ty->sname->getKey())
-                                                          : llvm::StructType::create(ctx, arr);
+                    ArrayRef<llvm::Type *> arr(buf, l);
+                    tags[s->decl_idx] = s->decl_ty->sname
+                                            ? llvm::StructType::create(ctx, arr, s->decl_ty->sname->getKey())
+                                            : llvm::StructType::create(ctx, arr);
                 }
             }
         } break;
@@ -672,10 +663,10 @@ static enum TypeIndex getTypeIndex(CType ty) {
             if (s->now->tag != TagType_Enum) {
                 auto T = cast<llvm::StructType>(tags[s->prev_idx]);
                 size_t L = s->now->selems.size();
-                llvm::Type * *buf = alloc.Allocate<llvm::Type*>(L);
+                llvm::Type **buf = alloc.Allocate<llvm::Type *>(L);
                 for (size_t i = 0; i < L; ++i)
                     buf[i] = wrap(s->now->selems[i].ty);
-                T->setBody(ArrayRef<llvm::Type*>(buf, L));
+                T->setBody(ArrayRef<llvm::Type *>(buf, L));
             }
             // replaceAllUsesWith
         } break;
@@ -697,7 +688,7 @@ static enum TypeIndex getTypeIndex(CType ty) {
                 lexBlocks.push_back(sp);
                 emitDebugLocation();
             }*/
-            llvm::BasicBlock * entry = llvm::BasicBlock::Create(ctx, "entry");
+            llvm::BasicBlock *entry = llvm::BasicBlock::Create(ctx, "entry");
             append(entry);
             for (unsigned i = 0; i < s->numLabels; i++)
                 this->labels.push_back(llvm::BasicBlock::Create(ctx));
@@ -707,9 +698,11 @@ static enum TypeIndex getTypeIndex(CType ty) {
                 auto p = B.CreateAlloca(pty, layout->getAllocaAddrSpace());
                 [[maybe_unused]] auto name = s->functy->params[arg_no].name;
                 if (options.g) {
-                    //auto meta = di->createParameterVariable(getLexScope(), name->getKey(), arg_no, getFile(s->loc.id),
-//                                                            s->loc.line, wrap3(s->functy->params[arg_no].ty));
-                    //di->insertDeclare(p, meta, di->createExpression(), wrap(s->loc), entry);
+                    // auto meta = di->createParameterVariable(getLexScope(), name->getKey(), arg_no,
+                    // getFile(s->loc.id),
+                    //                                                            s->loc.line,
+                    //                                                            wrap3(s->functy->params[arg_no].ty));
+                    // di->insertDeclare(p, meta, di->createExpression(), wrap(s->loc), entry);
                 }
                 store(p, arg);
                 vars[s->args[arg_no++]] = p;
@@ -746,9 +739,10 @@ static enum TypeIndex getTypeIndex(CType ty) {
             BB->insertInto(currentfunction);
             if (options.g && s->labelName) {
                 BB->setName(s->labelName->getKey());
-//                auto LabelInfo =
-//                    di->createLabel(getLexScope(), s->labelName->getKey(), getFile(s->loc.id), s->loc.line);
-//                di->insertLabel(LabelInfo, wrap(s->loc), BB);
+                //                auto LabelInfo =
+                //                    di->createLabel(getLexScope(), s->labelName->getKey(), getFile(s->loc.id),
+                //                    s->loc.line);
+                //                di->insertLabel(LabelInfo, wrap(s->loc), BB);
             }
         } break;
         case SGoto:
@@ -800,38 +794,34 @@ static enum TypeIndex getTypeIndex(CType ty) {
                         break;
                     }
                     auto tags = varty->getTags();
-                    llvm::Type * ty = wrap(varty);
+                    llvm::Type *ty = wrap(varty);
                     llvm::Constant *ginit = init ? cast<llvm::Constant>(gen(init)) : llvm::Constant::getNullValue(ty);
-                    GV = new llvm::GlobalVariable(*module, ty, tags & TYCONST, ExternalLinkage, nullptr, name->getKey());
+                    GV =
+                        new llvm::GlobalVariable(*module, ty, tags & TYCONST, ExternalLinkage, nullptr, name->getKey());
                     GV->setAlignment(align);
                     GV->setAlignment(layout->getPreferredAlign(GV));
-                    if (!(tags & TYEXTERN)) 
+                    if (!(tags & TYEXTERN))
                         GV->setInitializer(ginit), GV->setDSOLocal(true);
                     if (tags & TYTHREAD_LOCAL)
                         GV->setThreadLocal(true);
-                    if (tags & TYSTATIC) 
+                    if (tags & TYSTATIC)
                         GV->setLinkage(InternalLinkage);
-                    else if (tags & TYEXTERN) 
+                    else if (tags & TYEXTERN)
                         GV->setLinkage(ExternalLinkage);
                     else if (!init && !(tags & TYCONST))
                         GV->setLinkage(CommonLinkage);
                     vars[idx] = GV;
-/*                    if (options.g) {
-                        StringRef linkage = getLinkageName(varty->getTags());
-                        auto gve = di->createGlobalVariableExpression(getLexScope(), name->getKey(), linkage,
-                                                                      getFile(s->loc.id), s->loc.line, wrap3(varty),
-                                                                      false, di->createExpression());
-                        GV->addDebugInfo(gve);
-                    }*/
+                    /*                    if (options.g) {
+                                            StringRef linkage = getLinkageName(varty->getTags());
+                                            auto gve = di->createGlobalVariableExpression(getLexScope(), name->getKey(),
+                       linkage, getFile(s->loc.id), s->loc.line, wrap3(varty), false, di->createExpression());
+                                            GV->addDebugInfo(gve);
+                                        }*/
                 } else {
-                    llvm::Type * ty = wrap(varty);
-                    llvm::AllocaInst *val = new llvm::AllocaInst(
-                        ty, 
-                        layout->getAllocaAddrSpace(),
-                        static_cast<llvm::Value *>(nullptr), 
-                        layout->getPrefTypeAlign(ty), 
-                        name->getKey()
-                    );
+                    llvm::Type *ty = wrap(varty);
+                    llvm::AllocaInst *val =
+                        new llvm::AllocaInst(ty, layout->getAllocaAddrSpace(), static_cast<llvm::Value *>(nullptr),
+                                             layout->getPrefTypeAlign(ty), name->getKey());
                     if (!varty->isVLA()) {
                         // important!
                         // Move allocas at entry block to prevent memory leak(re-alloca variables in loop)
@@ -842,11 +832,11 @@ static enum TypeIndex getTypeIndex(CType ty) {
                         instList.insert(allocaInsertPt, val);
                     }
                     vars[idx] = val;
-/*                    if (options.g) {
-                        auto v = di->createAutoVariable(getLexScope(), name->getKey(), getFile(s->loc.id), s->loc.line,
-                                                        wrap3(varty));
-                        di->insertDeclare(val, v, di->createExpression(), wrap(s->loc), B.GetInsertBlock());
-                    }*/
+                    /*                    if (options.g) {
+                                            auto v = di->createAutoVariable(getLexScope(), name->getKey(),
+                       getFile(s->loc.id), s->loc.line, wrap3(varty)); di->insertDeclare(val, v, di->createExpression(),
+                       wrap(s->loc), B.GetInsertBlock());
+                                        }*/
                     if (align.hasValue())
                         val->setAlignment(align.valueOrOne());
                     if (init) {
@@ -858,9 +848,9 @@ static enum TypeIndex getTypeIndex(CType ty) {
         } break;
         }
     }
-    llvm::Value* getStruct(Expr e) { return nullptr; }
-    llvm::Value* getArray(Expr e) { return nullptr; }
-    llvm::GlobalVariable *CreateGlobalString(StringRef bstr, llvm::Type * &ty) {
+    llvm::Value *getStruct(Expr e) { return nullptr; }
+    llvm::Value *getArray(Expr e) { return nullptr; }
+    llvm::GlobalVariable *CreateGlobalString(StringRef bstr, llvm::Type *&ty) {
         auto str = llvm::ConstantDataArray::getString(ctx, bstr, true);
         ty = str->getType();
         auto GV = new llvm::GlobalVariable(*module, ty, true, PrivateLinkage, str);
@@ -868,7 +858,7 @@ static enum TypeIndex getTypeIndex(CType ty) {
         GV->setAlignment(llvm::Align(1));
         return GV;
     }
-    llvm::Value* subscript(Expr e, llvm::Type * &ty) {
+    llvm::Value *subscript(Expr e, llvm::Type *&ty) {
         ty = wrap(e->left->ty->p);
         llvm::Value *v = gen(e->left);
         llvm::Value *r = gen(e->right);
@@ -888,15 +878,14 @@ static enum TypeIndex getTypeIndex(CType ty) {
             case AddressOf: return getAddress(e->uoperand);
             case Dereference: return gen(e->uoperand);
             case C__real__:
-            case C__imag__:
-            {
+            case C__imag__: {
                 auto ty = wrap(e->uoperand->ty);
                 return B.CreateInBoundsGEP(ty, getAddress(e->uoperand), {i32_0, e->uop == C__real__ ? i32_0 : i32_1});
             }
             default: llvm_unreachable("");
             }
         case ESubscript: {
-            llvm::Type * ty;
+            llvm::Type *ty;
             return subscript(e, ty);
         }
         case EArrToAddress: return getAddress(e->voidexpr);
@@ -915,7 +904,7 @@ static enum TypeIndex getTypeIndex(CType ty) {
         }
         default:
             if (e->ty->hasTag(TYREPLACED_CONSTANT)) {
-                auto e2 = reinterpret_cast<ReplacedExpr*>(e);
+                auto e2 = reinterpret_cast<ReplacedExpr *>(e);
                 return vars[e2->id];
             }
 #if CC_DEBUG
@@ -924,7 +913,7 @@ static enum TypeIndex getTypeIndex(CType ty) {
             llvm_unreachable("");
         }
     }
-    llvm::Value* gen(Expr e) {
+    llvm::Value *gen(Expr e) {
         emitDebugLocation(e);
         switch (e->k) {
         case EConstant: return e->C;
@@ -936,7 +925,7 @@ static enum TypeIndex getTypeIndex(CType ty) {
             auto ty = wrap(e->ty);
             auto a = e->poperand->ty->getAlignAsMaybeAlign();
             auto r = load(p, ty, a);
-            llvm::Value* v;
+            llvm::Value *v;
             if (e->ty->getKind() == TYPOINTER) {
                 ty = wrap(e->poperand->ty->p);
                 v = B.CreateInBoundsGEP(ty, r, {e->pop == PostfixIncrement ? i32_1 : i32_n1});
@@ -949,17 +938,17 @@ static enum TypeIndex getTypeIndex(CType ty) {
         }
         case EArrToAddress: return getAddress(e->voidexpr);
         case ESubscript: {
-            llvm::Type * ty;
+            llvm::Type *ty;
             auto v = subscript(e, ty);
             return load(v, ty);
         }
-        case EMemberAccess: 
-        {
+        case EMemberAccess: {
             bool isVar = e->k == EVar;
             auto ty = wrap(e->obj->ty);
             auto base = isVar ? getAddress(e->obj) : gen(e->obj);
             if (isVar || e->obj->ty->getKind() == TYPOINTER) {
-                auto pMember = B.CreateInBoundsGEP(ty, base, {llvm::ConstantInt::get(integer_types[context.getIntLog2()], e->idx)});
+                auto pMember = B.CreateInBoundsGEP(
+                    ty, base, {llvm::ConstantInt::get(integer_types[context.getIntLog2()], e->idx)});
                 return load(pMember, wrap(e->ty), e->obj->ty->getAlignAsMaybeAlign());
             }
             return B.CreateExtractValue(load(base, ty, e->obj->ty->getAlignAsMaybeAlign()), e->idx);
@@ -980,8 +969,8 @@ static enum TypeIndex getTypeIndex(CType ty) {
                     s->setOrdering(llvm::AtomicOrdering::SequentiallyConsistent);
                 return rhs;
             }
-            llvm::Value*lhs = gen(e->lhs);
-            llvm::Value*rhs = gen(e->rhs);
+            llvm::Value *lhs = gen(e->lhs);
+            llvm::Value *rhs = gen(e->rhs);
             unsigned pop = 0;
             switch (e->bop) {
             case LogicalOr: llvm_unreachable("");
@@ -999,74 +988,49 @@ BINOP_ATOMIC_RMW:
                                          llvm::AtomicOrdering::SequentiallyConsistent);
             case SAdd: return B.CreateNSWAdd(lhs, rhs);
             // clang::ComplexExprEmitter::EmitBinAdd
-            case CAdd: {                
-                llvm::Value
-                 * const a = gen_complex_real(lhs),
-                 * const b = gen_complex_imag(lhs),
-                 * const c = gen_complex_real(rhs),
-                 * const d = gen_complex_imag(rhs),
-                 * const l = B.CreateAdd(a, c),
-                 * const r = B.CreateAdd(b, d); 
+            case CAdd: {
+                llvm::Value *const a = gen_complex_real(lhs), *const b = gen_complex_imag(lhs),
+                                   *const c = gen_complex_real(rhs), *const d = gen_complex_imag(rhs),
+                                   *const l = B.CreateAdd(a, c), *const r = B.CreateAdd(b, d);
                 return make_complex_pair(e->ty, l, r);
             }
-            case CFAdd: {                
-                llvm::Value
-                 * const a = gen_complex_real(lhs),
-                 * const b = gen_complex_imag(lhs),
-                 * const c = gen_complex_real(rhs),
-                 * const d = gen_complex_imag(rhs),
-                 * const l = B.CreateFAdd(a, c),
-                 * const r = B.CreateFAdd(b, d); 
+            case CFAdd: {
+                llvm::Value *const a = gen_complex_real(lhs), *const b = gen_complex_imag(lhs),
+                                   *const c = gen_complex_real(rhs), *const d = gen_complex_imag(rhs),
+                                   *const l = B.CreateFAdd(a, c), *const r = B.CreateFAdd(b, d);
                 return make_complex_pair(e->ty, l, r);
             }
             // clang::ComplexExprEmitter::EmitBinSub
-            case CFSub: {                
-                llvm::Value
-                 * const a = gen_complex_real(lhs),
-                 * const b = gen_complex_imag(lhs),
-                 * const c = gen_complex_real(rhs),
-                 * const d = gen_complex_imag(rhs),
-                 * const l = B.CreateFSub(a, c),
-                 * const r = B.CreateFSub(b, d); 
+            case CFSub: {
+                llvm::Value *const a = gen_complex_real(lhs), *const b = gen_complex_imag(lhs),
+                                   *const c = gen_complex_real(rhs), *const d = gen_complex_imag(rhs),
+                                   *const l = B.CreateFSub(a, c), *const r = B.CreateFSub(b, d);
                 return make_complex_pair(e->ty, l, r);
             }
-            case CSub: {                
-                llvm::Value
-                 * const a = gen_complex_real(lhs),
-                 * const b = gen_complex_imag(lhs),
-                 * const c = gen_complex_real(rhs),
-                 * const d = gen_complex_imag(rhs),
-                 * const l = B.CreateSub(a, c),
-                 * const r = B.CreateSub(b, d); 
+            case CSub: {
+                llvm::Value *const a = gen_complex_real(lhs), *const b = gen_complex_imag(lhs),
+                                   *const c = gen_complex_real(rhs), *const d = gen_complex_imag(rhs),
+                                   *const l = B.CreateSub(a, c), *const r = B.CreateSub(b, d);
                 return make_complex_pair(e->ty, l, r);
             }
             // clang::ComplexExprEmitter::EmitBinMul
-            case CFMul:
-            {
+            case CFMul: {
                 llvm::Value *LibCallI, *LibCallR;
                 llvm::MDBuilder MDHelper(ctx);
                 auto ty = cast<llvm::StructType>(wrap(e->ty));
-                llvm::Value
-                    *const a = gen_complex_real(lhs),
-                    *const b = gen_complex_imag(lhs),
-                    *const c = gen_complex_real(rhs),
-                    *const d = gen_complex_imag(rhs),
-                    *const AC = B.CreateFMul(a, c),
-                    *const BD = B.CreateFMul(b, d),
-                    *const AD = B.CreateFMul(a, d),
-                    *const BC = B.CreateFMul(b, c),
-                    *const ResR = B.CreateFSub(AC, BD),
-                    *const ResI = B.CreateFAdd(AD, BC),
-                    *const IsRNaN = B.CreateFCmpUNO(ResR, ResR);
-                const auto 
-                    ContBB = llvm::BasicBlock::Create(ctx),
-                    INaNBB = llvm::BasicBlock::Create(ctx);
+                llvm::Value *const a = gen_complex_real(lhs), *const b = gen_complex_imag(lhs),
+                                   *const c = gen_complex_real(rhs), *const d = gen_complex_imag(rhs),
+                                   *const AC = B.CreateFMul(a, c), *const BD = B.CreateFMul(b, d),
+                                   *const AD = B.CreateFMul(a, d), *const BC = B.CreateFMul(b, c),
+                                   *const ResR = B.CreateFSub(AC, BD), *const ResI = B.CreateFAdd(AD, BC),
+                                   *const IsRNaN = B.CreateFCmpUNO(ResR, ResR);
+                const auto ContBB = llvm::BasicBlock::Create(ctx), INaNBB = llvm::BasicBlock::Create(ctx);
                 auto Branch = B.CreateCondBr(IsRNaN, INaNBB, ContBB);
                 llvm::MDNode *BrWeight = MDHelper.createBranchWeights(1, (1U << 20) - 1);
                 auto OrigBB = Branch->getParent();
                 Branch->setMetadata(LLVMContext::MD_prof, BrWeight);
                 append(INaNBB);
-                llvm::Value* const IsINaN = B.CreateFCmpUNO(ResI, ResI);
+                llvm::Value *const IsINaN = B.CreateFCmpUNO(ResI, ResI);
                 auto LibCallBB = llvm::BasicBlock::Create(ctx);
                 Branch = B.CreateCondBr(IsINaN, LibCallBB, ContBB);
                 Branch->setMetadata(LLVMContext::MD_prof, BrWeight);
@@ -1075,43 +1039,22 @@ BINOP_ATOMIC_RMW:
                     auto real_ty = ty->getTypeAtIndex((unsigned)0);
                     StringRef LibCallName;
                     switch (real_ty->getTypeID()) {
-                        default:
-                          llvm_unreachable("Unsupported floating point type!");
-                        case llvm::Type::HalfTyID:
-                          LibCallName = "__mulhc3";
-                          break;
-                        case llvm::Type::FloatTyID:
-                          LibCallName = "__mulsc3";
-                          break;
-                        case llvm::Type::DoubleTyID:
-                          LibCallName = "__muldc3";
-                          break;
-                        case llvm::Type::PPC_FP128TyID:
-                          LibCallName = "__multc3";
-                          break;
-                        case llvm::Type::X86_FP80TyID:
-                          LibCallName = "__mulxc3";
-                          break;
-                        case llvm::Type::FP128TyID:
-                          LibCallName = "__multc3";
-                          break;
+                    default: llvm_unreachable("Unsupported floating point type!");
+                    case llvm::Type::HalfTyID: LibCallName = "__mulhc3"; break;
+                    case llvm::Type::FloatTyID: LibCallName = "__mulsc3"; break;
+                    case llvm::Type::DoubleTyID: LibCallName = "__muldc3"; break;
+                    case llvm::Type::PPC_FP128TyID: LibCallName = "__multc3"; break;
+                    case llvm::Type::X86_FP80TyID: LibCallName = "__mulxc3"; break;
+                    case llvm::Type::FP128TyID: LibCallName = "__multc3"; break;
                     }
-                    ArrayRef<llvm::Type*> Params= {real_ty, real_ty, real_ty, real_ty};
-                    ArrayRef<llvm::Value*> Args = {a, b, c, d};
+                    ArrayRef<llvm::Type *> Params = {real_ty, real_ty, real_ty, real_ty};
+                    ArrayRef<llvm::Value *> Args = {a, b, c, d};
                     auto FTY = llvm::FunctionType::get(ty, Params, false);
                     llvm::AttributeList attrs = llvm::AttributeList::get(
-                        ctx, 
-                        llvm::AttributeList::FunctionIndex,
-                    {
-                        llvm::Attribute::NoUnwind,
-                        llvm::Attribute::ReadNone,
-                        llvm::Attribute::MustProgress,
-                        llvm::Attribute::WillReturn,
-                        llvm::Attribute::NoRecurse,
-                        llvm::Attribute::NoSync,
-                        llvm::Attribute::NoFree
-                    }
-                    );
+                        ctx, llvm::AttributeList::FunctionIndex,
+                        {llvm::Attribute::NoUnwind, llvm::Attribute::ReadNone, llvm::Attribute::MustProgress,
+                         llvm::Attribute::WillReturn, llvm::Attribute::NoRecurse, llvm::Attribute::NoSync,
+                         llvm::Attribute::NoFree});
                     llvm::FunctionCallee F_C = module->getOrInsertFunction(LibCallName, FTY, attrs);
                     auto LibCallRes = B.CreateCall(F_C, Args);
                     LibCallR = gen_complex_real(LibCallRes);
@@ -1131,115 +1074,67 @@ BINOP_ATOMIC_RMW:
             }
             case CMul: {
                 // (a + ib) * (c + id) = (a * c - b * d) + i(a * d + b * c)
-                llvm::Value
-                 * const a = gen_complex_real(lhs),
-                 * const b = gen_complex_imag(lhs),
-                 * const c = gen_complex_real(rhs),
-                 * const d = gen_complex_imag(rhs);
-                return make_complex_pair
-                (   wrapComplexForInteger(e->ty),
-                    B.CreateSub(B.CreateMul(a, c), B.CreateMul(b, d)),
-                    B.CreateSub(B.CreateMul(a, d), B.CreateMul(b, c))
-                );
+                llvm::Value *const a = gen_complex_real(lhs), *const b = gen_complex_imag(lhs),
+                                   *const c = gen_complex_real(rhs), *const d = gen_complex_imag(rhs);
+                return make_complex_pair(wrapComplexForInteger(e->ty),
+                                         B.CreateSub(B.CreateMul(a, c), B.CreateMul(b, d)),
+                                         B.CreateSub(B.CreateMul(a, d), B.CreateMul(b, c)));
             }
             // clang::ComplexExprEmitter::EmitBinDiv
-            case CSDiv:
-            {
+            case CSDiv: {
                 // (a+ib) / (c+id) = ((ac+bd)/(cc+dd)) + i((bc-ad)/(cc+dd))
-                llvm::Value
-                 * const a = gen_complex_real(lhs),
-                 * const b = gen_complex_imag(lhs),
-                 * const c = gen_complex_real(rhs),
-                 * const d = gen_complex_imag(rhs),
-                 * const cc = B.CreateMul(c, c),
-                 * const dd = B.CreateMul(d, d),
-                 * const cc_plus_dd = B.CreateAdd(cc, dd),
-                 * const ac = B.CreateAdd(a, c),
-                 * const bd = B.CreateAdd(b, d),
-                 * const bc = B.CreateAdd(b, c),
-                 * const ad = B.CreateAdd(a, d),
-                 * const L = B.CreateSDiv(B.CreateAdd(ac, bd), cc_plus_dd),
-                 * const R = B.CreateSDiv(B.CreateSub(bc, ad), cc_plus_dd);
+                llvm::Value *const a = gen_complex_real(lhs), *const b = gen_complex_imag(lhs),
+                                   *const c = gen_complex_real(rhs), *const d = gen_complex_imag(rhs),
+                                   *const cc = B.CreateMul(c, c), *const dd = B.CreateMul(d, d),
+                                   *const cc_plus_dd = B.CreateAdd(cc, dd), *const ac = B.CreateAdd(a, c),
+                                   *const bd = B.CreateAdd(b, d), *const bc = B.CreateAdd(b, c),
+                                   *const ad = B.CreateAdd(a, d),
+                                   *const L = B.CreateSDiv(B.CreateAdd(ac, bd), cc_plus_dd),
+                                   *const R = B.CreateSDiv(B.CreateSub(bc, ad), cc_plus_dd);
                 return make_complex_pair(wrapComplexForInteger(e->ty), L, R);
             }
-            case CUDiv:
-            {
+            case CUDiv: {
                 // (a+ib) / (c+id) = ((ac+bd)/(cc+dd)) + i((bc-ad)/(cc+dd))
-                llvm::Value
-                 *const a = gen_complex_real(lhs),
-                 *const b = gen_complex_imag(lhs),
-                 *const c = gen_complex_real(rhs),
-                 *const d = gen_complex_imag(rhs),
-                 *const cc = B.CreateMul(c, c),
-                 *const dd = B.CreateMul(d, d),
-                 *const cc_plus_dd = B.CreateAdd(cc, dd),
-                 *const ac = B.CreateAdd(a, c),
-                 *const bd = B.CreateAdd(b, d),
-                 *const bc = B.CreateAdd(b, c),
-                 *const ad = B.CreateAdd(a, d),
-                 *const L = B.CreateUDiv(B.CreateAdd(ac, bd), cc_plus_dd),
-                 *const R = B.CreateUDiv(B.CreateSub(bc, ad), cc_plus_dd);
+                llvm::Value *const a = gen_complex_real(lhs), *const b = gen_complex_imag(lhs),
+                                   *const c = gen_complex_real(rhs), *const d = gen_complex_imag(rhs),
+                                   *const cc = B.CreateMul(c, c), *const dd = B.CreateMul(d, d),
+                                   *const cc_plus_dd = B.CreateAdd(cc, dd), *const ac = B.CreateAdd(a, c),
+                                   *const bd = B.CreateAdd(b, d), *const bc = B.CreateAdd(b, c),
+                                   *const ad = B.CreateAdd(a, d),
+                                   *const L = B.CreateUDiv(B.CreateAdd(ac, bd), cc_plus_dd),
+                                   *const R = B.CreateUDiv(B.CreateSub(bc, ad), cc_plus_dd);
                 return make_complex_pair(wrapComplexForInteger(e->ty), L, R);
             }
-            case CFDiv:
-            {
+            case CFDiv: {
                 auto ty = cast<llvm::StructType>(wrapComplex(e->ty));
                 auto real_ty = ty->getTypeAtIndex((unsigned)0);
-                llvm::Value
-                 * const a = gen_complex_real(lhs),
-                 * const b = gen_complex_imag(lhs),
-                 * const c = gen_complex_real(rhs),
-                 * const d = gen_complex_imag(rhs);
+                llvm::Value *const a = gen_complex_real(lhs), *const b = gen_complex_imag(lhs),
+                                   *const c = gen_complex_real(rhs), *const d = gen_complex_imag(rhs);
                 StringRef LibCallName;
                 switch (real_ty->getTypeID()) {
-                    default:
-                      llvm_unreachable("Unsupported floating point type!");
-                    case llvm::Type::HalfTyID:
-                        LibCallName = "__divhc3";
-                        break;
-                    case llvm::Type::FloatTyID:
-                        LibCallName = "__divsc3";
-                        break;
-                    case llvm::Type::DoubleTyID:
-                        LibCallName = "__divdc3";
-                        break;
-                    case llvm::Type::PPC_FP128TyID:
-                        LibCallName = "__divtc3";
-                        break;
-                    case llvm::Type::X86_FP80TyID:
-                        LibCallName = "__divxc3";
-                        break;
-                    case llvm::Type::FP128TyID:
-                        LibCallName = "__divtc3";
-                        break;
-                    }
-                ArrayRef<llvm::Type*> Params= {real_ty, real_ty, real_ty, real_ty};
-                ArrayRef<llvm::Value*> Args = {a, b, c, d};
+                default: llvm_unreachable("Unsupported floating point type!");
+                case llvm::Type::HalfTyID: LibCallName = "__divhc3"; break;
+                case llvm::Type::FloatTyID: LibCallName = "__divsc3"; break;
+                case llvm::Type::DoubleTyID: LibCallName = "__divdc3"; break;
+                case llvm::Type::PPC_FP128TyID: LibCallName = "__divtc3"; break;
+                case llvm::Type::X86_FP80TyID: LibCallName = "__divxc3"; break;
+                case llvm::Type::FP128TyID: LibCallName = "__divtc3"; break;
+                }
+                ArrayRef<llvm::Type *> Params = {real_ty, real_ty, real_ty, real_ty};
+                ArrayRef<llvm::Value *> Args = {a, b, c, d};
                 auto FTY = llvm::FunctionType::get(ty, Params, false);
                 llvm::AttributeList attrs = llvm::AttributeList::get(
-                    ctx, 
-                    llvm::AttributeList::FunctionIndex,
-                {
-                    llvm::Attribute::NoUnwind,
-                    llvm::Attribute::ReadNone,
-                    llvm::Attribute::MustProgress,
-                    llvm::Attribute::WillReturn,
-                    llvm::Attribute::NoRecurse,
-                    llvm::Attribute::NoSync,
-                    llvm::Attribute::NoFree
-                }
-                );
+                    ctx, llvm::AttributeList::FunctionIndex,
+                    {llvm::Attribute::NoUnwind, llvm::Attribute::ReadNone, llvm::Attribute::MustProgress,
+                     llvm::Attribute::WillReturn, llvm::Attribute::NoRecurse, llvm::Attribute::NoSync,
+                     llvm::Attribute::NoFree});
                 llvm::FunctionCallee F_C = module->getOrInsertFunction(LibCallName, FTY, attrs);
                 return B.CreateCall(F_C, Args);
             }
-            case CEQ:
-            {
-                llvm::Value
-                 * const a = gen_complex_real(lhs),
-                 * const b = gen_complex_imag(lhs),
-                 * const c = gen_complex_real(rhs),
-                 * const d = gen_complex_imag(rhs);
-                llvm::Value* L,* R;
+            case CEQ: {
+                llvm::Value *const a = gen_complex_real(lhs), *const b = gen_complex_imag(lhs),
+                                   *const c = gen_complex_real(rhs), *const d = gen_complex_imag(rhs);
+                llvm::Value *L, *R;
                 if (e->lhs->ty->isFloating()) {
                     L = B.CreateFCmpOEQ(a, c);
                     R = B.CreateFCmpOEQ(b, d);
@@ -1249,14 +1144,10 @@ BINOP_ATOMIC_RMW:
                 }
                 return B.CreateAnd(L, R);
             }
-            case CNE:
-            {
-                llvm::Value
-                 * const a = gen_complex_real(lhs),
-                 * const b = gen_complex_imag(lhs),
-                 * const c = gen_complex_real(rhs),
-                 * const d = gen_complex_imag(rhs);
-                llvm::Value* L,* R;
+            case CNE: {
+                llvm::Value *const a = gen_complex_real(lhs), *const b = gen_complex_imag(lhs),
+                                   *const c = gen_complex_real(rhs), *const d = gen_complex_imag(rhs);
+                llvm::Value *L, *R;
                 if (e->lhs->ty->isFloating()) {
                     L = B.CreateFCmpONE(a, c);
                     R = B.CreateFCmpONE(b, d);
@@ -1282,8 +1173,7 @@ BINOP_ATOMIC_RMW:
                 if (!e->rhs->ty->isSigned())
                     rhs = B.CreateZExt(rhs, intptrTy);
                 return B.CreateInBoundsGEP(wrap(e->ty->p), lhs, {rhs});
-            case Complex_CMPLX:
-                return make_complex_pair(e->ty, lhs, rhs);
+            case Complex_CMPLX: return make_complex_pair(e->ty, lhs, rhs);
             case EQ: pop = static_cast<unsigned>(llvm::CmpInst::ICMP_EQ); goto BINOP_ICMP;
             case NE: pop = static_cast<unsigned>(llvm::CmpInst::ICMP_NE); goto BINOP_ICMP;
             case UGT: pop = static_cast<unsigned>(llvm::CmpInst::ICMP_UGT); goto BINOP_ICMP;
@@ -1338,10 +1228,11 @@ BINOP_SHIFT:
             }
         }
         case EVoid: return (void)gen(e->voidexpr), nullptr;
-        case EUnary:
-        {
-            if (e->uop == AddressOf) return getAddress(e->uoperand);
-            if (e->uop == ToBool) return gen_cond(e->uoperand);
+        case EUnary: {
+            if (e->uop == AddressOf)
+                return getAddress(e->uoperand);
+            if (e->uop == ToBool)
+                return gen_cond(e->uoperand);
             auto Val = gen(e->uoperand);
             switch (e->uop) {
             case SNeg: return B.CreateNSWNeg(Val);
@@ -1360,8 +1251,8 @@ BINOP_SHIFT:
             }
             case LogicalNot: return B.CreateIsNull(Val);
             // clang::ComplexExprEmitter::VisitUnaryMinus
-            case CNeg: {                
-                llvm::Value* l,* r;
+            case CNeg: {
+                llvm::Value *l, *r;
                 if (e->ty->isFloating()) {
                     l = B.CreateFNeg(gen_complex_real(Val));
                     r = B.CreateFNeg(gen_complex_imag(Val));
@@ -1374,7 +1265,8 @@ BINOP_SHIFT:
             // clang::ComplexExprEmitter::VisitUnaryNot
             case CConj: {
                 auto r = gen_complex_imag(Val);
-                return make_complex_pair(e->ty, gen_complex_real(Val), e->ty->isFloating() ? B.CreateFNeg(r) : B.CreateNeg(r));
+                return make_complex_pair(e->ty, gen_complex_real(Val),
+                                         e->ty->isFloating() ? B.CreateFNeg(r) : B.CreateNeg(r));
             }
             case C__real__: return gen_complex_real(Val);
             case C__imag__: return gen_complex_imag(Val);
@@ -1394,9 +1286,8 @@ BINOP_SHIFT:
         }
         case ECondition: {
             if (e->ty->hasTag(TYVOID)) {
-                llvm::BasicBlock * iftrue = llvm::BasicBlock::Create(ctx, "", currentfunction),
-                                    *iffalse = llvm::BasicBlock::Create(ctx),
-                                    *ifend = llvm::BasicBlock::Create(ctx);
+                llvm::BasicBlock *iftrue = llvm::BasicBlock::Create(ctx, "", currentfunction),
+                                 *iffalse = llvm::BasicBlock::Create(ctx), *ifend = llvm::BasicBlock::Create(ctx);
                 B.CreateCondBr(gen_cond(e->cond), iftrue, iffalse);
                 after(iftrue);
                 (void)gen(e->cleft);
@@ -1408,18 +1299,17 @@ BINOP_SHIFT:
             }
             if (e->cleft->k == EConstant && e->cright->k == EConstant)
                 return B.CreateSelect(gen_cond(e->cond), gen(e->cleft), gen(e->cright));
-            llvm::Type * ty = wrap(e->cleft->ty);
-            llvm::BasicBlock * iftrue = llvm::BasicBlock::Create(ctx, "", currentfunction),
-                    *iffalse = llvm::BasicBlock::Create(ctx),
-                    *ifend = llvm::BasicBlock::Create(ctx);
+            llvm::Type *ty = wrap(e->cleft->ty);
+            llvm::BasicBlock *iftrue = llvm::BasicBlock::Create(ctx, "", currentfunction),
+                             *iffalse = llvm::BasicBlock::Create(ctx), *ifend = llvm::BasicBlock::Create(ctx);
             B.CreateCondBr(gen_cond(e->cond), iftrue, iffalse);
 
             after(iftrue);
-            llvm::Value* left = gen(e->cleft);
+            llvm::Value *left = gen(e->cleft);
             B.CreateBr(ifend);
 
             append(iffalse);
-            llvm::Value* right = gen(e->cright);
+            llvm::Value *right = gen(e->cright);
             B.CreateBr(ifend);
 
             append(ifend);
@@ -1431,7 +1321,7 @@ BINOP_SHIFT:
         }
         case ECast: return B.CreateCast(getCastOp(e->castop), gen(e->castval), wrap(e->ty));
         case ECall: {
-            llvm::Value* f;
+            llvm::Value *f;
             auto ty = cast<llvm::FunctionType>(wrap(e->callfunc->ty->p));
             if (e->callfunc->k == EUnary) {
                 assert(e->callfunc->uop == AddressOf);
@@ -1440,10 +1330,10 @@ BINOP_SHIFT:
                 f = gen(e->callfunc);
             }
             size_t l = e->callargs.size();
-            llvm::Value* *buf = alloc.Allocate<llvm::Value*>(l);
+            llvm::Value **buf = alloc.Allocate<llvm::Value *>(l);
             for (size_t i = 0; i < l; ++i)
                 buf[i] = gen(e->callargs[i]); // eval argument from left to right
-            auto r = B.CreateCall(ty, f, ArrayRef<llvm::Value*>(buf, l));
+            auto r = B.CreateCall(ty, f, ArrayRef<llvm::Value *>(buf, l));
             return r;
         }
         case EStruct: return getStruct(e);

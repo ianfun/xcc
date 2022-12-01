@@ -9,8 +9,8 @@ void TextDiagnosticPrinter::printSource(source_location &loc, const ArrayRef<Fix
     while (loc.source_line.CaretLine.size() && loc.source_line.CaretLine.back() == ' ')
         loc.source_line.CaretLine.pop_back();
     if (loc.source_line.CaretLine.size()) {
-        for (const char c: loc.source_line.CaretLine) {
-            if (c == '~' || c == '^') 
+        for (const char c : loc.source_line.CaretLine) {
+            if (c == '~' || c == '^')
                 OS.changeColor(llvm::raw_ostream::Colors::GREEN);
             OS << c;
             if (c == '~' || c == '^')
@@ -32,13 +32,13 @@ void TextDiagnosticPrinter::realHandleDiagnostic(const Diagnostic &Diag) {
     bool locValid = false;
     LocTree *begin_macro = nullptr;
     source_location loc;
-    if (SM && Diag.loc != 0) { 
+    if (SM && Diag.loc != 0) {
         locValid = SM->translateLocation(Diag.loc, loc, Diag.ranges);
         if (!locValid)
             goto NO_LOC;
         begin_macro = loc.tree;
         LocTree *ptr = begin_macro;
-        for (;ptr && ptr->isAInclude;ptr = ptr->getParent()) {
+        for (; ptr && ptr->isAInclude; ptr = ptr->getParent()) {
             auto it = ptr->include;
             OS << StringRef(ptr == begin_macro ? "In file included from " : "                      ", 22);
             OS.changeColor(llvm::raw_ostream::Colors::SAVEDCOLOR, true);
@@ -49,7 +49,7 @@ void TextDiagnosticPrinter::realHandleDiagnostic(const Diagnostic &Diag) {
         begin_macro = ptr;
         write_loc(loc);
     } else {
-        NO_LOC:
+NO_LOC:
         OS << "xcc: ";
     }
     {
@@ -88,7 +88,7 @@ void TextDiagnosticPrinter::realHandleDiagnostic(const Diagnostic &Diag) {
     }
     if (locValid) {
         printSource(loc, Diag.FixItHints);
-        for (LocTree *ptr = begin_macro;ptr;ptr = ptr->getParent()) {
+        for (LocTree *ptr = begin_macro; ptr; ptr = ptr->getParent()) {
             PPMacroDef *def = ptr->macro;
             SM->translateLocation(def->loc, loc);
             write_loc(loc);

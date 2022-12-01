@@ -15,17 +15,18 @@ struct Lexer : public EvalHelper {
     llvm::SmallVector<uint8_t, 4> ppstack;
     bool ok = true;
     char c = ' ';
-    DenseMap<IdentRef, PPMacroDef*> macros;
+    DenseMap<IdentRef, PPMacroDef *> macros;
     Parser &parser;
     SourceMgr &SM;
     std::deque<TokenV> tokenq;
-    std::vector<PPMacroDef*> expansion_list;
+    std::vector<PPMacroDef *> expansion_list;
     xstring lexIdnetBuffer = xstring::get_with_capacity(20);
     uint32_t counter = 0;
     location_t loc = 0, endLoc = 0;
     xcc_context &context;
 
-    Lexer(SourceMgr &SM, Parser &parser, xcc_context &context, DiagnosticsEngine &Diag) : EvalHelper{Diag}, parser{parser}, SM{SM}, context{context} { }
+    Lexer(SourceMgr &SM, Parser &parser, xcc_context &context, DiagnosticsEngine &Diag)
+        : EvalHelper{Diag}, parser{parser}, SM{SM}, context{context} { }
     location_t getLoc() { return loc; }
     location_t getEndLoc() { return endLoc; }
     Expr constant_expression();
@@ -129,14 +130,19 @@ struct Lexer : public EvalHelper {
     }
     TokenV lexCharLit(enum StringPrefix enc = Prefix_none) {
         // C23
-        // An integer character constant is a sequence of one or more multibyte characters enclosed in singlequotes, as in ’x’. A UTF-8 character constant is the same, except prefixed by u8. A wchar_t character constant is prefixed by the letter L. A UTF-16 character constant is prefixed by the letter u. A UTF-32 character constant is prefixed by the letter U.
+        // An integer character constant is a sequence of one or more multibyte characters enclosed in singlequotes, as
+        // in ’x’. A UTF-8 character constant is the same, except prefixed by u8. A wchar_t character constant is
+        // prefixed by the letter L. A UTF-16 character constant is prefixed by the letter u. A UTF-32 character
+        // constant is prefixed by the letter U.
         TokenV theTok = TokenV(ATokenVChar, TCharLit);
         theTok.itag = enc;
         eat(); // eat '
         if (c == '\\') {
             auto codepoint = lexEscape();
             // C23
-            // If an integer character constant contains a single character or escape sequence, its value is the one that results when an object with type char whose value is that of the single character or escape sequence is converted to type int.
+            // If an integer character constant contains a single character or escape sequence, its value is the one
+            // that results when an object with type char whose value is that of the single character or escape sequence
+            // is converted to type int.
             if (codepoint > 0xFF && (enc == Prefix_none || enc == Prefix_u8))
                 warning(loc, "character constant exceeds 8 bit");
             else if (codepoint > 0xFFFF && (enc == Prefix_L || enc == Prefix_u)) {
@@ -146,7 +152,9 @@ struct Lexer : public EvalHelper {
                     warning(loc, "UTF-16 character constant exceeds 16 bit");
             }
             // C23
-            // In an implementation in which type char has the same range of values as signed char, the integer character constant ’\xFF’ has the value −1; if type char has the same range of values as unsigned char, the character constant ’\xFF’ has the value +255.
+            // In an implementation in which type char has the same range of values as signed char, the integer
+            // character constant ’\xFF’ has the value −1; if type char has the same range of values as unsigned char,
+            // the character constant ’\xFF’ has the value +255.
             theTok.i = codepoint;
         } else {
             theTok.i = (unsigned char)c;
@@ -350,8 +358,8 @@ END:
         tokenq.push_back(SM.getLocTree());
         tokenq.push_back(TokenV(PPMacroPop));
     }
-    bool isMacroInUse(IdentRef Name) const { 
-        for (const auto &it: expansion_list)
+    bool isMacroInUse(IdentRef Name) const {
+        for (const auto &it : expansion_list)
             if (it->m.Name == Name)
                 return true;
         return false;
@@ -372,7 +380,7 @@ END:
             expansion_list.pop_back();
             return cpp();
         } else if (tok.tok == PPMacroTraceLoc) {
-            //loc.setParent(tok.tree);
+            // loc.setParent(tok.tree);
             return cpp();
         }
     }
@@ -426,7 +434,7 @@ END:
                 }
                 if (isDisableSpace || want_expr)
                     continue;
-                if (isPPMode) 
+                if (isPPMode)
                     return TSpace;
                 continue;
             }
@@ -656,8 +664,7 @@ STD_INCLUDE:
                                 if (path.empty()) {
                                     pp_error("%s", "empty filename in #include");
                                     path.free();
-                                }
-                                else {
+                                } else {
                                     path.make_eos();
                                     if (SM.addIncludeFile(path, is_std == '>', loc))
                                         SM.beginInclude(context, theFD);
@@ -857,23 +864,23 @@ STD_INCLUDE:
                 TOK3('>', '=', TGe, '>', Tshr, TGt)
                 TOK3('|', '=', TAsignBitOr, '|', TLogicalOr, TBitOr)
                 TOK3('&', '=', TAsignBitAnd, '&', TLogicalAnd, TBitAnd)
-                // '%>' convert to '}'
-                // '%:' convert to '#'
-                case '%':    
+            // '%>' convert to '}'
+            // '%:' convert to '#'
+            case '%':
+                eat();
+                switch (c) {
+                case '=': return eat(), TAsignRem;
+                case '>': return eat(), TRcurlyBracket;
+                case ':':
                     eat();
-                    switch (c) {
-                        case '=': return eat(), TAsignRem;
-                        case '>': return eat(), TRcurlyBracket;
-                        case ':':
-                            eat();
-                            if (c == '%') {
-                                eat();
-                                if (c == ':') // convert '%:%:' to '##'
-                                    return PPSharpSharp;
-                            }
-                            goto RUN;
-                        default: return TPercent;
+                    if (c == '%') {
+                        eat();
+                        if (c == ':') // convert '%:%:' to '##'
+                            return PPSharpSharp;
                     }
+                    goto RUN;
+                default: return TPercent;
+                }
                 TOK4('-', '-', TSubSub, '=', TAsignSub, '>', TArrow, TDash)
                 // '<:' convert to '['
                 // '<%' convert to '{'
@@ -887,7 +894,7 @@ STD_INCLUDE:
             } // end switch
             eat();
         } // end for
-    }  // end lex
+    }     // end lex
     void checkMacro() {
         IdentRef name = tok.s;
         Token saved_tok;
@@ -949,7 +956,7 @@ STD_INCLUDE:
             case MOBJ: {
                 if (m.tokens.size()) {
                     beginExpandMacro(it->second);
-                    for (size_t i = m.tokens.size();i--; ) {
+                    for (size_t i = m.tokens.size(); i--;) {
                         TokenV theTok = m.tokens[i]; // copy ctor
                         if (theTok.tok != TSpace) {
                             if (tok.tok >= kw_start) {
@@ -1004,19 +1011,20 @@ STD_INCLUDE:
                             else
                                 args.front().clear();
                         } else {
-                            return (void)pp_error(loc, "macro %I expect %z arguments, %z provided", name, m.params.size(), args.size());
+                            return (void)pp_error(loc, "macro %I expect %z arguments, %z provided", name,
+                                                  m.params.size(), args.size());
                         }
                     }
                     if (m.tokens.size()) {
                         beginExpandMacro(it->second);
-                        for (size_t i = m.tokens.size();i--; ) {
+                        for (size_t i = m.tokens.size(); i--;) {
                             TokenV theTok = m.tokens[i];
                             if (theTok.tok != TSpace) {
                                 if (theTok.tok >= kw_start) {
                                     IdentRef s = theTok.s;
                                     for (unsigned j = 0; j < m.params.size(); j++) {
                                         if (s == m.params[j]) {
-                                            for (const auto &it : args[j]) 
+                                            for (const auto &it : args[j])
                                                 tokenq.push_back(it);
                                             goto BREAK;
                                         }
@@ -1029,7 +1037,7 @@ STD_INCLUDE:
                                 } else {
                                     tokenq.push_back(theTok);
                                 }
-                                BREAK:;
+BREAK:;
                             }
                         }
                         tokenq.push_back(SM.getLocTree());

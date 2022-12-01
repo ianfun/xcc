@@ -133,17 +133,17 @@
 #include <cctype>
 
 #if CC_DEBUG
-  #define dbgprint(msg, ...) fprintf(stderr, "\33[01;33m[DEBUG]\33[0m " msg, ##__VA_ARGS__) 
+#define dbgprint(msg, ...) fprintf(stderr, "\33[01;33m[DEBUG]\33[0m " msg, ##__VA_ARGS__)
 #else
-  #define dbgprint(...) (void)0
+#define dbgprint(...) (void)0
 #endif
 
 #if CC_STATICS
-  #define endStatics() fputc(10, stderr)
-  #define statics(msg, ...) fprintf(stderr, msg, ##__VA_ARGS__) 
+#define endStatics() fputc(10, stderr)
+#define statics(msg, ...) fprintf(stderr, msg, ##__VA_ARGS__)
 #else
-  #define endStatics() (void)0
-  #define statics(...) (void)0
+#define endStatics() (void)0
+#define statics(...) (void)0
 #endif
 
 namespace xcc {
@@ -165,43 +165,43 @@ using llvm::DenseMap;
 using llvm::dyn_cast;
 using llvm::dyn_cast_if_present;
 using llvm::dyn_cast_or_null;
+using llvm::Expected;
 using llvm::GlobalValue;
+using llvm::IntrusiveRefCntPtr;
+using llvm::IntrusiveRefCntPtrInfo;
 using llvm::isa;
 using llvm::isa_and_nonnull;
 using llvm::isa_and_present;
+using llvm::LLVMContext;
+using llvm::MutableArrayRef;
+using llvm::None;
+using llvm::Optional;
+using llvm::OwningArrayRef;
 using llvm::raw_fd_ostream;
 using llvm::raw_ostream;
+using llvm::RefCountedBase;
+using llvm::SaveAndRestore;
 using llvm::SmallString;
 using llvm::SmallVector;
 using llvm::SmallVectorImpl;
 using llvm::StringRef;
 using llvm::Twine;
-using llvm::sys::ProcessInfo;
-using llvm::MutableArrayRef;
-using llvm::None;
-using llvm::Optional;
-using llvm::LLVMContext;
-using llvm::OwningArrayRef;
-using llvm::SaveAndRestore;
 using llvm::VersionTuple;
-using llvm::Expected;
-using llvm::IntrusiveRefCntPtr;
-using llvm::IntrusiveRefCntPtrInfo;
-using llvm::RefCountedBase;
+using llvm::sys::ProcessInfo;
 using type_tag_t = uint64_t;
 constexpr APFloat::cmpResult cmpGreaterThan = APFloat::cmpGreaterThan, cmpEqual = APFloat::cmpEqual,
-                                             cmpLessThan = APFloat::cmpLessThan;
-enum TagType: uint8_t {
+                             cmpLessThan = APFloat::cmpLessThan;
+enum TagType : uint8_t {
     TagType_Enum,
     TagType_Struct,
     TagType_Union
 };
-enum StringPrefix: uint8_t {
-    Prefix_none,// An integer character constant has type int.
-    Prefix_u8, // A UTF-8 character constant has type char8_t. (unsigned)
-    Prefix_L,  // A wchar_t character constant prefixed by the letter L has type wchar_t
-    Prefix_u,  // A UTF-16 character constant has type char16_t (unsigned)
-    Prefix_U,  // A UTF-32 character constant has type char32_t (unsigned)
+enum StringPrefix : uint8_t {
+    Prefix_none, // An integer character constant has type int.
+    Prefix_u8,   // A UTF-8 character constant has type char8_t. (unsigned)
+    Prefix_L,    // A wchar_t character constant prefixed by the letter L has type wchar_t
+    Prefix_u,    // A UTF-16 character constant has type char16_t (unsigned)
+    Prefix_U,    // A UTF-32 character constant has type char32_t (unsigned)
 };
 const char *show(enum TagType tag) {
     switch (tag) {
@@ -435,18 +435,18 @@ static const char *show(enum PostFixOp o) {
 }
 static const char *show(enum CastOp op) {
     switch (op) {
-        case Trunc: return "trunc";
-        case ZExt: return "zext";
-        case SExt: return "sext";
-        case FPToUI: return "fptoui";
-        case FPToSI: return "fptosi";
-        case UIToFP: return "uitosp";
-        case SIToFP: return "sitofp";
-        case FPTrunc: return "fptrunc";
-        case FPExt: return "fpext";
-        case PtrToInt: return "ptrToInt";
-        case IntToPtr: return "intToPtr";
-        case BitCast: return "bitcast";
+    case Trunc: return "trunc";
+    case ZExt: return "zext";
+    case SExt: return "sext";
+    case FPToUI: return "fptoui";
+    case FPToSI: return "fptosi";
+    case UIToFP: return "uitosp";
+    case SIToFP: return "sitofp";
+    case FPTrunc: return "fptrunc";
+    case FPExt: return "fpext";
+    case PtrToInt: return "ptrToInt";
+    case IntToPtr: return "intToPtr";
+    case BitCast: return "bitcast";
     }
     llvm_unreachable("invalid CastOp");
 }
@@ -464,15 +464,15 @@ static void bin(uint64_t a) {
 // Octuple-precision floating-point are not supported
 // TODO: Decimal Float
 // https://discourse.llvm.org/t/rfc-decimal-floating-point-support-iso-iec-ts-18661-2-and-c23/62152
-enum FloatKindEnum: uint8_t {
+enum FloatKindEnum : uint8_t {
     F_Invalid,
-    F_Half, // https://en.wikipedia.org/wiki/Half-precision_floating-point_format
-    F_BFloat, // https://en.wikipedia.org/wiki/Bfloat16_floating-point_format
-    F_Float, // https://en.wikipedia.org/wiki/Single-precision_floating-point_format
-    F_Double, // https://en.wikipedia.org/wiki/Double-precision_floating-point_format
-    F_x87_80, // 80 bit float (X87)
+    F_Half,      // https://en.wikipedia.org/wiki/Half-precision_floating-point_format
+    F_BFloat,    // https://en.wikipedia.org/wiki/Bfloat16_floating-point_format
+    F_Float,     // https://en.wikipedia.org/wiki/Single-precision_floating-point_format
+    F_Double,    // https://en.wikipedia.org/wiki/Double-precision_floating-point_format
+    F_x87_80,    // 80 bit float (X87)
     F_Quadruple, // https://en.wikipedia.org/wiki/Quadruple-precision_floating-point_format
-    F_PPC128, // https://gcc.gnu.org/wiki/Ieee128PowerPC
+    F_PPC128,    // https://gcc.gnu.org/wiki/Ieee128PowerPC
     F_Decimal32,
     F_Decimal64,
     F_Decimal128
@@ -480,16 +480,14 @@ enum FloatKindEnum: uint8_t {
 struct FloatKind {
     static constexpr size_t MAX_KIND = static_cast<size_t>(F_Decimal128) - static_cast<size_t>(F_Half);
     enum FloatKindEnum e;
-    constexpr FloatKind(enum FloatKindEnum k): e{k} { }
-    constexpr FloatKind(uint64_t k): e{static_cast<enum FloatKindEnum>(k)} { }
+    constexpr FloatKind(enum FloatKindEnum k) : e{k} { }
+    constexpr FloatKind(uint64_t k) : e{static_cast<enum FloatKindEnum>(k)} { }
     constexpr enum FloatKindEnum getKind() { return e; }
     explicit constexpr operator uint64_t() const { return static_cast<uint64_t>(e); }
     constexpr enum FloatKindEnum asEnum() const { return e; }
     constexpr bool isValid() const { return e != F_Invalid && e <= F_PPC128; }
     explicit constexpr operator bool() const { return e != F_Invalid; }
-    constexpr bool equals(const enum FloatKindEnum other) const {
-        return e == other;
-    }
+    constexpr bool equals(const enum FloatKindEnum other) const { return e == other; }
     uint64_t getBitWidth() const {
         switch (e) {
         case F_Half:
@@ -536,58 +534,42 @@ struct FloatKind {
     }
     StringRef show() const {
         switch (e) {
-            case F_Half: return "half";
-            case F_BFloat: return "__bf16";
-            case F_Float: return "float";
-            case F_Double: return "double";
-            case F_x87_80: return "__float80";
-            case F_Quadruple: return "__float128";
-            case F_PPC128: return "__ibm128";
-            case F_Decimal32: return "_Decimal32";
-            case F_Decimal64: return "_Decimal64";
-            case F_Decimal128: return "_Decimal128";
-            case F_Invalid: break;
+        case F_Half: return "half";
+        case F_BFloat: return "__bf16";
+        case F_Float: return "float";
+        case F_Double: return "double";
+        case F_x87_80: return "__float80";
+        case F_Quadruple: return "__float128";
+        case F_PPC128: return "__ibm128";
+        case F_Decimal32: return "_Decimal32";
+        case F_Decimal64: return "_Decimal64";
+        case F_Decimal128: return "_Decimal128";
+        case F_Invalid: break;
         }
         return "(invalid FloatKind)";
     }
-    bool isIEEE() const {
-        return APFloat::getZero(getFltSemantics()).isIEEE();
-    }
-    APFloat getZero() const {
-        return APFloat::getZero(getFltSemantics());
-    }
-    ConstantFP *getZero(LLVMContext &ctx) const {
-        return ConstantFP::get(ctx, getZero());
-    }
+    bool isIEEE() const { return APFloat::getZero(getFltSemantics()).isIEEE(); }
+    APFloat getZero() const { return APFloat::getZero(getFltSemantics()); }
+    ConstantFP *getZero(LLVMContext &ctx) const { return ConstantFP::get(ctx, getZero()); }
 };
 struct IntegerKind {
     uint8_t shift;
-    constexpr IntegerKind(uint8_t shift): shift{shift} {}
-    constexpr bool isValid() const {
-        return shift != 1 && shift != 2 && shift <= 7;
-    }
-    explicit constexpr operator bool() const {
-        return shift;
-    }
-    explicit constexpr operator uint64_t() const {
-        return shift;
-    }
-    constexpr uint8_t asLog2() const {
-        return shift;
-    }
-    constexpr uint64_t asBits() const {
-        return uint64_t(1) << shift;
-    }
+    constexpr IntegerKind(uint8_t shift) : shift{shift} { }
+    constexpr bool isValid() const { return shift != 1 && shift != 2 && shift <= 7; }
+    explicit constexpr operator bool() const { return shift; }
+    explicit constexpr operator uint64_t() const { return shift; }
+    constexpr uint8_t asLog2() const { return shift; }
+    constexpr uint64_t asBits() const { return uint64_t(1) << shift; }
     constexpr StringRef show(bool Signed) const {
         switch (shift) {
-            case 0:
-            case 1: return "_Bool"; // XXX: C23 is bool
-            case 3: return Signed ? StringRef("char") : StringRef("unsigned char");
-            case 4: return Signed ? StringRef("short") : StringRef("unsigned short");
-            case 5: return Signed ? StringRef("int") : StringRef("unsigned int"); // XXX: 'unsigned' is ok
-            case 6: return Signed ? StringRef("long long") : StringRef("unsigned long long");
-            case 7: return Signed ? StringRef("__int128") : StringRef("unsigned __int128");
-            default: break;
+        case 0:
+        case 1: return "_Bool"; // XXX: C23 is bool
+        case 3: return Signed ? StringRef("char") : StringRef("unsigned char");
+        case 4: return Signed ? StringRef("short") : StringRef("unsigned short");
+        case 5: return Signed ? StringRef("int") : StringRef("unsigned int"); // XXX: 'unsigned' is ok
+        case 6: return Signed ? StringRef("long long") : StringRef("unsigned long long");
+        case 7: return Signed ? StringRef("__int128") : StringRef("unsigned __int128");
+        default: break;
         }
         return "(invalid IntegerKind)";
     }
@@ -597,12 +579,8 @@ struct IntegerKind {
         assert((bits % 8) == 0 && "invalid call to asBytes(): loss information!");
         return bits / 8;
     }
-    constexpr bool operator==(const IntegerKind &other) const {
-        return asLog2() == other.asLog2();
-    }
-    constexpr static IntegerKind fromLog2(uint8_t Value) {
-        return IntegerKind(Value);
-    }
+    constexpr bool operator==(const IntegerKind &other) const { return asLog2() == other.asLog2(); }
+    constexpr static IntegerKind fromLog2(uint8_t Value) { return IntegerKind(Value); }
     static IntegerKind fromBytes(uint64_t Bytes) {
         assert(llvm::isPowerOf2_64(Bytes));
         return fromLog2(llvm::Log2_64(Bytes));
@@ -611,22 +589,12 @@ struct IntegerKind {
         assert(llvm::isPowerOf2_64(Bits));
         return fromBytes(llvm::Log2_64(Bits));
     }
-    APInt getZero() const {
-        return APInt::getZero(asBits());
-    }
-    bool isBool() const { 
-        return shift == 0;
-    }
-    llvm::Type *toLLVMType(LLVMContext &ctx) const {
-        return llvm::IntegerType::get(ctx, asBits());
-    }
-    ConstantInt *getZero(LLVMContext &ctx) const {
-        return ConstantInt::get(ctx, getZero());
-    }
+    APInt getZero() const { return APInt::getZero(asBits()); }
+    bool isBool() const { return shift == 0; }
+    llvm::Type *toLLVMType(LLVMContext &ctx) const { return llvm::IntegerType::get(ctx, asBits()); }
+    ConstantInt *getZero(LLVMContext &ctx) const { return ConstantInt::get(ctx, getZero()); }
 };
-static constexpr uint64_t 
-   build_integer(IntegerKind kind, bool Signed = false),
-   build_float(FloatKind kind);
+static constexpr uint64_t build_integer(IntegerKind kind, bool Signed = false), build_float(FloatKind kind);
 
 #include "option.cpp"
 #include "Arena.cpp"
@@ -638,10 +606,10 @@ static constexpr uint64_t
 #include "xstring.h"
 #include "xvector.h"
 
-constexpr type_tag_t
-  storage_class_specifiers = TYTYPEDEF | TYEXTERN | TYSTATIC | TYTHREAD_LOCAL | TYREGISTER | TYCONSTEXPR| TYAUTO,
-  type_qualifiers = TYCONST | TYRESTRICT | TYVOLATILE | TYATOMIC,
-  type_qualifiers_and_storage_class_specifiers = type_qualifiers | storage_class_specifiers;
+constexpr type_tag_t storage_class_specifiers =
+                         TYTYPEDEF | TYEXTERN | TYSTATIC | TYTHREAD_LOCAL | TYREGISTER | TYCONSTEXPR | TYAUTO,
+                     type_qualifiers = TYCONST | TYRESTRICT | TYVOLATILE | TYATOMIC,
+                     type_qualifiers_and_storage_class_specifiers = type_qualifiers | storage_class_specifiers;
 
 #define kw_start Kextern
 #define kw_end K_Generic
@@ -660,44 +628,24 @@ typedef unsigned column_t;
 typedef unsigned fileid_t;
 typedef uint32_t location_t;
 
-static bool location_is_stdin(location_t loc) {
-    return loc & 0xf0000000;
-}
-static location_t location_as_index(location_t loc) {
-    return loc & 0x7fffffff;
-}
+static bool location_is_stdin(location_t loc) { return loc & 0xf0000000; }
+static location_t location_as_index(location_t loc) { return loc & 0x7fffffff; }
 
 static const char hexs[] = "0123456789ABCDEF";
 static char hexed(unsigned a) { return hexs[a & 0b1111]; }
 struct SourceRange {
     location_t start, end;
-    SourceRange(): start{0}, end{0} {};
-    SourceRange(location_t loc) : start{loc}, end{loc} {}
-    SourceRange(location_t L, location_t R): start{L}, end{R} {}
-    location_t getStart() const {
-        return start;
-    }
-    location_t getEnd() const {
-        return end;
-    }
-    bool contains(location_t loc) const {
-        return loc >= start && loc <= end;
-    }
-    bool isValid() const {
-        return start != 0 && end != 0;
-    }
-    bool isInValid() const {
-        return start == 0 || end == 0;
-    }
-    bool isSignle() const {
-        return start == end;
-    }
-    bool operator==(const SourceRange &other) {
-        return start == other.start && end == other.end;
-    }
-    void dump() const {
-        llvm::errs() << "SourceRange(" << start << ", " << end << ")";
-    }
+    SourceRange() : start{0}, end{0} {};
+    SourceRange(location_t loc) : start{loc}, end{loc} { }
+    SourceRange(location_t L, location_t R) : start{L}, end{R} { }
+    location_t getStart() const { return start; }
+    location_t getEnd() const { return end; }
+    bool contains(location_t loc) const { return loc >= start && loc <= end; }
+    bool isValid() const { return start != 0 && end != 0; }
+    bool isInValid() const { return start == 0 || end == 0; }
+    bool isSignle() const { return start == end; }
+    bool operator==(const SourceRange &other) { return start == other.start && end == other.end; }
+    void dump() const { llvm::errs() << "SourceRange(" << start << ", " << end << ")"; }
 };
 struct FixItHint {
     StringRef code;
@@ -718,14 +666,12 @@ struct SourceLine {
         sourceLine.clear();
         CaretLine.clear();
     }
-    void setInsertLoc(location_t loc) {
-        startLoc = (insertLoc = loc);
-    }
+    void setInsertLoc(location_t loc) { startLoc = (insertLoc = loc); }
     std::string buildFixItInsertionLine(const ArrayRef<FixItHint> FixItHints) const {
         assert(!FixItHints.empty());
         std::string line(CaretLine.size(), ' ');
         location_t loc = startLoc;
-        for (size_t Repeat = line.size();--Repeat;loc++) {
+        for (size_t Repeat = line.size(); --Repeat; loc++) {
             for (const auto &it : FixItHints) {
                 if (it.insertPos == loc) {
                     size_t FixItinsertLoc = static_cast<size_t>(loc) - static_cast<size_t>(startLoc);
@@ -749,25 +695,25 @@ struct SourceLine {
             sourceLine.append(CC_SHOW_TAB_SIZE, ' ');
             break;
         default:
-            if (!llvm::isPrint(c)) { /*std::iscntrl(c)*/ 
-                    sourceLine.push_back('<');
-                    sourceLine.push_back('0');
-                    sourceLine.push_back('x');
-                    sourceLine.push_back(hexed(c) >> 4);
-                    sourceLine.push_back(hexed(c));
-                    sourceLine.push_back('>');
-                    CaretLine.append(' ', 6);
-                } else {
-                    CaretLine.push_back(' ');
-                    for (const auto it: ranges) {
-                        if (it.contains(insertLoc)) {
-                            CaretLine.back() = '~';
-                        }
+            if (!llvm::isPrint(c)) { /*std::iscntrl(c)*/
+                sourceLine.push_back('<');
+                sourceLine.push_back('0');
+                sourceLine.push_back('x');
+                sourceLine.push_back(hexed(c) >> 4);
+                sourceLine.push_back(hexed(c));
+                sourceLine.push_back('>');
+                CaretLine.append(' ', 6);
+            } else {
+                CaretLine.push_back(' ');
+                for (const auto it : ranges) {
+                    if (it.contains(insertLoc)) {
+                        CaretLine.back() = '~';
                     }
-                    if (caretLoc == insertLoc)
-                        CaretLine.back() = '^';
-                    sourceLine.push_back(c);
                 }
+                if (caretLoc == insertLoc)
+                    CaretLine.back() = '^';
+                sourceLine.push_back(c);
+            }
         }
         insertLoc++;
         return false;
@@ -781,19 +727,11 @@ struct source_location {
     struct LocTree *tree = nullptr;
     SourceLine source_line;
     bool isValid() const { return line != 0; }
-    source_location(line_t line = 0, column_t col = 0, fileid_t fd = 0): line{line}, col{col}, fd{fd} {}
-    bool operator >(const source_location &rhs) {
-        return line > rhs.line && col > rhs.col;
-    }
-    bool operator <(const source_location &rhs) {
-        return line < rhs.line && col < rhs.col;
-    }
-    bool operator >=(const source_location &rhs) {
-        return line >= rhs.line && col >= rhs.col;
-    }
-    bool operator <=(const source_location &rhs) {
-        return line <= rhs.line && col <= rhs.col;
-    }
+    source_location(line_t line = 0, column_t col = 0, fileid_t fd = 0) : line{line}, col{col}, fd{fd} { }
+    bool operator>(const source_location &rhs) { return line > rhs.line && col > rhs.col; }
+    bool operator<(const source_location &rhs) { return line < rhs.line && col < rhs.col; }
+    bool operator>=(const source_location &rhs) { return line >= rhs.line && col >= rhs.col; }
+    bool operator<=(const source_location &rhs) { return line <= rhs.line && col <= rhs.col; }
 };
 struct Include_Info {
     line_t line; // the line where #include occurs
@@ -806,10 +744,10 @@ struct LocTree {
         struct PPMacroDef *macro;
     };
     bool isAInclude;
-    LocTree(struct LocTree *parent, Include_Info *include = nullptr): parent{parent}, isAInclude{true} {
+    LocTree(struct LocTree *parent, Include_Info *include = nullptr) : parent{parent}, isAInclude{true} {
         this->include = include;
     }
-    LocTree(struct LocTree *parent, struct PPMacroDef *def = nullptr): parent{parent}, isAInclude{false} {
+    LocTree(struct LocTree *parent, struct PPMacroDef *def = nullptr) : parent{parent}, isAInclude{false} {
         this->macro = def;
     }
     void setParent(LocTree *theParent) { this->parent = theParent; }
@@ -839,20 +777,14 @@ struct SwitchCase {
     const APInt *CaseStart;
     label_t label;
     SwitchCase(location_t loc, label_t label, const APInt *CastStart) : loc{loc}, CaseStart{CastStart}, label{label} { }
-    static bool equals(const SwitchCase &lhs, const SwitchCase &rhs) {
-        return *lhs.CaseStart == *rhs.CaseStart;
-    }
+    static bool equals(const SwitchCase &lhs, const SwitchCase &rhs) { return *lhs.CaseStart == *rhs.CaseStart; }
 };
 struct GNUSwitchCase : public SwitchCase {
     APInt range;
     GNUSwitchCase(location_t loc, label_t label, const APInt *CastStart, const APInt *CaseEnd)
         : SwitchCase(loc, label, CastStart), range{*CaseEnd - *CastStart} { }
-    bool contains(const APInt &C) const {
-        return (C - *CaseStart).ule(range);
-    }
-    bool contains(const SwitchCase &G) const {
-        return contains(*G.CaseStart);
-    }
+    bool contains(const APInt &C) const { return (C - *CaseStart).ule(range); }
+    bool contains(const SwitchCase &G) const { return contains(*G.CaseStart); }
     bool overlaps(const GNUSwitchCase &G) const {
         // https://stackoverflow.com/questions/3269434/whats-the-most-efficient-way-to-test-if-two-ranges-overlap
         // G   :  [xxxxxxx]
@@ -871,44 +803,38 @@ struct GNUSwitchCase : public SwitchCase {
 #include "statements.inc"
 #include "utf8.cpp"
 struct ReplacedExprParen {
-  enum ExprKind k=EConstant;
-  CType ty;
-  struct {
-    llvm::Constant* C;
-    size_t id;
-    IdentRef varName;
-    location_t ReplacedLoc;
-    location_t paren_loc[2];
-  };
+    enum ExprKind k = EConstant;
+    CType ty;
+    struct {
+        llvm::Constant *C;
+        size_t id;
+        IdentRef varName;
+        location_t ReplacedLoc;
+        location_t paren_loc[2];
+    };
 };
 struct ReplacedExpr {
-  enum ExprKind k=EConstant;
-  CType ty;
-  struct {
-    llvm::Constant* C;
-    size_t id;
-    IdentRef varName;
-    location_t ReplacedLoc;
-  };
+    enum ExprKind k = EConstant;
+    CType ty;
+    struct {
+        llvm::Constant *C;
+        size_t id;
+        IdentRef varName;
+        location_t ReplacedLoc;
+    };
 };
 location_t *OpaqueExpr::getParenLLoc() {
     if (ty->hasTag(TYREPLACED_CONSTANT)) {
-        return reinterpret_cast<ReplacedExprParen*>(this)->paren_loc;
+        return reinterpret_cast<ReplacedExprParen *>(this)->paren_loc;
     }
     const size_t Size = expr_size_map[k];
-    return reinterpret_cast<location_t*>(reinterpret_cast<uintptr_t>(this) + Size);
+    return reinterpret_cast<location_t *>(reinterpret_cast<uintptr_t>(this) + Size);
 }
-const location_t *OpaqueExpr::getParenLLoc() const {
-    return const_cast<Expr>(this)->getParenLLoc();
-}
-const location_t *OpaqueExpr::getParenRLoc() const {
-    return getParenLLoc() + 1;
-}
-location_t *OpaqueExpr::getParenRLoc() {
-    return getParenLLoc() + 1;
-}
+const location_t *OpaqueExpr::getParenLLoc() const { return const_cast<Expr>(this)->getParenLLoc(); }
+const location_t *OpaqueExpr::getParenRLoc() const { return getParenLLoc() + 1; }
+location_t *OpaqueExpr::getParenRLoc() { return getParenLLoc() + 1; }
 location_t OpaqueExpr::getBeginLoc() const {
-    if (ty->hasTag(TYPAREN)) 
+    if (ty->hasTag(TYPAREN))
         return *getParenLLoc();
     switch (k) {
     case EVar: return varLoc;
@@ -931,41 +857,25 @@ location_t OpaqueExpr::getBeginLoc() const {
     llvm_unreachable("invalid Expr");
 }
 location_t OpaqueExpr::getEndLoc() const {
-    if (ty->hasTag(TYPAREN)) 
+    if (ty->hasTag(TYPAREN))
         return *getParenRLoc();
     switch (k) {
-    case EConstant:
-        return constantEndLoc ? constantLoc : constantEndLoc;
-    case EBin:
-        return rhs->getEndLoc();
-    case EUnary:
-        return uoperand->getEndLoc();
-    case ESubscript:
-        return right->getEndLoc();
-    case EConstantArraySubstript:
-        return constantArraySubscriptLocEnd;
-    case EConstantArray:
-        return constantArrayLocEnd;
-    case EVoid:
-        return voidexpr->getEndLoc();
-    case ECast:
-        return castval->getEndLoc();
-    case EVar:
-        return varLoc + varName->getKey().size() - 1;
-    case EMemberAccess:
-        return memberEndLoc;
-    case EArrToAddress:
-        return arr3->getEndLoc();
-    case ECondition: 
-        return cright->getEndLoc();
-    case ECall:
-        return callEnd;
-    case EPostFix:
-        return postFixEndLoc;
-    case EArray:
-        return ArrayEndLoc;
-    case EStruct:
-        return StructEndLoc;
+    case EConstant: return constantEndLoc ? constantLoc : constantEndLoc;
+    case EBin: return rhs->getEndLoc();
+    case EUnary: return uoperand->getEndLoc();
+    case ESubscript: return right->getEndLoc();
+    case EConstantArraySubstript: return constantArraySubscriptLocEnd;
+    case EConstantArray: return constantArrayLocEnd;
+    case EVoid: return voidexpr->getEndLoc();
+    case ECast: return castval->getEndLoc();
+    case EVar: return varLoc + varName->getKey().size() - 1;
+    case EMemberAccess: return memberEndLoc;
+    case EArrToAddress: return arr3->getEndLoc();
+    case ECondition: return cright->getEndLoc();
+    case ECall: return callEnd;
+    case EPostFix: return postFixEndLoc;
+    case EArray: return ArrayEndLoc;
+    case EStruct: return StructEndLoc;
     }
     llvm_unreachable("invalid Expr");
 }
@@ -1010,7 +920,6 @@ static const char *show2(enum TagType k) {
     }
 }
 
-
 static bool is_declaration_specifier(Token a) { return a >= Kextern && a <= Kvolatile; }
 
 static bool type_equal(CType a, CType b) {
@@ -1019,14 +928,13 @@ static bool type_equal(CType a, CType b) {
     if (a->getKind() != b->getKind())
         return false;
     switch (a->getKind()) {
-        case TYPRIM:
-            return a->basic_equals(b);
-        case TYPOINTER: return type_equal(a->p, b->p);
-        case TYENUM:
-        case TYSTRUCT:
-        case TYUNION: return a == b;
-        case TYINCOMPLETE: return a->name == b->name;
-        default: return false;
+    case TYPRIM: return a->basic_equals(b);
+    case TYPOINTER: return type_equal(a->p, b->p);
+    case TYENUM:
+    case TYSTRUCT:
+    case TYUNION: return a == b;
+    case TYINCOMPLETE: return a->name == b->name;
+    default: return false;
     }
 }
 static bool compatible(CType p, CType expected) {
@@ -1034,33 +942,30 @@ static bool compatible(CType p, CType expected) {
     if (p->getKind() != expected->getKind())
         return false;
     switch (p->getKind()) {
-        case TYPRIM: return p->basic_equals(expected);
-        case TYFUNCTION:
-            if (!compatible(p->ret, expected->ret) || p->params.size() != expected->params.size())
+    case TYPRIM: return p->basic_equals(expected);
+    case TYFUNCTION:
+        if (!compatible(p->ret, expected->ret) || p->params.size() != expected->params.size())
+            return false;
+        for (unsigned i = 0; i < expected->params.size(); ++i)
+            if (!compatible(p->params[i].ty, expected->params[i].ty))
                 return false;
-            for (unsigned i = 0; i < expected->params.size(); ++i)
-                if (!compatible(p->params[i].ty, expected->params[i].ty))
-                    return false;
-            return true;
-        case TYSTRUCT:
-        case TYENUM:
-        case TYUNION: return p == expected;
-        case TYPOINTER: {
-            // ignore TYLVALUE attribute
-            return p->isNullPtr_t() || expected->isNullPtr_t() || p->p->isVoid() || expected->p->isVoid() ||
-                   (
-                    p->andTags(type_qualifiers) == expected->andTags(type_qualifiers) &&
-                    compatible(p->p, expected->p)
-                  );
-        }
-        case TYINCOMPLETE: return p->tag == expected->tag && p->name == expected->name;
-        case TYBITFIELD: llvm_unreachable("");
-        case TYARRAY:
-            if (p->hassize != expected->hassize)
-                return false;
-            if (p->hassize && (p->arrsize != expected->arrsize))
-                return false;
-            return compatible(p->arrtype, expected->arrtype);
+        return true;
+    case TYSTRUCT:
+    case TYENUM:
+    case TYUNION: return p == expected;
+    case TYPOINTER: {
+        // ignore TYLVALUE attribute
+        return p->isNullPtr_t() || expected->isNullPtr_t() || p->p->isVoid() || expected->p->isVoid() ||
+               (p->andTags(type_qualifiers) == expected->andTags(type_qualifiers) && compatible(p->p, expected->p));
+    }
+    case TYINCOMPLETE: return p->tag == expected->tag && p->name == expected->name;
+    case TYBITFIELD: llvm_unreachable("");
+    case TYARRAY:
+        if (p->hassize != expected->hassize)
+            return false;
+        if (p->hassize && (p->arrsize != expected->arrsize))
+            return false;
+        return compatible(p->arrtype, expected->arrtype);
     }
     llvm_unreachable("bad CTypeKind");
 }
@@ -1088,21 +993,17 @@ struct TokenV {
         };
         struct LocTree *tree;
     };
-    TokenV(): k{ATokenVBase}, tok{TNul} {};
+    TokenV() : k{ATokenVBase}, tok{TNul} {};
     TokenV(enum TokenVKind k, Token tok) : k{k}, tok{tok} { }
     TokenV(Token tok) : k{ATokenVBase}, tok{tok} { }
-    TokenV(struct LocTree *tree) : k{ATokenVLoc}, tok{PPMacroTraceLoc} { this->tree = tree; } 
+    TokenV(struct LocTree *tree) : k{ATokenVLoc}, tok{PPMacroTraceLoc} { this->tree = tree; }
     enum StringPrefix getStringPrefix() {
         auto r = static_cast<enum StringPrefix>(static_cast<unsigned char>(str.back()));
         str.pop_back();
         return r;
     }
-    void setStringPrefix(enum StringPrefix enc = Prefix_none) {
-        str.push_back(static_cast<char>(enc));
-    }
-    enum StringPrefix getCharPrefix() const {
-        return static_cast<enum StringPrefix>(itag);
-    }
+    void setStringPrefix(enum StringPrefix enc = Prefix_none) { str.push_back(static_cast<char>(enc)); }
+    enum StringPrefix getCharPrefix() const { return static_cast<enum StringPrefix>(itag); }
     void dump(raw_ostream &OS) const {
         switch (k) {
         case ATokenVBase: OS << show(tok); break;
@@ -1168,12 +1069,8 @@ struct PPMacroDef {
     PPMacro m;
     location_t loc;
 };
-static unsigned intRank(const_CType ty) {
-    return ty->getIntegerKind().asLog2();
-}
-static unsigned floatRank(const_CType ty) {
-    return ty->getFloatKind().getBitWidth();
-}
+static unsigned intRank(const_CType ty) { return ty->getIntegerKind().asLog2(); }
+static unsigned floatRank(const_CType ty) { return ty->getFloatKind().getBitWidth(); }
 static unsigned scalarRankNoComplex(const_CType ty) {
     if (ty->isFloating())
         return floatRank(ty) + 100; // a dummy number

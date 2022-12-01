@@ -63,7 +63,7 @@ template <typename T> struct xvector {
         auto Ptr = p->_data + p->_length;
         p->_length += num;
         grow();
-        for (size_t i = 0;i < num;++i) 
+        for (size_t i = 0; i < num; ++i)
             Ptr[i] = c;
     }
     void push_back(const T &c) {

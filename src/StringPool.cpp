@@ -14,7 +14,8 @@ struct StringPool {
         auto it = interns.insert(std::make_pair(StringRef("", 1), nullptr));
         if (it.second) {
             auto str = llvm::ConstantAggregateZero::get(llvm::ArrayType::get(irgen.integer_types[3], 1));
-            auto GV = new llvm::GlobalVariable(*irgen.module, str->getType(), true, IRGen::PrivateLinkage, str, ".cstr");
+            auto GV =
+                new llvm::GlobalVariable(*irgen.module, str->getType(), true, IRGen::PrivateLinkage, str, ".cstr");
             GV->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
             GV->setAlignment(irgen.layout->getPrefTypeAlign(irgen.integer_types[3]));
             GV->setConstant(true);
@@ -76,7 +77,7 @@ struct StringPool {
             data.push_back(0xDC00 + (codepoint & 0x3FF));
         }
         data.push_back(0);
-        auto array = makeArrayRef(data); 
+        auto array = makeArrayRef(data);
         auto it = interns16.insert(std::make_pair(array, nullptr));
         if (it.second) {
             auto str = llvm::ConstantDataArray::get(irgen.ctx, array);
@@ -87,7 +88,7 @@ struct StringPool {
             GV->setConstant(true);
             it.first->second = GV;
         }
-        return it.first->second;  
+        return it.first->second;
     }
     GV getAsUTF32(const StringRef &s) {
         SmallVector<uint32_t> data;

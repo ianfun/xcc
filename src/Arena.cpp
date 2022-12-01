@@ -60,9 +60,7 @@ struct ArenaAllocator : public llvm::AllocatorBase<ArenaAllocator> {
             free(tmp);
         } while (p);
     }
-    ArenaAllocator() {
-        head = cur = new_arena_block();
-    }
+    ArenaAllocator() { head = cur = new_arena_block(); }
 };
 
 } // end namespace xcc

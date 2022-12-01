@@ -48,53 +48,47 @@ IsUTF8(StringRef str) {
 // clang-format on
 
 llvm::Constant *getUTF8(const StringRef &s, LLVMContext &ctx) {
-  if (s.empty()) {
-    auto Ty = llvm::ArrayType::get(llvm::Type::getInt8Ty(ctx), 1);
-    return llvm::ConstantAggregateZero::get(Ty);
-  }
-  return llvm::ConstantDataArray::getString(ctx, s, false);
+    if (s.empty()) {
+        auto Ty = llvm::ArrayType::get(llvm::Type::getInt8Ty(ctx), 1);
+        return llvm::ConstantAggregateZero::get(Ty);
+    }
+    return llvm::ConstantDataArray::getString(ctx, s, false);
 }
 
-template <typename T>
-llvm::Constant *getUTF16AsNBit(const StringRef &s, LLVMContext &ctx) {
-  if (s.empty()) {
-    auto Ty = llvm::ArrayType::get(llvm::Type::getIntNTy(ctx, sizeof(T)), 1);
-    return llvm::ConstantAggregateZero::get(Ty);
-  }
-  SmallVector<T> data;
-  uint32_t state = 0, codepoint;
-  for (auto c : s) {
-      if (decode(&state, &codepoint, (uint32_t)(unsigned char)c))
-          continue;
-      if (codepoint <= 0xFFFF) {
-          data.push_back(codepoint);
-          continue;
-      }
-      data.push_back(0xD7C0 + (codepoint >> 10));
-      data.push_back(0xDC00 + (codepoint & 0x3FF));
-  }
-  return llvm::ConstantDataArray::get(ctx, data);
+template <typename T> llvm::Constant *getUTF16AsNBit(const StringRef &s, LLVMContext &ctx) {
+    if (s.empty()) {
+        auto Ty = llvm::ArrayType::get(llvm::Type::getIntNTy(ctx, sizeof(T)), 1);
+        return llvm::ConstantAggregateZero::get(Ty);
+    }
+    SmallVector<T> data;
+    uint32_t state = 0, codepoint;
+    for (auto c : s) {
+        if (decode(&state, &codepoint, (uint32_t)(unsigned char)c))
+            continue;
+        if (codepoint <= 0xFFFF) {
+            data.push_back(codepoint);
+            continue;
+        }
+        data.push_back(0xD7C0 + (codepoint >> 10));
+        data.push_back(0xDC00 + (codepoint & 0x3FF));
+    }
+    return llvm::ConstantDataArray::get(ctx, data);
 }
 // in Linux, wchar_t are 32 bit(int)
-llvm::Constant *getUTF16As32Bit(const StringRef &s, LLVMContext &ctx) {
-  return getUTF16AsNBit<uint32_t>(s, ctx);
-}
+llvm::Constant *getUTF16As32Bit(const StringRef &s, LLVMContext &ctx) { return getUTF16AsNBit<uint32_t>(s, ctx); }
 // in Windows, wchar_t are 16 bit(unsigned short)
-llvm::Constant *getUTF16As16Bit(const StringRef &s, LLVMContext &ctx) {
-  return getUTF16AsNBit<uint16_t>(s, ctx);
-}
+llvm::Constant *getUTF16As16Bit(const StringRef &s, LLVMContext &ctx) { return getUTF16AsNBit<uint16_t>(s, ctx); }
 llvm::Constant *getUTF32(const StringRef &s, LLVMContext &ctx) {
-  if (s.empty()) {
-    auto Ty = llvm::ArrayType::get(llvm::Type::getInt32Ty(ctx), 1);
-    return llvm::ConstantAggregateZero::get(Ty);
-  }
-  uint32_t state = 0, codepoint;
-  llvm::SmallVector<uint32_t> data;
-  for (const auto c : s)
-      if (!decode(&state, &codepoint, (uint32_t)(unsigned char)c))
-          data.push_back(codepoint);
-  return llvm::ConstantDataArray::get(ctx, data);
+    if (s.empty()) {
+        auto Ty = llvm::ArrayType::get(llvm::Type::getInt32Ty(ctx), 1);
+        return llvm::ConstantAggregateZero::get(Ty);
+    }
+    uint32_t state = 0, codepoint;
+    llvm::SmallVector<uint32_t> data;
+    for (const auto c : s)
+        if (!decode(&state, &codepoint, (uint32_t)(unsigned char)c))
+            data.push_back(codepoint);
+    return llvm::ConstantDataArray::get(ctx, data);
 }
 
-}
-
+} // namespace enc
