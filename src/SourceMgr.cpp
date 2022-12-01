@@ -227,10 +227,8 @@ struct SourceMgr : public DiagnosticHelper {
     unsigned getLine(unsigned i) const { return streams[i]->line; }
     void setFileName(const char *name) { streams[includeStack.back()]->name = name; }
     location_t getCurrentLocation() const { return streams.back()->loc;}
-    location_t getEndLoc() const {
-        return includeStack.empty() ? 0 : streams[includeStack.back()]->endLoc;
-    }
-    location_t getLoc() const { return includeStack.empty() ? 0 : streams[includeStack.back()]->loc; }
+    location_t getEndLoc() const { return streams.empty() ? 0 : streams[includeStack.back()]->endLoc; }
+    location_t getLoc() const { return streams[includeStack.back()]->loc; }
     inline LocTree *getLocTree() const { return tree; }
     void beginExpandMacro(PPMacroDef *M, xcc_context &context) {
         location_map[getCurrentLocation()] = (tree = new (context.getAllocator()) LocTree(tree, M));
@@ -359,7 +357,7 @@ struct SourceMgr : public DiagnosticHelper {
         uint32_t line = getColumnNumber(offset, FD);
         return offset - s->lineOffsetMapping[line] + 1;
     }
-    bool translateLocation(location_t loc, source_location &out) {
+    bool translateLocation(location_t loc, source_location &out, const ArrayRef<SourceRange> ranges = {}) {
         uint64_t offset;
         if (location_is_stdin(loc)) {
             for (size_t i = 0;i < streams.size();++i) {
@@ -384,15 +382,15 @@ FOUND:
         it--;
         if (it == location_map.begin()) goto NO_TREE;
         out.tree = it->second;
-        return get_source(offset, out);
+        return get_source(offset, out, loc, ranges);
 NO_TREE:
         if (streams.size()) {
             out.tree = nullptr;
-            return get_source(offset, out);
+            return get_source(offset, out, loc, ranges);
         }
         return false;
     }
-    static void get_source_for_string(const char *s, size_t max, source_location &out, uint64_t offset) {
+    static void get_source_for_string(const char *s, size_t max, source_location &out, uint64_t offset, location_t loc, const ArrayRef<SourceRange> ranges) {
         size_t last_line_offset = 0;
         unsigned line = 0;
         for (size_t i = 0;i < offset;++i) {
@@ -406,20 +404,20 @@ NO_TREE:
         out.col = offset - last_line_offset;
         if (out.col) 
             for (size_t i = last_line_offset;i < offset;++i)
-                out.source_line.push_back(s[i]);
+                out.source_line.push_back(s[i], loc, ranges);
         for (size_t i = offset;i < max;++i) {
             const char c = s[i];
             if (c == '\n' || c == '\r')
                 break;
-            out.source_line.push_back(c);
+            out.source_line.push_back(c, loc, ranges);
         }
     }
-    bool get_source(uint64_t offset, source_location &out) {
+    bool get_source(uint64_t offset, source_location &out, location_t original_loc, const ArrayRef<SourceRange> ranges = {}) {
         Stream *target = streams[out.fd];
         if (StringStream *s = dyn_cast<StringStream>(target))
-            return get_source_for_string(s->s, s->max, out, offset), true;
+            return get_source_for_string(s->s, s->max, out, offset, original_loc, ranges), true;
         if (StdinStream *s = dyn_cast<StdinStream>(target))
-             return get_source_for_string(s->contents.data(), s->contents.size(), out, offset), true;
+             return get_source_for_string(s->contents.data(), s->contents.size(), out, offset, original_loc, ranges), true;
         FileStream *stream = cast<FileStream>(target);
         FileStream &f = *stream;
         auto saved_location = f.SavePos();
@@ -470,7 +468,8 @@ NO_TREE:
             ::lseek(f.fd, -static_cast<off_t>(out.col), SEEK_CUR);
 #endif
         }
-        // now, read source line
+        out.source_line.setInsertLoc(original_loc - out.col);
+        out.col++;
         for (;;) {
 #if WINDOWS
             DWORD L = 0;
@@ -483,7 +482,7 @@ NO_TREE:
 #endif
             for (unsigned i = 0;i < L;++i) {
                 const char c = buffer[i];
-                if (out.source_line.push_back(c) && i != 0) {
+                if (out.source_line.push_back(c, original_loc, ranges) && i != 0) {
                     goto BREAK;
                 }
             }

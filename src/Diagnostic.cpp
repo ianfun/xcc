@@ -219,7 +219,7 @@ struct TextDiagnosticPrinter : public DiagnosticConsumer {
             OS << " generated.\n";
         }
     }
-    void printSource(const source_location &loc);
+    void printSource(source_location &loc, const ArrayRef<FixItHint> FixItHints);
     void write_loc(const source_location &loc);
 };
 struct DiagnosticsEngine {

@@ -29,7 +29,7 @@ struct Lexer : public EvalHelper {
     location_t getLoc() { return loc; }
     location_t getEndLoc() { return endLoc; }
     Expr constant_expression();
-    void updateLoc() { loc = SM.getLoc();}
+    void updateLoc() { loc = SM.getLoc() - 2; }
     static bool isCSkip(char c) {
         // space, tab, new line, form feed are translate into ' '
         return c == ' ' || c == '\t' || c == '\f' || c == '\v';
@@ -154,7 +154,6 @@ struct Lexer : public EvalHelper {
         }
         if (c != '\'')
             warning(loc, "missing terminating " lquote "'" rquote " character in character literal");
-        endLoc = getLoc();
         eat();
         return theTok;
     }
@@ -187,7 +186,6 @@ struct Lexer : public EvalHelper {
     TokenV lexIdent() {
         TokenV theTok = TokenV(ATokenIdent, PPIdent);
         for (;;) {
-            endLoc = getLoc();
             unsigned n = 8;
             if (c == '\\') {
                 eat();
@@ -295,7 +293,8 @@ R:
 END:
                 return lexPPNumberEnd(s);
             }
-            endLoc = getLoc() - 1;
+            updateLoc();
+            endLoc = SM.getLoc() - 1;
             s.make_eos();
             TokenV theTok = TokenV(ATokenVNumLit, PPNumber);
             theTok.str = s;
@@ -326,10 +325,10 @@ END:
         eat(); // eat "
         TokenV theTok = TokenV(ATokenVStrLit, TStringLit);
         for (;;) {
-            endLoc = getLoc();
             if (c == '\\')
                 cat_codepoint(str, lexEscape());
             else if (c == '"') {
+                endLoc = SM.getLoc() - 1;
                 eat();
                 break;
             } else {
@@ -417,9 +416,8 @@ END:
     TokenV lex() {
         // Tokenize
         for (;;) {
-            if (c == '\0') {
+            if (c == '\0')
                 return isPPMode = false, TEOF;
-            }
             if (isCSkip(c)) {
                 for (;;) {
                     eat();

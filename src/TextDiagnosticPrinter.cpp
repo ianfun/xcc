@@ -1,16 +1,26 @@
-void TextDiagnosticPrinter::printSource(const source_location &loc) {
+void TextDiagnosticPrinter::printSource(source_location &loc, const ArrayRef<FixItHint> FixItHints = {}) {
     {
         char buf[13];
         int len = snprintf(buf, sizeof(buf), "%5d", loc.line);
         OS << StringRef(buf, len) << " | ";
     }
-    OS << loc.source_line.str();
+    OS << loc.source_line.sourceLine.str();
     OS << "\n      | ";
-    for (unsigned i = 0;i < loc.col;++i)
-        OS << ' ';
-    OS.changeColor(raw_ostream::RED);
-    OS << '^';
-    OS.resetColor();
+    while (loc.source_line.CaretLine.size() && loc.source_line.CaretLine.back() == ' ')
+        loc.source_line.CaretLine.pop_back();
+    if (loc.source_line.CaretLine.size()) {
+        for (const char c: loc.source_line.CaretLine) {
+            if (c == '~' || c == '^') 
+                OS.changeColor(llvm::raw_ostream::Colors::GREEN);
+            OS << c;
+            if (c == '~' || c == '^')
+                OS.resetColor();
+        }
+    }
+    if (!FixItHints.empty()) {
+        std::string line = loc.source_line.buildFixItInsertionLine(FixItHints);
+        OS << "\n        " << line;
+    }
     OS << '\n';
 }
 void TextDiagnosticPrinter::write_loc(const source_location &loc) {
@@ -23,7 +33,7 @@ void TextDiagnosticPrinter::realHandleDiagnostic(const Diagnostic &Diag) {
     LocTree *begin_macro = nullptr;
     source_location loc;
     if (SM && Diag.loc != 0) { 
-        locValid = SM->translateLocation(Diag.loc, loc);
+        locValid = SM->translateLocation(Diag.loc, loc, Diag.ranges);
         if (!locValid)
             goto NO_LOC;
         begin_macro = loc.tree;
@@ -77,7 +87,7 @@ void TextDiagnosticPrinter::realHandleDiagnostic(const Diagnostic &Diag) {
         OS << OutStr.str();
     }
     if (locValid) {
-        printSource(loc);
+        printSource(loc, Diag.FixItHints);
         for (LocTree *ptr = begin_macro;ptr;ptr = ptr->getParent()) {
             PPMacroDef *def = ptr->macro;
             SM->translateLocation(def->loc, loc);

@@ -133,7 +133,7 @@
 #include <cctype>
 
 #if CC_DEBUG
-  #define dbgprint(msg, ...) fprintf(stderr, "\33[01;33m[DEBUG]\33[0m: " msg, ##__VA_ARGS__) 
+  #define dbgprint(msg, ...) fprintf(stderr, "\33[01;33m[DEBUG]\33[0m " msg, ##__VA_ARGS__) 
 #else
   #define dbgprint(...) (void)0
 #endif
@@ -680,6 +680,9 @@ struct SourceRange {
     location_t getEnd() const {
         return end;
     }
+    bool contains(location_t loc) const {
+        return loc >= start && loc <= end;
+    }
     bool isValid() const {
         return start != 0 && end != 0;
     }
@@ -692,44 +695,81 @@ struct SourceRange {
     bool operator==(const SourceRange &other) {
         return start == other.start && end == other.end;
     }
+    void dump() const {
+        llvm::errs() << "SourceRange(" << start << ", " << end << ")";
+    }
 };
 struct FixItHint {
     StringRef code;
-    SourceRange insertRange;
-    static FixItHint CreateInsertion(StringRef code, SourceRange insertRange) {
+    location_t insertPos;
+    static FixItHint CreateInsertion(const StringRef &code, location_t insertPos) {
+        assert(code.size() && "empty FixItHint Insertion");
         FixItHint Hint;
         Hint.code = code;
-        Hint.insertRange = insertRange;
+        Hint.insertPos = insertPos;
         return Hint;
     }
 };
 struct SourceLine {
-    llvm::SmallString<0> buffer;
+    SmallString<0> sourceLine;
+    SmallString<0> CaretLine;
+    location_t startLoc, insertLoc;
     void clear() {
-        buffer.clear();
+        sourceLine.clear();
+        CaretLine.clear();
     }
-    StringRef str() const {
-        return buffer.str();
+    void setInsertLoc(location_t loc) {
+        startLoc = (insertLoc = loc);
     }
-    bool push_back(char c) {
+    std::string buildFixItInsertionLine(const ArrayRef<FixItHint> FixItHints) const {
+        assert(!FixItHints.empty());
+        std::string line(CaretLine.size(), ' ');
+        location_t loc = startLoc;
+        for (size_t Repeat = line.size();--Repeat;loc++) {
+            for (const auto &it : FixItHints) {
+                if (it.insertPos == loc) {
+                    size_t FixItinsertLoc = static_cast<size_t>(loc) - static_cast<size_t>(startLoc);
+                    size_t end = FixItinsertLoc + it.code.size();
+                    line.resize(end, ' ');
+                    size_t c = 0;
+                    while (FixItinsertLoc < end) {
+                        line[FixItinsertLoc++] = it.code[c++];
+                    }
+                }
+            }
+        }
+        return line;
+    }
+    bool push_back(char c, location_t caretLoc, const ArrayRef<SourceRange> ranges) {
         switch (c) {
         case '\n':
         case '\r': return true;
         case '\t':
-            buffer.append(CC_SHOW_TAB_SIZE, ' ');
+            CaretLine.append(CC_SHOW_TAB_SIZE, ' ');
+            sourceLine.append(CC_SHOW_TAB_SIZE, ' ');
             break;
         default:
             if (!llvm::isPrint(c)) { /*std::iscntrl(c)*/ 
-                    buffer.push_back('<');
-                    buffer.push_back('0');
-                    buffer.push_back('x');
-                    buffer.push_back(hexed(c) >> 4);
-                    buffer.push_back(hexed(c));
-                    buffer.push_back('>');
+                    sourceLine.push_back('<');
+                    sourceLine.push_back('0');
+                    sourceLine.push_back('x');
+                    sourceLine.push_back(hexed(c) >> 4);
+                    sourceLine.push_back(hexed(c));
+                    sourceLine.push_back('>');
+                    CaretLine.append(' ', 6);
                 } else {
-                    buffer.push_back(c);
+                    CaretLine.push_back(' ');
+                    for (const auto it: ranges) {
+                        if (it.contains(insertLoc)) {
+                            CaretLine.back() = '~';
+                        }
+                    }
+                    if (caretLoc == insertLoc)
+                        CaretLine.back() = '^';
+                    sourceLine.push_back(c);
                 }
         }
+        insertLoc++;
         return false;
     }
 };
@@ -872,7 +912,7 @@ location_t OpaqueExpr::getBeginLoc() const {
         return *getParenLLoc();
     switch (k) {
     case EVar: return varLoc;
-    case EBin: return rhs->getBeginLoc();
+    case EBin: return lhs->getBeginLoc();
     case EUnary: return opLoc;
     case ECast: return castval->getBeginLoc();
     case ESubscript: return left->getBeginLoc();
@@ -895,7 +935,7 @@ location_t OpaqueExpr::getEndLoc() const {
         return *getParenRLoc();
     switch (k) {
     case EConstant:
-        return constantEndLoc;
+        return constantEndLoc ? constantLoc : constantEndLoc;
     case EBin:
         return rhs->getEndLoc();
     case EUnary:

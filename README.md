@@ -104,6 +104,10 @@ Supports Windows, WSL, Linux ...
 
 ![](run.png)
 
+Fix-it Hints
+
+![](fixit.png)
+
 `_Complex`, `_Imaginary` support.
 
 ![](complex.png)

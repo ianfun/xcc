@@ -470,11 +470,11 @@ union {
 		realname = name[1::] + "Expr"
 		l.append(realname)
 		if decls:
-			f.write("struct " + realname + " {\n  enum ExprKind k=" + name + ";\n  location_t loc;\n  CType ty;\n  struct {\n  ")
+			f.write("struct " + realname + " {\n  enum ExprKind k=" + name + ";\n  CType ty;\n  struct {\n  ")
 			f.write('  ' + ';\n    '.join(decls) + ';')
 			f.write("\n  };\n};\n")
 		else:
-			f.write("  struct " + realname + " {\n  enum ExprKind k=" + name + ";\n  location_t loc;\n  CType ty;\n /* empty! */ \n};\n")
+			f.write("  struct " + realname + " {\n  enum ExprKind k=" + name + ";\n  CType ty;\n /* empty! */ \n};\n")
 	f.write("static uint8_t expr_size_map[] = {\n    " + 
 		',\n    '.join(sizeof(l)) + 
 		"\n};\n")
