@@ -82,4 +82,3 @@ const auto &getDriverOptTable() {
   return *Table;
 }
 }
-

@@ -3,226 +3,91 @@
  * inspired by gcc's line map and clang's SourceManager
  */
 
-#if WINDOWS
-typedef HANDLE fd_t;
-#else
-typedef int fd_t;
-#endif
-enum StreamKind : uint8_t {
-    AFileStream,
-    AStringStream,
-    AStdinStream
-};
-struct Stream {
-  protected:
-    Stream(enum StreamKind k, const char *name, location_t startLoc)
-        : k{k}, name{name}, line{1}, column{1}, startLoc{startLoc}, loc{startLoc} { }
-    void setEndLocWithOffset(location_t offset) { endLoc = startLoc + offset; }
+// rustc_span
+// https://doc.rust-lang.org/beta/nightly-rustc/rustc_span/index.html
 
-  public:
-    enum StreamKind k;
-    const char *name;
-    uint32_t line, column;
+// clang::SourceManager
+// https://doc.rust-lang.org/beta/nightly-rustc/rustc_span/index.html
+// https://clang.llvm.org/doxygen/classclang_1_1FileManager.html
+
+// gcc line map
+// https://github.com/gcc-mirror/gcc/blob/master/libcpp/include/line-map.h
+
+using line_offset_t = uint32_t;
+
+// https://doc.rust-lang.org/beta/nightly-rustc/rustc_span/struct.SourceFile.html
+// https://clang.llvm.org/doxygen/classclang_1_1SrcMgr_1_1ContentCache.html
+struct Stream {
+    Stream(llvm::MemoryBuffer *MemBuffer, location_t startLoc, const char *Name): MemBuffer{MemBuffer}, startLoc{startLoc}, loc{0}, endLoc{static_cast<location_t>(startLoc + MemBuffer->getBufferSize())}, Name{Name}, BufferStart{MemBuffer->getBufferStart()} {}
+    ~Stream() { delete MemBuffer; }
+    llvm::MemoryBuffer *MemBuffer;
     location_t startLoc, loc, endLoc;
-    enum StreamKind getKind() const { return k; }
+    const char *Name;
     bool hasLineOffsetMapping = false;
-    std::vector<uint32_t> lineOffsetMapping;
-    void requestLineOffsetMapping();
-};
-// A stream that read from a system file handle
-struct FileStream : public Stream {
-    fd_t fd;
-    unsigned p, pos;
-#if WINDOWS
-    using filepos_t = uint64_t;
-#else
-    using filepos_t = off_t;
-#endif
-    FileStream(const char *name, location_t startLoc, fd_t fd, location_t fileSize)
-        : Stream{AFileStream, name, startLoc}, fd{fd}, p{0}, pos{0} {
-        setEndLocWithOffset(fileSize);
+    SmallVector<line_offset_t> lineOffsetMapping;
+    const char *BufferStart;
+    const char *getBufferStart() const { return BufferStart; }
+    size_t getFileSize() const { return MemBuffer->getBufferSize(); }
+    auto getBufferEnd() const { return MemBuffer->getBufferEnd(); }
+    const SmallVectorImpl<line_offset_t> &getLineOffsetMapping() const {
+        assert(hasLineOffsetMapping);
+        return lineOffsetMapping;
     }
-    static bool classof(const Stream *other) { return other->getKind() == AFileStream; }
-    void close() {
-#if WINDOWS
-        ::CloseHandle(fd);
-#else
-        ::close(fd);
-#endif
+    SmallVectorImpl<line_offset_t> &getLineOffsetMappingSafe() {
+        if (!hasLineOffsetMapping)
+            createLineOffsetMapping();
+        return lineOffsetMapping;
     }
-    filepos_t SavePos() {
-#if WINDOWS
-        LARGE_INTEGER res;
-        LARGE_INTEGER seek_pos;
-        seek_pos.QuadPart = -static_cast<ULONGLONG>(pos);
-        if (!::SetFilePointerEx(fd, seek_pos, &res, FILE_CURRENT))
-            return 0;
-        seek_pos.QuadPart = 0;
-        if (!::SetFilePointerEx(fd, seek_pos, nullptr, FILE_BEGIN))
-            return 0;
-        return res.QuadPart;
-#else
-        off_t res;
-        if ((res = ::lseek(fd, -static_cast<off_t>(pos), SEEK_CUR)) < 0)
-            return 0;
-        if (::lseek(fd, 0, SEEK_SET) != 0)
-            return 0;
-        return res;
-#endif
-    }
-    void RestorePos(filepos_t pos) {
-#if WINDOWS
-        LARGE_INTEGER seek_pos;
-        seek_pos.QuadPart = pos;
-        ::SetFilePointerEx(fd, seek_pos, nullptr, FILE_BEGIN);
-#else
-        ::lseek(fd, pos, SEEK_SET);
-#endif
-    }
-    // clang::SrcMgr::LineOffsetMapping::get
     void createLineOffsetMapping() {
-        constexpr size_t read_size = 4096;
-        char *buffer = new char[read_size];
-        assert(!hasLineOffsetMapping && "already has lineOffsetMapping!");
-        bool lastCharIsCR = false;
+        assert(!hasLineOffsetMapping && lineOffsetMapping.empty());
         uint32_t I = 0;
-        auto saved_location = SavePos();
+        size_t max = MemBuffer->getBufferSize();
+        const char *s = BufferStart;
         lineOffsetMapping.push_back(0);
-        for (;;) {
-#if WINDOWS
-            DWORD L = 0;
-            if (!::ReadFile(fd, buffer, read_size, &L, nullptr) || L == 0)
-                break;
-#else
-            size_t L = ::read(fd, buffer, read_size);
-            if (L == 0)
-                break;
-#endif
-            for (size_t i = 0; i < read_size; ++i) {
-                char c = buffer[i];
-                lastCharIsCR = false;
-                if (c == '\n') {
-                    if (!lastCharIsCR)
-                        lineOffsetMapping.push_back(I + 1);
-                } else if (c == '\r') {
-                    lastCharIsCR = true;
-                    lineOffsetMapping.push_back(I + 1);
-                }
-                I++;
+        for (size_t i = 0; i < max; ++i) {
+            char c = s[i];
+            if (c == '\n') {
+                lineOffsetMapping.push_back(I + 1);
+            } else if (c == '\r') {
+                if (i + 1 < max && s[i + 1] == '\n')
+                    ++I;
+                lineOffsetMapping.push_back(I + 1);
             }
+            ++I;
         }
-        RestorePos(saved_location);
     }
+    char readChar() {
+        return loc < endLoc ? BufferStart[loc++] : '\0';
+    }
+    location_t getEndLoc() const { return startLoc + getFileSize(); }
+    void setName(const char *Name) { this->Name = Name; }
+    const char *getName() const { return Name; }
+    const char *getFileName() const { return getName(); }
+    StringRef getFileNameFromMemoryBuffer() const { return MemBuffer->getBufferIdentifier(); }
+    StringRef getBuffer() const { return MemBuffer->getBuffer(); }
 };
-static void createLineOffsetMappingForString(const char *s, size_t max, std::vector<uint32_t> &lineOffsetMapping) {
-    uint32_t I = 0;
-    lineOffsetMapping.push_back(0);
-    for (size_t i = 0; i < max; ++i) {
-        char c = s[i];
-        if (c == '\n') {
-            lineOffsetMapping.push_back(I + 1);
-        } else if (c == '\r') {
-            if (i + 1 < max && s[i + 1] == '\n')
-                ++I;
-            lineOffsetMapping.push_back(I + 1);
-        }
-        ++I;
-    }
-}
-// A stream that read from stdin(fd 0)
-struct StdinStream : public Stream {
-    size_t idx;
-    std::string contents;
-    StdinStream(const char *name, location_t startLoc) : Stream{AStdinStream, name, startLoc}, idx{0}, contents{} {
-        setEndLocWithOffset(0);
-    }
-    static bool classof(const Stream *other) { return other->getKind() == AStdinStream; }
-    unsigned getColumnNumber(location_t offset) {
-        unsigned LineStart = offset;
-        while (LineStart && contents[LineStart - 1] != '\n' && contents[LineStart - 1] != '\r')
-            --LineStart;
-        return offset - LineStart + 1;
-    }
-    char read(char *buffer, bool is_tty) {
-        if (idx == contents.size()) {
-#if CC_NO_RAEADLINE
-            for (;;) {
-                char c;
-                if (::read(0, &c, 1) <= 0)
-                    return '\0';
-                if (c == '\n')
-                    break;
-                contents += c;
-            }
-#else
-REPEAT:
-            char *line = ::readline(STDIN_PROMPT);
-            if (!line)
-                return '\0';
-            if (line[0] == '\0')
-                goto REPEAT;
-            ::add_history(line);
-            contents += line;
-            free(line);
-#endif
-        }
-        return contents[idx++];
-    }
-    void createLineOffsetMapping() {
-        return createLineOffsetMappingForString(contents.data(), contents.size(), lineOffsetMapping);
-    }
-};
-// A stream read from string(e.g: define macro in command line, paste tokens)
-struct StringStream : public Stream {
-    size_t idx, max;
-    const char *s;
-    StringStream(const char *name, location_t startLoc, StringRef str)
-        : Stream{AStringStream, name, startLoc}, idx{0}, max{str.size()}, s{str.data()} {
-        setEndLocWithOffset(max);
-    }
-    static bool classof(const Stream *other) { return other->getKind() == AStringStream; }
-    inline char read() { return idx <= max ? s[idx++] : '\0'; }
-    void createLineOffsetMapping() { return createLineOffsetMappingForString(s, max, lineOffsetMapping); }
-    unsigned getColumnNumber(location_t offset) {
-        unsigned LineStart = offset;
-        while (LineStart && s[LineStart - 1] != '\n' && s[LineStart - 1] != '\r')
-            --LineStart;
-        return offset - LineStart + 1;
-    }
-};
-void Stream::requestLineOffsetMapping() {
-    if (!hasLineOffsetMapping) {
-        hasLineOffsetMapping = true;
-        switch (getKind()) {
-        case AFileStream: return cast<FileStream>(this)->createLineOffsetMapping();
-        case AStringStream: return cast<StringStream>(this)->createLineOffsetMapping();
-        case AStdinStream: return cast<StdinStream>(this)->createLineOffsetMapping();
-        }
-        llvm_unreachable("invalid stream");
-    }
-}
 struct SourceMgr : public DiagnosticHelper {
     char buf[STREAM_BUFFER_SIZE];
     SmallVector<xstring, 16> sysPaths;
     SmallVector<xstring, 16> userPaths;
-    SmallVector<Stream *> streams;
+    SmallVector<Stream> streams;
     SmallVector<fileid_t, 16> includeStack;
     LocTree *tree = nullptr;
     std::map<location_t, LocTree *, std::less<location_t>> location_map;
     StringRef lastDir = StringRef();
     bool trigraphs;
     bool is_tty;
-    void setLine(uint32_t line) { streams[includeStack.back()]->line = line; }
-    const char *getFileName(unsigned i) const { return streams[i]->name; }
+    void setLine(uint32_t line) { /* TODO */ }
+    const char *getFileName(unsigned i) const { return streams[i].getFileName(); }
     const char *getFileName() const {
-        return includeStack.size() ? streams[includeStack.back()]->name : "(unknown file)";
+        return includeStack.size() ? streams[includeStack.back()].getFileName() : "(unknown file)";
     }
-    unsigned getLine() const { return includeStack.empty() ? 0 : streams[includeStack.back()]->line; }
-    unsigned getLine(unsigned i) const { return streams[i]->line; }
-    void setFileName(const char *name) { streams[includeStack.back()]->name = name; }
-    location_t getCurrentLocation() const { return streams.back()->loc; }
-    location_t getEndLoc() const { return streams.empty() ? 0 : streams[includeStack.back()]->endLoc; }
-    location_t getLoc() const { return streams[includeStack.back()]->loc; }
+    unsigned getLine(fileid_t id) { return 1; /* TODO */ }
+    unsigned getLine() const { return includeStack.empty() ? 1 : 1 /* TODO */; }
+    void setFileName(const char *Name) { streams[includeStack.back()].setName(Name); }
+    location_t getCurrentLocation() const { return streams.back().loc; }
+    location_t getEndLoc() const { return streams.empty() ? 0 : streams[includeStack.back()].endLoc; }
+    location_t getLoc() const { return streams[includeStack.back()].loc; }
     inline LocTree *getLocTree() const { return tree; }
     void beginExpandMacro(PPMacroDef *M, xcc_context &context) {
         location_map[getCurrentLocation()] = (tree = new (context.getAllocator()) LocTree(tree, M));
@@ -259,7 +124,6 @@ struct SourceMgr : public DiagnosticHelper {
                 pp_error("cannot open %s: %w", path, static_cast<unsigned>(GetLastError()));
             return false;
         }
-
         DWORD highPart;
         fileSize = ::GetFileSize(fd, &highPart);
         if (fileSize == INVALID_FILE_SIZE)
@@ -289,18 +153,35 @@ struct SourceMgr : public DiagnosticHelper {
             fileSize = sb.st_size;
         }
 #endif
+        ErrorOr<std::unique_ptr<MemoryBuffer>> MemberBufferOrErr = llvm::MemoryBuffer::getOpenFile(fd, path, fileSize);
+        if (!MemberBufferOrErr) {
+#if WINDOWS
+            CloseHandle(fd);
+#else
+            close(fd);
+#endif
+            std::string msg = MemberBufferOrErr.getError().message();
+            StringRef msgStr(msg);
+            error("error reading %s: %R", path, msgStr);
+            return false;
+        }
         const size_t Id = streams.size();
-        streams.push_back(new FileStream(path, getEndLoc(), fd, fileSize));
+        streams.emplace_back(MemberBufferOrErr->release(), getEndLoc(), path);
         lastDir = llvm::sys::path::parent_path(path, llvm::sys::path::Style::native);
         if (lastDir.empty())
             lastDir = ".";
         includeStack.push_back(Id);
+#if WINDOWS
+        CloseHandle(fd);
+#else
+        close(fd);
+#endif
         return true;
     }
     fileid_t getFileID(location_t loc, uint64_t &offset) const {
         for (size_t i = 0; i < streams.size(); ++i) {
-            if (loc < streams[i]->endLoc) {
-                offset = loc - streams[i]->startLoc;
+            if (loc < streams[i].endLoc) {
+                offset = loc - streams[i].startLoc;
                 return i;
             }
         }
@@ -310,10 +191,10 @@ struct SourceMgr : public DiagnosticHelper {
     location_t lastQueryOffset_line = (location_t)-1;
     uint32_t lastQueryResult_line = 0;
     uint32_t getLineNumber(location_t offset, fileid_t FD) {
-        Stream *f = streams[FD];
-        f->requestLineOffsetMapping();
-        const uint32_t *lineStart = f->lineOffsetMapping.data();
-        const uint32_t *lineEnd = f->lineOffsetMapping.data() + f->lineOffsetMapping.size();
+        Stream &f = streams[FD];
+        const auto &line_vec = f.getLineOffsetMappingSafe();
+        const uint32_t *lineStart = line_vec.data();
+        const uint32_t *lineEnd = lineStart + line_vec.size();
         const uint32_t *searchBegin = lineStart;
         location_t QueriedFilePos = offset + 1;
         if (FD == lastQueryFileId_line) {
@@ -336,38 +217,17 @@ struct SourceMgr : public DiagnosticHelper {
         return (lastQueryResult_line = Pos - lineStart);
     }
     uint32_t getColumnNumber(location_t offset, fileid_t FD) {
-        Stream *f = streams[FD];
-        if (StringStream *s = dyn_cast<StringStream>(f)) {
-            return s->getColumnNumber(offset);
-        }
-        if (StdinStream *s = dyn_cast<StdinStream>(f)) {
-            return s->getColumnNumber(offset);
-        }
-        FileStream *s = cast<FileStream>(f);
-        uint32_t line = getColumnNumber(offset, FD);
-        return offset - s->lineOffsetMapping[line] + 1;
+        return 1;
     }
     bool translateLocation(location_t loc, source_location &out, const ArrayRef<SourceRange> ranges = {}) {
+        assert(streams.size() && "cannot call translateLocation when empty stream");
+        if (loc == 0)
+            return false;
         uint64_t offset;
-        if (location_is_stdin(loc)) {
-            for (size_t i = 0; i < streams.size(); ++i) {
-                if (StdinStream *s = dyn_cast<StdinStream>(streams[i])) {
-                    loc = location_as_index(loc);
-                    offset = loc - s->startLoc;
-                    out.fd = i;
-                    goto FOUND;
-                }
-            }
-            llvm_unreachable("no stdin stream found");
-        } else {
-            if (loc == 0)
-                return false;
-            fileid_t fd = getFileID(loc, offset);
-            if (fd == (fileid_t)-1)
-                return false;
-            out.fd = fd;
-        }
-FOUND:
+        fileid_t fd = getFileID(loc, offset);
+        if (fd == (fileid_t)-1)
+            return false;
+        out.fd = fd;
         auto it = location_map.lower_bound(loc);
         if (it == location_map.begin())
             goto NO_TREE;
@@ -375,18 +235,17 @@ FOUND:
         if (it == location_map.begin())
             goto NO_TREE;
         out.tree = it->second;
-        return get_source(offset, out, loc, ranges);
+        get_source(offset, out, loc, ranges);
+        return true;
 NO_TREE:
-        if (streams.size()) {
-            out.tree = nullptr;
-            return get_source(offset, out, loc, ranges);
-        }
-        return false;
+        out.tree = nullptr;
+        get_source(offset, out, loc, ranges);
+        return true;
     }
     static void get_source_for_string(const char *s, size_t max, source_location &out, uint64_t offset, location_t loc,
                                       const ArrayRef<SourceRange> ranges) {
         size_t last_line_offset = 0;
-        unsigned line = 0;
+        unsigned line = 1;
         for (size_t i = 0; i < offset; ++i) {
             const char c = s[i];
             if (c == '\n') {
@@ -399,6 +258,7 @@ NO_TREE:
         if (out.col)
             for (size_t i = last_line_offset; i < offset; ++i)
                 out.source_line.push_back(s[i], loc, ranges);
+        out.col++;
         for (size_t i = offset; i < max; ++i) {
             const char c = s[i];
             if (c == '\n' || c == '\r')
@@ -406,143 +266,17 @@ NO_TREE:
             out.source_line.push_back(c, loc, ranges);
         }
     }
-    bool get_source(uint64_t offset, source_location &out, location_t original_loc,
+    void get_source(uint64_t offset, source_location &out, location_t original_loc,
                     const ArrayRef<SourceRange> ranges = {}) {
-        Stream *target = streams[out.fd];
-        if (StringStream *s = dyn_cast<StringStream>(target))
-            return get_source_for_string(s->s, s->max, out, offset, original_loc, ranges), true;
-        if (StdinStream *s = dyn_cast<StdinStream>(target))
-            return get_source_for_string(s->contents.data(), s->contents.size(), out, offset, original_loc, ranges),
-                   true;
-        FileStream *stream = cast<FileStream>(target);
-        FileStream &f = *stream;
-        auto saved_location = f.SavePos();
-        location_t old_loc = f.loc;
-        uint64_t readed = 0, last_line_offset = 0;
-        unsigned line = 1;
-        constexpr size_t read_size = 1024;
-        char *buffer = new char[read_size];
-        bool lastCharIsCR = false;
-        for (;;) {
-            uint64_t to_read = offset - readed;
-            if (LLVM_LIKELY(to_read > read_size))
-                to_read = read_size;
-            if (LLVM_UNLIKELY(to_read == 0))
-                break;
-#if WINDOWS
-            DWORD L = 0;
-            if (!::ReadFile(f.fd, buffer, to_read, &L, nullptr) || L != to_read)
-                break;
-#else
-            size_t L = ::read(f.fd, buffer, to_read);
-            if (L != (size_t)to_read)
-                break;
-#endif
-            for (uint64_t j = 0; j < to_read; ++j) {
-                lastCharIsCR = false;
-                if (buffer[j] == '\n') {
-                    if (!lastCharIsCR) {
-                        line++;
-                    }
-                    last_line_offset = readed + j;
-                } else if (buffer[j] == '\r') {
-                    lastCharIsCR = true;
-                    last_line_offset = readed + j;
-                    line++;
-                }
-            }
-            readed += to_read;
-        }
-        out.line = line;
-        out.col = offset - last_line_offset;
-        if (out.col) {
-#if WINDOWS
-            LARGE_INTEGER seek_pos;
-            seek_pos.QuadPart = -static_cast<uint64_t>(out.col);
-            ::SetFilePointerEx(f.fd, seek_pos, nullptr, FILE_CURRENT);
-#else
-            ::lseek(f.fd, -static_cast<off_t>(out.col), SEEK_CUR);
-#endif
-        }
-        out.source_line.setInsertLoc(original_loc - out.col);
-        out.col++;
-        for (;;) {
-#if WINDOWS
-            DWORD L = 0;
-            if (!::ReadFile(f.fd, buffer, read_size, &L, nullptr) || L == 0)
-                break;
-#else
-            size_t L = ::read(f.fd, buffer, read_size);
-            if (L == 0)
-                break;
-#endif
-            for (unsigned i = 0; i < L; ++i) {
-                const char c = buffer[i];
-                if (out.source_line.push_back(c, original_loc, ranges) && i != 0) {
-                    goto BREAK;
-                }
-            }
-        }
-BREAK:;
-        f.pos = 0;
-        f.loc = old_loc;
-        delete[] buffer;
-        f.RestorePos(saved_location);
-        return true;
+        Stream &s = streams[out.fd];
+        get_source_for_string(s.getBufferStart(), s.getFileSize(), out, offset, original_loc, ranges);
     }
     bool empty() const { return includeStack.empty(); }
     // read a char from a stream
-    char raw_read(Stream *stream) {
-        stream->loc++;
-        if (FileStream *f = dyn_cast<FileStream>(stream)) {
-AGAIN:
-            if (f->pos == 0) {
-#if WINDOWS
-                DWORD L = 0;
-                if (!::ReadFile(f->fd, buf, STREAM_BUFFER_SIZE, &L, nullptr) || L == 0)
-                    return '\0'; // xxx: ReadFile error report ?
-#else
-READ_AGAIN:
-                ssize_t L = ::read(f->fd, buf, STREAM_BUFFER_SIZE);
-                if (L == 0)
-                    return '\0';
-                if (L < 0) {
-                    if (errno == EINTR)
-                        goto READ_AGAIN;
-                    pp_error("error reading file: %o", errno);
-                    return '\0';
-                }
-#endif
-                f->pos = L;
-                f->p = 0;
-            }
-            char c = buf[f->p++];
-            f->pos--;
-            if (c)
-                return c;
-            warning("null character(s) ignored");
-            goto AGAIN;
-        }
-        if (StdinStream *f = dyn_cast<StdinStream>(stream))
-            return f->read(buf, is_tty);
-        return cast<StringStream>(stream)->read();
+    char raw_read(Stream &stream) {
+        return stream.readChar();
     }
     char raw_read_from_id(unsigned id) { return raw_read(streams[id]); }
-    void resetBuffer() {
-        Stream *stream = streams[includeStack[includeStack.size() - 2]];
-        if (FileStream *f = dyn_cast<FileStream>(stream)) {
-#if WINDOWS
-            LARGE_INTEGER I;
-            I.QuadPart = -static_cast<LONGLONG>(f->pos);
-            ::SetFilePointerEx(f->fd, I, nullptr, FILE_CURRENT);
-#else
-            ::lseek(f->fd, -static_cast<off_t>(f->pos), SEEK_CUR);
-#endif
-            f->pos = 0;
-            return;
-        }
-        return;
-    }
     bool searchFileInDir(xstring &result, StringRef path, xstring *dir, size_t len) {
         for (size_t i = 0; i < len; ++i) {
             result += dir[i];
@@ -551,7 +285,7 @@ READ_AGAIN:
             result += path;
             result.make_eos();
             if (addFile(result.data()), false)
-                return resetBuffer(), true;
+                return true;
             result.clear();
         }
         return false;
@@ -564,7 +298,7 @@ READ_AGAIN:
             result += path;
             result.make_eos();
             if (addFile(result.data()), false)
-                return resetBuffer(), true;
+                return true;
             result.clear();
         }
         return false;
@@ -578,7 +312,7 @@ READ_AGAIN:
             result += '/';
             result += path;
             if (addFile(result.data(), false))
-                return resetBuffer(), true;
+                return true;
             result.clear();
         }
         if (searchFileInDir(result, path, userPaths.data(), userPaths.size()))
@@ -657,23 +391,24 @@ BREAK:
         Msg += " ";
         note("%r", StringRef(Msg));
     }
-    void closeAllFiles() {
-        for (const auto s : streams) {
-            if (FileStream *f = dyn_cast<FileStream>(s))
-                f->close();
-            delete s;
-        }
-        streams.clear();
-    }
+    // you should call this only if you don't use any streams and don't use any reference with MemoryBuffer(Name and contents)
+    void closeAllFiles() { streams.clear(); }
     ~SourceMgr() { closeAllFiles(); }
     void addStdin(const char *Name = "<stdin>") {
+        ErrorOr<std::unique_ptr<MemoryBuffer>> MemberBufferOrErr = llvm::MemoryBuffer::getSTDIN();
+        if (!MemberBufferOrErr) {
+            std::string msg = MemberBufferOrErr.getError().message();
+            StringRef msgStr(msg);
+            error("error reading from stdin: %R", Name, msgStr);
+            return;
+        }
         const size_t Id = streams.size();
-        streams.push_back(new StdinStream(Name, getEndLoc()));
+        streams.emplace_back(MemberBufferOrErr->release(), getEndLoc(), Name);
         includeStack.push_back(Id);
     }
     void addString(StringRef s, const char *Name = "<string>") {
         const size_t Id = streams.size();
-        streams.push_back(new StringStream(Name, getEndLoc(), s));
+        streams.emplace_back(llvm::MemoryBuffer::getMemBuffer(s, Name, false).release(), getEndLoc(), Name);
         includeStack.push_back(Id);
     }
     uint16_t lastc = 256, lastc2 = 256;
@@ -703,10 +438,9 @@ BREAK:
                 if (includeStack.empty())
                     return '\0';
                 return stream_read();
-            case '\n': streams[includeStack.back()]->line++; return '\n';
+            case '\n': return '\n';
             case '\r': {
                 char c2;
-                streams[includeStack.back()]->line++;
                 c2 = raw_read_from_stack();
                 if (c2 != '\n')
                     lastc = (unsigned char)c;
@@ -809,23 +543,19 @@ RET:
            << "Number of Streams:" << streams.size() << '\n';
         if (streams.empty())
             OS << "  (empty)\n";
-        for (unsigned i = 0; i < streams.size(); ++i) {
-            Stream *f = streams[i];
-            OS << "  stream[" << i << "]: Name = " << f->name << ", kind = ";
-            switch (f->getKind()) {
-            case AFileStream:
-                OS << "(file stream, fd = " << cast<FileStream>(f)->fd << ", size = "
-                   << ")\n";
-                break;
-            case AStdinStream: OS << "(stdin stream)\n"; break;
-            case AStringStream: OS << "(string stream)\n"; break;
+        else {
+            for (unsigned i = 0; i < streams.size(); ++i) {
+                const Stream &s = streams[i];
+                OS << "  # stream " << i << ": " << s.getFileName() << ", " << s.getFileSize() << " bytes, startLoc =" << s.startLoc << ", endLoc ="  << s.endLoc << "\n";
             }
         }
         OS << "\nInclude stack:\n";
         if (includeStack.empty())
             OS << "  (empty)\n";
-        for (unsigned i = 0; i < includeStack.size(); ++i)
-            OS << "include_stack[" << i << "] => fd " << includeStack[i] << '\n';
+        else {
+            for (unsigned i = 0; i < includeStack.size(); ++i)
+                OS << "  # include_stack " << i << ": fd =" << includeStack[i] << '\n';
+        }
         OS << "\n";
     }
 };

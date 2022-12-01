@@ -289,17 +289,11 @@ bool HandleImmediateArgs() {
   return true;
 }
 bool BuildInputs(SourceMgr &SM, Options &opts) {
-  bool hasStdinAdded = false;
   for (Arg *A : getArgs()) {
     if (A->getOption().getKind() == Option::InputClass) { 
       const char *Value = A->getValue();
       if (Value[0] == '-' && Value[1] == '\0') {
-        if (hasStdinAdded) {
-          warning("stdardard input specfied as input more than once is ignored");
-        } else {
-          SM.addStdin();
-          hasStdinAdded = false;
-        }
+        SM.addStdin();
       } else {
         SM.addFile(Value);
       }
@@ -307,7 +301,7 @@ bool BuildInputs(SourceMgr &SM, Options &opts) {
   }
   if (SM.empty())
     return fatal("no input files"), true;
-  opts.mainFileName = SM.streams[SM.includeStack[0]]->name;
+  opts.mainFileName = SM.streams.front().getFileNameFromMemoryBuffer();
   return false;
 }
 bool BuildCompilation(ArrayRef<const char *> Args, Options &opts, SourceMgr &SM, int &ret) {

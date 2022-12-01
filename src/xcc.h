@@ -1082,7 +1082,7 @@ static unsigned scalarRank(const_CType ty) {
         return scalarRankNoComplex(ty) + 1000; // a dummy number
     return scalarRank(ty);
 }
-#include "console.cpp"
+
 #include "Diagnostic.cpp"
 #include "JIT.cpp"
 #include "LLVMDiagnosticHandler.cpp"

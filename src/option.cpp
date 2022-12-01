@@ -1,5 +1,5 @@
 struct Options {
-    std::string mainFileName;
+    StringRef mainFileName;
     llvm::Triple triple;
     SmallString<256> CWD;
     const llvm::Target *theTarget;
