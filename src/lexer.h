@@ -643,7 +643,7 @@ RUN:
                         goto BAD_RET;
                     }
                     auto theFD = SM.includeStack.back();
-                    auto &f = SM.streams[theFD];
+                    Stream &f = *SM.streams[theFD];
                     char is_std = '\"';
                     xstring path = xstring::get();
 
