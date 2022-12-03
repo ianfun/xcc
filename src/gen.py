@@ -220,9 +220,10 @@ ctypes = {
 	"TYUNION":  ("size_t uidx", "IdentRef uname", "xvector<Declator> uelems",),
 	"TYENUM":   ("size_t eidx", "IdentRef ename", "xvector<EnumPair> eelems",),
 	"TYBITFIELD": ("CType bittype", "unsigned bitsize",),
-	"TYARRAY": ("Expr vla", "CType arrtype", "bool hassize", "unsigned arrsize",),
+	"TYARRAY": ("CType arrtype", "bool hassize", "unsigned arrsize",),
 	"TYFUNCTION": ("CType ret", "xvector<Param> params", "bool isVarArg",),
 	"TYINCOMPLETE": ("enum TagType tag", "IdentRef name", "size_t iidx",),
+	"TYVLA": ("CType vla_arraytype", "Expr vla_expr"),
 }
 
 def verbose(msg):

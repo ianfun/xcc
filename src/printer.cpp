@@ -74,11 +74,12 @@ raw_ostream &operator<<(llvm::raw_ostream &OS, const_CType ty) {
     case TYBITFIELD: return OS << ty->bittype << " : " << ty->bitsize;
     case TYARRAY:
         OS << ty->arrtype << " [";
-        if (ty->vla)
-            OS << ty->vla;
-        else if (ty->hassize)
+        if (ty->hassize)
             OS << ty->arrsize;
         return OS << ']';
+    case TYVLA:
+        OS << ty->vla_arraytype << " [" << ty->vla_expr << ']';
+        break;
     case TYFUNCTION: {
         auto str = ty->get_storage_str();
         OS << '(' << ty->ret;
@@ -135,11 +136,12 @@ raw_ostream &operator>>(llvm::raw_ostream &OS, const_CType ty) {
     case TYBITFIELD: return OS << ty->bittype << " : " << ty->bitsize;
     case TYARRAY:
         OS << "array[elementType=" << ty->arrtype << ", size=";
-        if (ty->vla)
-            OS << ty->vla;
-        else if (ty->hassize)
+        if (ty->hassize)
             OS << ty->arrsize;
         return OS << "]";
+    case TYVLA:
+        OS << "variableLengthArray[elementType=" << ty->vla_arraytype << ", size=" << ty->vla_expr << "]";
+        break;
     case TYFUNCTION: {
         auto str = ty->get_storage_str();
         OS << "Function[ret=" << ty->ret;
@@ -203,12 +205,14 @@ void print_cdecl(const_CType ty, raw_ostream &OS) {
         break;
     case TYARRAY:
         OS << "array";
-        if (ty->vla)
-            OS << ' ' << ty->vla;
-        else if (ty->hassize)
+        if (ty->hassize)
             OS << ' ' << ty->arrsize;
         OS << " of ";
         print_cdecl(ty->arrtype, OS);
+        break;
+    case TYVLA:
+        OS << "variable length array " << ty->vla_expr << " of ";
+        print_cdecl(ty->vla_arraytype, OS);
         break;
     case TYFUNCTION: {
         auto str = ty->get_storage_str();

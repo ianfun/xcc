@@ -359,6 +359,8 @@ PUT:
             return Cast_Imcompatible;
         const auto mask = OpaqueCType::important_mask;
         switch (p->getKind()) {
+        case TYVLA:
+            return (compatible(p->vla_arraytype, expected->vla_arraytype) && (p->vla_expr == expected->vla_expr)) ? Cast_Ok : Cast_Imcompatible;
         case TYPRIM: {
             if ((p->getTags() & mask) != (expected->getTags() & mask))
                 return Cast_Imcompatible;
@@ -2441,7 +2443,7 @@ BREAK:
     Declator direct_declarator_end(CType base, IdentRef name) {
         switch (l.tok.tok) {
         case TLSquareBrackets: {
-            CType ty = TNEW(ArrayType){.vla = nullptr, .arrtype = base, .hassize = false, .arrsize = 0};
+            CType ty = TNEW(ArrayType){.arrtype = base, .hassize = false, .arrsize = 0};
             ty->setKind(TYARRAY);
             consume();
             if (l.tok.tok == TMul) {
@@ -2467,7 +2469,7 @@ BREAK:
                 ty->hassize = true;
                 ty->arrsize = try_eval(e, ok);
                 if (!ok) {
-                    ty->vla = e;
+                    ty = TNEW(VlaType) {.vla_arraytype = base, .vla_expr = e};
                 }
                 if (l.tok.tok != TRSquareBrackets)
                     return expect(getLoc(), "]"), Declator();
@@ -2907,7 +2909,7 @@ ARGV_OK:;
                 Expr init;
                 auto &var_info = sema.typedefs.getSym(idx);
                 var_info.tags |= ASSIGNED;
-                if (st.ty->getKind() == TYARRAY && st.ty->vla) {
+                if (st.ty->getKind() == TYVLA) {
                     return (void)type_error(full_loc, "variable length array may not be initialized");
                 } else if (st.ty->getKind() == TYFUNCTION)
                     return (void)type_error(full_loc, "function may not be initialized");
@@ -2921,7 +2923,7 @@ ARGV_OK:;
                 if (!init)
                     return expect(full_loc, "initializer-list");
                 result->vars.back().init = init;
-                if (st.ty->getKind() == TYARRAY && !st.ty->hassize && !st.ty->vla)
+                if (st.ty->getKind() == TYARRAY && !st.ty->hassize)
                     result->vars.back().ty = init->ty;
                 if (init->k == EConstant && st.ty->hasTags(TYCONST | TYCONSTEXPR)) {
                     var_info.val = init->C; // for const and constexpr, their value can be fold to constant
@@ -2937,9 +2939,9 @@ ARGV_OK:;
                 }
             } else {
                 if (st.ty->getKind() == TYARRAY) {
-                    if (st.ty->vla && isTopLevel())
+                    if (st.ty->getKind() == TYVLA && isTopLevel())
                         type_error(full_loc, "variable length array declaration not allowed at file scope");
-                    else if (st.ty->hassize == false && !st.ty->vla && (st.ty->tag & TYEXTERN)) {
+                    else if (st.ty->hassize == false && st.ty->isGlobalStorage()) {
                         if (isTopLevel()) {
                             warning(full_loc, "array %I assumed to have one element", st.name);
                             st.ty->hassize = true, st.ty->arrsize = 1;

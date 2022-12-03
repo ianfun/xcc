@@ -8,7 +8,8 @@ enum CTypeKind: uint8_t {
   TYBITFIELD,
   TYARRAY,
   TYFUNCTION,
-  TYINCOMPLETE
+  TYINCOMPLETE,
+  TYVLA
 };
 
 #include "CType.cpp"
@@ -36,7 +37,6 @@ enum CTypeKind: uint8_t {
       unsigned bitsize;
   };
   struct {
-      Expr vla;
       CType arrtype;
       bool hassize;
       unsigned arrsize;
@@ -50,6 +50,10 @@ enum CTypeKind: uint8_t {
       enum TagType tag;
       IdentRef name;
       size_t iidx;
+  };
+  struct {
+      CType vla_arraytype;
+      Expr vla_expr;
   };
   };
 };
@@ -96,7 +100,6 @@ struct BitfieldType{
 struct ArrayType{
   uint64_t tags;
   struct {
-    Expr vla;
     CType arrtype;
     bool hassize;
     unsigned arrsize;
@@ -118,6 +121,13 @@ struct IncompleteType{
     size_t iidx;
   };
 };
+struct VlaType{
+  uint64_t tags;
+  struct {
+    CType vla_arraytype;
+    Expr vla_expr;
+  };
+};
 static size_t ctype_size_map[] = {
     sizeof(PrimType),
     sizeof(PointerType),
@@ -127,6 +137,7 @@ static size_t ctype_size_map[] = {
     sizeof(BitfieldType),
     sizeof(ArrayType),
     sizeof(FunctionType),
-    sizeof(IncompleteType)
+    sizeof(IncompleteType),
+    sizeof(VlaType)
 };
-static constexpr size_t ctype_max_size = std::max({sizeof(PrimType), sizeof(PointerType), sizeof(StructType), sizeof(UnionType), sizeof(EnumType), sizeof(BitfieldType), sizeof(ArrayType), sizeof(FunctionType), sizeof(IncompleteType)});
+static constexpr size_t ctype_max_size = std::max({sizeof(PrimType), sizeof(PointerType), sizeof(StructType), sizeof(UnionType), sizeof(EnumType), sizeof(BitfieldType), sizeof(ArrayType), sizeof(FunctionType), sizeof(IncompleteType), sizeof(VlaType)});

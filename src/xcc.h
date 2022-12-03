@@ -942,6 +942,8 @@ static bool compatible(CType p, CType expected) {
     if (p->getKind() != expected->getKind())
         return false;
     switch (p->getKind()) {
+    case TYVLA:
+        return compatible(p->vla_arraytype, expected->vla_arraytype) && (p->vla_expr == expected->vla_expr);
     case TYPRIM: return p->basic_equals(expected);
     case TYFUNCTION:
         if (!compatible(p->ret, expected->ret) || p->params.size() != expected->params.size())
