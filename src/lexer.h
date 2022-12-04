@@ -27,10 +27,10 @@ struct Lexer : public EvalHelper {
 
     Lexer(SourceMgr &SM, Parser &parser, xcc_context &context, DiagnosticsEngine &Diag)
         : EvalHelper{Diag}, parser{parser}, SM{SM}, context{context} { }
-    location_t getLoc() { return loc; }
-    location_t getEndLoc() { return endLoc; }
+    location_t getLoc() const { return loc; }
+    location_t getEndLoc() const { return endLoc; }
     Expr constant_expression();
-    void updateLoc() { loc = SM.getLoc() - 2; }
+    void updateLoc() { loc = SM.getLoc() - 1; }
     static bool isCSkip(char c) {
         // space, tab, new line, form feed are translate into ' '
         return c == ' ' || c == '\t' || c == '\f' || c == '\v';
@@ -162,6 +162,7 @@ struct Lexer : public EvalHelper {
         }
         if (c != '\'')
             warning(loc, "missing terminating " lquote "'" rquote " character in character literal");
+        endLoc = SM.getLoc() - 1;
         eat();
         return theTok;
     }
@@ -301,8 +302,7 @@ R:
 END:
                 return lexPPNumberEnd(s);
             }
-            updateLoc();
-            endLoc = SM.getLoc() - 1;
+            endLoc = SM.getLoc() - 2;
             s.make_eos();
             TokenV theTok = TokenV(ATokenVNumLit, PPNumber);
             theTok.str = s;
@@ -901,7 +901,7 @@ STD_INCLUDE:
         switch ((saved_tok = name->second.getToken())) {
         case PP__LINE__:
         case PP__COUNTER__: {
-            unsigned val = saved_tok == PP__LINE__ ? SM.getLine() : counter++;
+            unsigned val = saved_tok == PP__LINE__ ? SM.current_line : counter++;
             char buf[13];
             int n = snprintf(buf, sizeof(buf), "%u", val);
             tok = TokenV(ATokenVNumLit, PPNumber);

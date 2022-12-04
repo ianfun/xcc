@@ -54,12 +54,12 @@
 #endif
 #include <windows.h>
 #define WINDOWS 1
-template <DWORD n> static constexpr inline DWORD cstrlen(const wchar_t (&str)[n]) noexcept { return n - 1; }
+template <DWORD n> static constexpr inline DWORD cstrlen(const wchar_t (&str)[n]) { return n - 1; }
 #else
 #define WINDOWS 0
 #endif
 
-template <unsigned long long n> static constexpr inline unsigned long long cstrlen(const char (&str)[n]) noexcept {
+template <unsigned long long n> static constexpr inline unsigned long long cstrlen(const char (&str)[n]) {
     return n - 1;
 }
 #define lquote "'"
@@ -105,9 +105,9 @@ template <unsigned long long n> static constexpr inline unsigned long long cstrl
 #endif
 
 #ifndef CC_PRINT_CDECL
-#define CC_PRINT_CDECL 0
+#define CC_PRINT_CDECL 1
 #endif
 
 #ifndef CC_PRINT_CDECL_FUNCTION
-#define CC_PRINT_CDECL_FUNCTION 0
+#define CC_PRINT_CDECL_FUNCTION 1
 #endif

@@ -28,6 +28,7 @@ bool isTerminator() const {
         case SGoto:
         case SReturn:
         case SCondJump:
+        case SNoReturnCall:
             return true;
         default:
             return false;

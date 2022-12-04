@@ -15,14 +15,14 @@ struct Diagnostic {
     using storage_type = uintmax_t;
 
     const char *fmt = nullptr;
-    SmallVector<storage_type, 5> data{};
-    SmallVector<FixItHint, 0> FixItHints{};
     location_t loc = 0;
-    SmallVector<SourceRange> ranges{};
+    SmallVector<SourceRange, 2> ranges;
+    SmallVector<storage_type, 5> data;
+    SmallVector<FixItHint, 0> FixItHints;
     enum DiagnosticLevel level = Ignored;
     // default constructor - construct a invalid Diagnostic
     Diagnostic() = default;
-    Diagnostic(const char *fmt, location_t loc = 0) : fmt{fmt}, loc{loc} { }
+    Diagnostic(const char *fmt, location_t loc = 0) : fmt{fmt}, loc{loc}, ranges{}, data{}, FixItHints{} { }
     void write_impl(const FixItHint &Hint) { FixItHints.push_back(Hint); }
     template <typename T> void write_impl(const T *ptr) { data.push_back(reinterpret_cast<storage_type>(ptr)); }
     void write_impl(SourceRange range) { ranges.push_back(range); }
@@ -157,6 +157,8 @@ struct Diagnostic {
     }
     void reset(const char *fmt, enum DiagnosticLevel level, location_t loc = 0) {
         this->data.clear();
+        this->ranges.clear();
+        this->FixItHints.clear();
         this->loc = loc;
         this->level = level;
         this->fmt = fmt;

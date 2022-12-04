@@ -78,13 +78,15 @@ struct OpaqueCType {
     type_tag_t getTags() const { return tags; }
     type_tag_t getTagsQualifiersOnly() const { return tags & type_qualifiers; }
     type_tag_t getTagsStoragesOnly() const { return tags & storage_class_specifiers; }
+    type_tag_t getTagsStoragesAndFunctionsOnly() const { return tags & (storage_class_specifiers | TYINLINE | TYNORETURN); }
     type_tag_t getTagsQualifiersAndStoragesOnly() const { return tags & type_qualifiers_and_storage_class_specifiers; }
     type_tag_t getTagsNoQualifiersAndStorages() const { return tags & ~type_qualifiers_and_storage_class_specifiers; }
+    type_tag_t getTagsNoQualifiersAndStoragesAndFunctions() const { return tags & (~type_qualifiers_and_storage_class_specifiers | TYINLINE | TYNORETURN); }
     type_tag_t getTagsNoQualifiers() const { return tags & ~type_qualifiers; }
     type_tag_t getTagsNoStorages() const { return tags & ~storage_class_specifiers; }
     void clearQualifiers() { tags &= ~type_qualifiers; }
     void clearStorages() { tags &= ~storage_class_specifiers; }
-    void lvalue_cast() { tags = getTagsNoQualifiersAndStorages(); }
+    void lvalue_cast() { tags = getTagsNoQualifiersAndStoragesAndFunctions(); }
     bool isVoid() const { return tags & TYVOID; }
     bool isComplex() const { return tags & TYCOMPLEX; }
     bool isImaginary() const { return tags & TYIMAGINARY; }
@@ -212,7 +214,7 @@ struct OpaqueCType {
     void noralize() {
         switch (getKind()) {
         case TYFUNCTION: {
-            type_tag_t h = ret->getTagsStoragesOnly();
+            type_tag_t h = ret->getTagsStoragesAndFunctionsOnly();
             ret->clearTags(storage_class_specifiers);
             addTags(h);
             break;

@@ -95,7 +95,7 @@ raw_ostream &operator<<(llvm::raw_ostream &OS, const_CType ty) {
         if (ty->hasTag(TYNORETURN))
             OS << "_Noreturn" << ' ';
         if (str.size())
-            OS << str;
+            OS << str << ' ';
         OS << " (*)(";
         if (!ty->params.empty()) {
             for (const auto &e : ty->params) {
@@ -161,7 +161,7 @@ raw_ostream &operator>>(llvm::raw_ostream &OS, const_CType ty) {
         if (ty->hasTag(TYNORETURN))
             OS << "_Noreturn" << ' ';
         if (str.size())
-            OS << str;
+            OS << str << ' ';
         OS << ", params=[";
         if (!ty->params.empty()) {
             for (const auto &e : ty->params) {
@@ -233,25 +233,27 @@ void print_cdecl(const_CType ty, raw_ostream &OS) {
         auto str = ty->get_storage_str();
         OS << "function (";
         if (!ty->params.empty()) {
-            for (const auto &e : ty->params) {
+            size_t end = ty->params.size() - 1;
+            for (size_t i = 0;i <= end;++i) {
+                const Declator &e = ty->params[i]; 
                 print_cdecl(e.ty, OS);
                 if (e.name)
                     OS << ' ' << e.name->getKey();
-                OS << ", ";
+                if (i == end) {
+                    if (ty->isVarArg)
+                        OS << ", ...";
+                } else {
+                    OS << ", ";
+                }
             }
-            print_cdecl(ty->params.back().ty, OS);
-            if (ty->params.back().name)
-                OS << ' ' << ty->params.back().name->getKey();
-            if (ty->isVarArg)
-                OS << ", ...";
         }
         OS << ") returning ";
-        if (ty->hasTag(TYINLINE))
+        if (ty->ret->hasTag(TYINLINE))
             OS << "inline ";
-        if (ty->hasTag(TYNORETURN))
+        if (ty->ret->hasTag(TYNORETURN))
             OS << "_Noreturn ";
         if (str.size())
-            OS << str;
+            OS << str << ' ';
         print_cdecl(ty->ret, OS);
         break;
     }

@@ -13,8 +13,6 @@
 // gcc line map
 // https://github.com/gcc-mirror/gcc/blob/master/libcpp/include/line-map.h
 
-using line_offset_t = uint32_t;
-
 // https://doc.rust-lang.org/beta/nightly-rustc/rustc_span/struct.SourceFile.html
 // https://clang.llvm.org/doxygen/classclang_1_1SrcMgr_1_1ContentCache.html
 struct Stream {
@@ -25,16 +23,16 @@ struct Stream {
     location_t startLoc, loc, endLoc;
     const char *Name;
     bool hasLineOffsetMapping = false;
-    SmallVector<line_offset_t> lineOffsetMapping;
+    SmallVector<uint32_t> lineOffsetMapping;
     const char *BufferStart;
     const char *getBufferStart() const { return BufferStart; }
     size_t getFileSize() const { return MemBuffer->getBufferSize(); }
     auto getBufferEnd() const { return MemBuffer->getBufferEnd(); }
-    const SmallVectorImpl<line_offset_t> &getLineOffsetMapping() const {
+    const SmallVectorImpl<unsigned> &getLineOffsetMapping() const {
         assert(hasLineOffsetMapping);
         return lineOffsetMapping;
     }
-    SmallVectorImpl<line_offset_t> &getLineOffsetMappingSafe() {
+    SmallVectorImpl<unsigned> &getLineOffsetMappingSafe() {
         if (!hasLineOffsetMapping)
             createLineOffsetMapping();
         return lineOffsetMapping;
@@ -78,13 +76,12 @@ struct SourceMgr : public DiagnosticHelper {
     StringRef lastDir = StringRef();
     bool trigraphs;
     bool is_tty;
-    void setLine(uint32_t line) { /* TODO */ }
+    unsigned current_line = 1;
+    void setLine(unsigned line) { current_line = line; }
     const char *getFileName(unsigned i) const { return streams[i]->getFileName(); }
     const char *getFileName() const {
         return includeStack.size() ? streams[includeStack.back()]->getFileName() : "(unknown file)";
     }
-    unsigned getLine(fileid_t id) { return 1; /* TODO */ }
-    unsigned getLine() const { return includeStack.empty() ? 1 : 1 /* TODO */; }
     void setFileName(const char *Name) { streams[includeStack.back()]->setName(Name); }
     location_t getCurrentLocation() const { return streams.back()->loc; }
     location_t getEndLoc() const { return streams.empty() ? 0 : streams[includeStack.back()]->endLoc; }
@@ -95,7 +92,7 @@ struct SourceMgr : public DiagnosticHelper {
     }
     void beginInclude(xcc_context &context, fileid_t theFD) {
         assert(includeStack.size() >= 2 && "call beginInclude() without previous include position!");
-        Include_Info *info = new (context.getAllocator()) Include_Info{.line = getLine(theFD), .fd = theFD};
+        Include_Info *info = new (context.getAllocator()) Include_Info{.line = current_line, .fd = theFD};
         location_map[getCurrentLocation()] = (tree = new (context.getAllocator()) LocTree(tree, info));
     }
     void endTree() { location_map[getCurrentLocation()] = (tree = tree->getParent()); }
@@ -179,7 +176,7 @@ struct SourceMgr : public DiagnosticHelper {
 #endif
         return true;
     }
-    fileid_t getFileID(location_t loc, uint64_t &offset) const {
+    fileid_t getFileID(location_t loc, location_t &offset) const {
         for (size_t i = 0; i < streams.size(); ++i) {
             if (loc < streams[i]->endLoc) {
                 offset = loc - streams[i]->startLoc;
@@ -190,13 +187,13 @@ struct SourceMgr : public DiagnosticHelper {
     }
     fileid_t lastQueryFileId_line = (fileid_t)-1;
     location_t lastQueryOffset_line = (location_t)-1;
-    uint32_t lastQueryResult_line = 0;
-    uint32_t getLineNumber(location_t offset, fileid_t FD) {
+    unsigned lastQueryResult_line = 0;
+    unsigned getLineNumber(location_t offset, fileid_t FD) {
         Stream &f = *streams[FD];
         const auto &line_vec = f.getLineOffsetMappingSafe();
-        const uint32_t *lineStart = line_vec.data();
-        const uint32_t *lineEnd = lineStart + line_vec.size();
-        const uint32_t *searchBegin = lineStart;
+        const unsigned *lineStart = line_vec.data();
+        const unsigned *lineEnd = lineStart + line_vec.size();
+        const unsigned *searchBegin = lineStart;
         location_t QueriedFilePos = offset + 1;
         if (FD == lastQueryFileId_line) {
             if (offset > lastQueryOffset_line)
@@ -214,17 +211,43 @@ struct SourceMgr : public DiagnosticHelper {
                 }
             }
         }
-        const uint32_t *Pos = std::lower_bound(searchBegin, lineEnd, QueriedFilePos);
+        const unsigned *Pos = std::lower_bound(searchBegin, lineEnd, QueriedFilePos);
         return (lastQueryResult_line = Pos - lineStart);
     }
-    uint32_t getColumnNumber(location_t offset, fileid_t FD) {
-        return 1;
+    unsigned getLineNumber(location_t loc) {
+        location_t offset;
+        fileid_t FD = getFileID(loc, offset);
+        if (FD == (fileid_t)-1)
+            return 1;
+        return getLineNumber(offset, FD);
+    }
+    unsigned getColumnNumber(location_t offset, fileid_t FD) {
+        Stream &f = *streams[FD];
+        const char *Buffer = f.getBufferStart();
+        unsigned lineStart = offset;
+        while (lineStart && Buffer[lineStart - 1] != '\n' && Buffer[lineStart - 1] != '\r')
+            --lineStart;
+        return offset - lineStart + 1;
+    }
+    unsigned getColumnNumber(location_t loc) {
+        location_t offset;
+        fileid_t FD = getFileID(loc, offset);
+        if (FD == (fileid_t)-1)
+            return 1;
+        return getColumnNumber(offset, FD);
+    }
+    std::pair<unsigned, unsigned> getLineAndColumn(location_t loc) {
+        location_t offset;
+        fileid_t fd = getFileID(loc, offset);
+        if (fd == (fileid_t)-1)
+            return std::make_pair<unsigned, unsigned>(1, 1);
+        return std::make_pair<unsigned, unsigned>(getLineNumber(offset, fd), getColumnNumber(offset, fd));
     }
     bool translateLocation(location_t loc, source_location &out, const ArrayRef<SourceRange> ranges = {}) {
         assert(streams.size() && "cannot call translateLocation when empty stream");
         if (loc == 0)
             return false;
-        uint64_t offset;
+        location_t offset;
         fileid_t fd = getFileID(loc, offset);
         if (fd == (fileid_t)-1)
             return false;
@@ -243,31 +266,45 @@ NO_TREE:
         get_source(offset, out, loc, ranges);
         return true;
     }
-    static void get_source_for_string(const char *s, size_t max, source_location &out, uint64_t offset, location_t loc,
+    // translate location_t to 
+    // 1. source line(string)
+    // 2. line
+    // 3. column
+    static void get_source_for_string(const char *s, size_t max, source_location &out, location_t offset, location_t loc,
                                       const ArrayRef<SourceRange> ranges) {
-        size_t last_line_offset = 0;
+        location_t last_line_offset = 0;
         unsigned line = 1;
-        for (size_t i = 0; i < offset; ++i) {
+        bool lastIsCL = false;
+        for (location_t i = 0; i < offset; ++i) {
             const char c = s[i];
             if (c == '\n') {
+                if (lastIsCL) { // skip CRLF('\r\n') sequence
+                    last_line_offset = i + 1;
+                    continue;
+                }
                 line++;
-                last_line_offset = i;
+                last_line_offset = i + 1;
+            } else if (c == '\r') {
+                lastIsCL = true; // maybe ends with CR or CRLF
+                line++;
+                last_line_offset = i + 1;
             }
         }
         out.line = line;
         out.col = offset - last_line_offset;
+        out.source_line.setInsertLoc((loc - offset) + last_line_offset);
         if (out.col)
-            for (size_t i = last_line_offset; i < offset; ++i)
+            for (location_t i = last_line_offset; i < offset; ++i)
                 out.source_line.push_back(s[i], loc, ranges);
         out.col++;
-        for (size_t i = offset; i < max; ++i) {
+        for (location_t i = offset; i < max; ++i) {
             const char c = s[i];
             if (c == '\n' || c == '\r')
                 break;
             out.source_line.push_back(c, loc, ranges);
         }
     }
-    void get_source(uint64_t offset, source_location &out, location_t original_loc,
+    void get_source(location_t offset, source_location &out, location_t original_loc,
                     const ArrayRef<SourceRange> ranges = {}) {
         Stream &s = *streams[out.fd];
         get_source_for_string(s.getBufferStart(), s.getFileSize(), out, offset, original_loc, ranges);
@@ -438,15 +475,23 @@ BREAK:
             switch (c) {
             default: return c;
             case '\0':
-                location_map[getCurrentLocation()] = tree ? tree->getParent() : nullptr;
+                if (tree) {
+                    current_line = tree->getLastIncludeLine();
+                    location_map[getCurrentLocation()] = tree->getParent();
+                } else {
+                    location_map[getCurrentLocation()] = nullptr;
+                }
                 includeStack.pop_back();
                 if (includeStack.empty())
                     return '\0';
                 return stream_read();
-            case '\n': return '\n';
+            case '\n':
+                current_line++; 
+                return '\n';
             case '\r': {
                 char c2;
                 c2 = raw_read_from_stack();
+                current_line++;
                 if (c2 != '\n')
                     lastc = (unsigned char)c;
                 return '\n';

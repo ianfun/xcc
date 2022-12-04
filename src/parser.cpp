@@ -12,7 +12,7 @@ struct Parser : public EvalHelper {
         UR_switch,
         UR_return,
         UR_noreturn
-    } u_unreachable_reason;
+    };
     enum : uint8_t {
         LBL_UNDEFINED = 0,
         LBL_FORWARD = 1,
@@ -71,7 +71,8 @@ struct Parser : public EvalHelper {
     IRGen &irgen;
     Stmt InsertPt = nullptr;
     bool sreachable;
-    location_t unreachable_reason = 0, current_stmt_loc = 0, current_declator_loc = 0;
+    enum UnreachableReason unreachable_reason;
+    location_t unreachable_reason_loc = 0, current_stmt_loc = 0, current_declator_loc = 0;
     Expr intzero, intone, size_t_one, cfalse, ctrue;
     StringPool string_pool;
     llvm::ConstantPointerNull *null_ptr;
@@ -217,8 +218,8 @@ private:
             ref.flags = LBL_OK;
             break;
         case LBL_DECLARED: // declared => declared twice!
-            type_error(loc, "duplicate label: %I", Name);
-            note(ref.loc, "previous declaration of label %I is here", Name);
+            type_error(loc, "duplicate label: %I", Name) << SourceRange(loc, loc + Name->getKey().size() - 1);
+            note(ref.loc, "previous declaration of label %I is here", Name) << SourceRange(ref.loc, ref.loc + Name->getKey().size() - 1);
             break;
         default: llvm_unreachable("");
         }
@@ -231,7 +232,7 @@ private:
         auto r = sema.tags.getSym(Name, idx);
         if (r) {
             if (r->ty->getKind() != expected)
-                type_error(full_loc, "%s %I is not a %s", show2(r->ty->getKind()), Name, show2(expected));
+                type_error(full_loc, "%s %I is not a %s", show2(r->ty->getKind()), Name, show2(expected)) << SourceRange(full_loc, full_loc + Name->getKey().size());
             result = r->ty;
         } else {
             result = TNEW(IncompleteType){.tag = transform(expected), .name = Name};
@@ -248,13 +249,15 @@ private:
             size_t prev;
             auto old = sema.tags.getSymInCurrentScope(Name, prev);
             if (old) {
+                const SourceRange range(loc, loc + Name->getKey().size());
+                const SourceRange prev_range(old->loc, old->loc + Name->getKey().size());
                 if (old->ty->getKind() != TYINCOMPLETE) {
-                    type_error(loc, "%s %I redefined", show2(k), Name);
-                    note(old->loc, "previous declaration is here");
+                    type_error(loc, "%s %I redefined", show2(k), Name) << range;
+                    note(old->loc, "previous declaration is here") << prev_range;
                 } else if (transform(old->ty->tag) != k) {
                     type_error(loc, "%s %I redeclared with different as different kind: %s", show2(k), Name,
-                               show(old->ty->tag));
-                    note(old->loc, "previous declaration is here");
+                               show(old->ty->tag)) << range;
+                    note(old->loc, "previous declaration is here") << prev_range;
                 }
                 old->ty = ty;
                 old->loc = loc;
@@ -275,8 +278,8 @@ private:
         assert(Name && "enum has no Name");
         auto old = sema.typedefs.getSymInCurrentScope(Name);
         if (old) {
-            type_error(full_loc, "%I redefined", Name);
-            note(old->loc, "previous declaration is here");
+            type_error(full_loc, "enumerator %I redefined", Name) << SourceRange(full_loc, full_loc + Name->getKey().size());
+            note(old->loc, "previous declaration is here") << SourceRange(old->loc, old->loc + Name->getKey().size());
         }
         sema.typedefs.putSym(Name, Variable_Info{
                                        .ty = context.getConstInt(),
@@ -287,26 +290,27 @@ private:
     // function
     size_t putsymtype2(IdentRef Name, CType yt, location_t full_loc, bool isDefinition) {
         CType base = yt->ret;
+        const SourceRange range(full_loc, full_loc + Name->getKey().size() - 1);
         if (base->getKind() == TYARRAY)
-            type_error(full_loc, "function cannot return array");
+            type_error(full_loc, "function cannot return array") << range;
         if (base->hasTag(TYREGISTER))
-            warning(full_loc, "'register' in function return type");
+            warning(full_loc, "'register' in function return type") << range;
         if (base->hasTag(TYTHREAD_LOCAL))
-            warning(full_loc, "'_Thread_local' in function return type");
+            warning(full_loc, "'_Thread_local' in function return type") << range;
         if (base->hasTag((TYCONST | TYRESTRICT | TYVOLATILE | TYATOMIC)))
-            warning(full_loc, "type qualifiers ignored in function");
+            warning(full_loc, "type qualifiers ignored in function") << range;
         size_t idx;
         auto it = sema.typedefs.getSymInCurrentScope(Name, idx);
         if (it) {
             if ((it->tags & ASSIGNED) && isDefinition) {
-                type_error(full_loc, "redefinition of function %I", Name);
-                note(it->loc, "previous declaration of %I was here", Name);
+                type_error(full_loc, "redefinition of function %I", Name) << range;
+                note(it->loc, "previous declaration of %I was here", Name) << SourceRange(it->loc, it->loc + Name->getKey().size());
             }
             if (!compatible(yt, it->ty)) {
-                type_error(full_loc, "conflicting types for function declaration %I", Name);
+                type_error(full_loc, "conflicting types for function declaration %I", Name) << range;
             } else if (!it->ty->ret->hasTag(TYSTATIC) && base->hasTag(TYSTATIC)) {
-                type_error(full_loc, "static declaration of %I follows non-static declaration", Name);
-                note(it->loc, "previous declaration of %I was here", Name);
+                type_error(full_loc, "static declaration of %I follows non-static declaration", Name) << range;
+                note(it->loc, "previous declaration of %I was here", Name) << SourceRange(it->loc, it->loc + Name->getKey().size());
             } else {
                 it->ty->addTag(it->ty->ret->getTags() & (TYSTATIC));
             }
@@ -327,8 +331,8 @@ private:
         if (it) {
             if (yt->hasTag(TYTYPEDEF)) {
                 if (!compatible(it->ty, yt)) {
-                    type_error(full_loc, "%I redeclared as different kind of symbol", Name);
-                    note(it->loc, "previous declaration of %I is here", Name);
+                    type_error(full_loc, "%I redeclared as different kind of symbol", Name) << SourceRange(full_loc, full_loc + Name->getKey().size() - 1);
+                    note(it->loc, "previous declaration of %I is here", Name) << SourceRange(it->loc, Name->getKey().size() - 1);
                 }
                 goto PUT;
             }
@@ -338,15 +342,15 @@ private:
                 bool err = true;
                 type_tag_t t1 = yt->getTagsQualifiersAndStoragesOnly(), t2 = old->getTagsQualifiersAndStoragesOnly();
                 if ((t1 & M) != (t2 & M))
-                    type_error(it->loc, "conflicting type qualifiers for %I", Name);
+                    type_error(full_loc, "conflicting type qualifiers for %I", Name) << SourceRange(full_loc, full_loc + Name->getKey().size() - 1);
                 else if (!compatible(old, yt))
-                    type_error(full_loc, "conflicting types for %I: (%T v.s. %T)", Name, yt, old);
+                    type_error(full_loc, "conflicting types for %I: (%T v.s. %T)", Name, yt, old) << SourceRange(full_loc, full_loc + Name->getKey().size() - 1);
                 else
                     err = false;
                 if (err)
-                    note(it->loc, "previous declaration is here", Name);
+                    note(it->loc, "previous declaration is here", Name) << SourceRange(it->loc, it->loc + Name->getKey().size() - 1);
             } else {
-                type_error(full_loc, "%I redeclared", Name);
+                type_error(full_loc, "%I redeclared", Name) << SourceRange(full_loc, full_loc + Name->getKey().size() - 1);
             }
 PUT:
             it->ty = yt;
@@ -442,7 +446,7 @@ PUT:
                                             e->getBeginLoc(), e->getEndLoc())
                                      : make_cast(e, FPTrunc, to);
         if ((k3 >= F_Decimal32 && k3 <= F_Decimal128) || k3 == F_PPC128 || k3 == F_BFloat)
-            type_error(e->getBeginLoc(), "unsupported floating fast");
+            type_error(e->getBeginLoc(), "unsupported floating fast") << e->getSourceRange();;
         return e;
     }
     Expr int_cast_promote(Expr e, bool isASigned, CType to) {
@@ -472,7 +476,8 @@ PUT:
                                          : make_cast(e, Trunc, to);
             return bit_cast(e, to);
         }
-        return type_error(e->getBeginLoc(), "invalid conversion from %T to %T", e->ty, to), e;
+        type_error(e->getBeginLoc(), "invalid conversion from %T to %T", e->ty, to) << e->getSourceRange();
+        return e;
     }
     Expr integer_to_ptr(Expr e, CType to, enum Implict_Conversion_Kind implict) {
         assert(e->ty && "cannot cast from expression with no type");
@@ -505,7 +510,7 @@ PUT:
                 msg = "passing %T to parameter of type %T makes pointer from integer without a cast";
                 break;
             }
-            warning(e->getBeginLoc(), msg, arg1, arg2);
+            warning(e->getBeginLoc(), msg, arg1, arg2) << e->getSourceRange();
         } else if (e->ty->getIntegerKind().asBits() < irgen.pointerSizeInBits) {
             warning(e->getBeginLoc(), "cast to %T from smaller integer type %T", to, e->ty);
         }
@@ -536,7 +541,7 @@ PUT:
                 msg = "passing %T to parameter of type %T makes integer from pointer without a cast";
                 break;
             }
-            warning(e->getBeginLoc(), msg, arg1, arg2);
+            warning(e->getBeginLoc(), msg, arg1, arg2) << e->getSourceRange();
         } else if (to->getIntegerKind().asBits() < irgen.pointerSizeInBits) {
             warning(e->getBeginLoc(), "cast to smaller integer type %T from %T", to, e->ty);
         }
@@ -627,7 +632,7 @@ PUT:
                         msg = "incompatible pointer types passing %T to parameter of type %T";
                     break;
                 }
-                warning(e->getBeginLoc(), msg, arg1, arg2);
+                warning(e->getBeginLoc(), msg, arg1, arg2) << e->getSourceRange();
             }
         }
 PTR_CAST:
@@ -903,9 +908,9 @@ PTR_CAST:
     }
     bool checkInteger(CType ty) { return ty->getKind() == TYPRIM && ty->isInteger(); }
     bool checkInteger(Expr e) { return checkInteger(e->ty); }
-    void checkInteger(Expr a, Expr b) {
+    void checkInteger(Expr a, Expr b, location_t loc) {
         if (!(checkInteger(a->ty) && checkInteger(b->ty)))
-            type_error(getLoc(), "integer types expected");
+            type_error(loc, "integer types expected") << a->getSourceRange() << b->getSourceRange();
     }
     static bool checkArithmetic(CType ty) { return ty->getKind() == TYPRIM && (!ty->hasTags(TYVOID)); }
     void checkArithmetic(Expr a, Expr b) {
@@ -1356,7 +1361,7 @@ PTR_CAST:
         result = binop(result, r->ty->isSigned() ? SSub : USub, r, r->ty);
     }
     void make_shl(Expr &result, Expr &r, location_t opLoc) {
-        checkInteger(result, r);
+        checkInteger(result, r, opLoc);
         integer_promotions(result);
         integer_promotions(r);
         if (r->k != EConstant)
@@ -1402,7 +1407,7 @@ NOT_CONSTANT:
         result = binop(result, Shl, r, result->ty);
     }
     void make_shr(Expr &result, Expr &r, location_t opLoc) {
-        checkInteger(result, r);
+        checkInteger(result, r, opLoc);
         integer_promotions(result);
         integer_promotions(r);
         if (r->k != EConstant)
@@ -1446,7 +1451,7 @@ NOT_CONSTANT:
         return ENEW(BitCastExpr) {.ty = to, .src = e};
     }
     void make_bitop(Expr &result, Expr &r, BinOp op, location_t opLoc) {
-        checkInteger(result, r);
+        checkInteger(result, r, opLoc);
         conv(result, r);
         if (result->k == EConstant) {
             if (const auto CI = dyn_cast<ConstantInt>(result->C)) {
@@ -1782,7 +1787,7 @@ NOT_CONSTANT:
     }
     void handleOpStatus(APFloat::opStatus status) { }
     void make_rem(Expr &result, Expr &r, location_t opLoc) {
-        checkInteger(result, r);
+        checkInteger(result, r, opLoc);
         conv(result, r);
         if (result->k == EConstant && r->k == EConstant) {
             if (const auto CI = dyn_cast<ConstantInt>(r->C)) {
@@ -2673,19 +2678,18 @@ BREAK:
             CType base = declaration_specifiers();
             if (!base)
                 return expect(getLoc(), "declaration-specifiers"), false;
-            location_t full_loc = getLoc();
-            current_declator_loc = full_loc;
+            current_declator_loc = getLoc();
             Declator nt = declarator(base, Function);
             if (!nt.ty)
-                return expect(full_loc, "abstract-declarator"), false;
+                return expect(current_declator_loc, "abstract-declarator"), false;
             params.push_back(nt);
             if (nt.ty->getKind() == TYINCOMPLETE)
-                type_error(full_loc, "parameter %u has imcomplete type %T", i, nt.ty), ok = false;
+                type_error(current_declator_loc, "parameter %u has imcomplete type %T", i, nt.ty), ok = false;
             if (nt.name) {
                 if (sema.typedefs.getSymInCurrentScope(nt.name))
-                    type_error(full_loc, "duplicate parameter %I", nt.name);
+                    type_error(current_declator_loc, "duplicate parameter %I", nt.name);
                 sema.typedefs.putSym(nt.name,
-                                     Variable_Info{.ty = nt.ty, .loc = full_loc, .tags = ASSIGNED | USED | PARAM});
+                                     Variable_Info{.ty = nt.ty, .loc = current_declator_loc, .tags = ASSIGNED | USED | PARAM});
             }
             if (l.tok.tok == TComma)
                 consume();
@@ -2842,14 +2846,13 @@ BREAK:
         }
         result = SNEW(VarDeclStmt){.vars = xvector<VarDecl>::get()};
         for (;;) {
-            location_t full_loc = getLoc();
-            current_declator_loc = full_loc;
+            current_declator_loc = getLoc();
             Declator st = declarator(base, Direct);
             if (!st.ty)
                 return;
             if (l.tok.tok == TLcurlyBracket) {
                 if (st.ty->getKind() != TYFUNCTION)
-                    return (void)type_error(full_loc, "unexpected function definition");
+                    return (void)type_error(current_declator_loc, "unexpected function definition");
                     // function definition
 #if CC_PRINT_CDECL_FUNCTION
                 print_cdecl(st.name->getKey(), st.ty, llvm::errs(), true);
@@ -2858,11 +2861,11 @@ BREAK:
                     auto Size = st.ty->params.size();
                     if (Size) {
                         if (Size != 2)
-                            warning(full_loc, "'main' takes only zero or two arguments");
+                            warning(current_declator_loc, "'main' takes only zero or two arguments");
                         CType argcTy = st.ty->params.front().ty;
                         if (!(argcTy->getKind() == TYPRIM && argcTy->isInteger() &&
                               argcTy->getIntegerKind().asLog2() == context.getIntLog2()))
-                            warning(full_loc, "first argument of 'main' should be 'int'");
+                            warning(current_declator_loc, "first argument of 'main' should be 'int'");
                         if (Size >= 2) {
                             const auto argvTy = st.ty->params[1].ty;
                             if (argvTy->getKind() == TYPOINTER) {
@@ -2875,14 +2878,14 @@ BREAK:
                                     }
                                 }
                             }
-                            warning(full_loc, "second argument of 'main' should be 'char **'");
+                            warning(current_declator_loc, "second argument of 'main' should be 'char **'");
 ARGV_OK:;
                         }
                     }
                 }
-                size_t idx = putsymtype2(st.name, st.ty, full_loc, true);
+                size_t idx = putsymtype2(st.name, st.ty, current_declator_loc, true);
                 if (!isTopLevel())
-                    return (void)parse_error(full_loc, "function definition is not allowed here");
+                    return (void)parse_error(current_declator_loc, "function definition is not allowed here");
                 Stmt res = SNEW(FunctionStmt){.func_idx = idx,
                                               .funcname = st.name,
                                               .functy = st.ty,
@@ -2904,34 +2907,34 @@ ARGV_OK:;
 #if CC_PRINT_CDECL
             print_cdecl(st.name->getKey(), st.ty, llvm::errs(), true);
 #endif
-            size_t idx = putsymtype(st.name, st.ty, full_loc);
+            size_t idx = putsymtype(st.name, st.ty, current_declator_loc);
 
             result->vars.push_back(VarDecl{.name = st.name, .ty = st.ty, .init = nullptr, .idx = idx});
             if (st.ty->hasTag(TYINLINE))
-                warning(full_loc, "inline can only used in function declaration");
+                warning(current_declator_loc, "inline can only used in function declaration");
             if (!(st.ty->hasTag(TYEXTERN))) {
                 if ((st.ty->isVoid()) && !(st.ty->hasTag(TYTYPEDEF)))
-                    return (void)type_error(full_loc, "variable %I declared void", st.name);
+                    return (void)type_error(current_declator_loc, "variable %I declared void", st.name);
                 if (st.ty->getKind() == TYINCOMPLETE)
-                    return (void)type_error(full_loc, "variable %I has imcomplete type %T", st.name);
+                    return (void)type_error(current_declator_loc, "variable %I has imcomplete type %T", st.name);
             }
             if (l.tok.tok == TAssign) {
                 Expr init;
                 auto &var_info = sema.typedefs.getSym(idx);
                 var_info.tags |= ASSIGNED;
                 if (st.ty->getKind() == TYVLA) {
-                    return (void)type_error(full_loc, "variable length array may not be initialized");
+                    return (void)type_error(current_declator_loc, "variable length array may not be initialized");
                 } else if (st.ty->getKind() == TYFUNCTION)
-                    return (void)type_error(full_loc, "function may not be initialized");
+                    return (void)type_error(current_declator_loc, "function may not be initialized");
                 if (st.ty->hasTag(TYTYPEDEF))
-                    return (void)type_error(full_loc, "'typedef' may not be initialized");
+                    return (void)type_error(current_declator_loc, "'typedef' may not be initialized");
                 consume();
                 {
                     llvm::SaveAndRestore<CType> saved_ctype(sema.currentInitTy, st.ty);
                     init = initializer_list();
                 }
                 if (!init)
-                    return expect(full_loc, "initializer-list");
+                    return expect(current_declator_loc, "initializer-list");
                 result->vars.back().init = init;
                 if (st.ty->getKind() == TYARRAY && !st.ty->hassize)
                     result->vars.back().ty = init->ty;
@@ -2944,23 +2947,23 @@ ARGV_OK:;
                     // take address of globals is constant!
                     if (!(init->k == EVar && (sema.typedefs.isInGlobalScope(init->sval) ||
                                               sema.typedefs.getSym(init->sval).ty->isGlobalStorage()))) {
-                        type_error(full_loc, "global initializer is not constant");
+                        type_error(current_declator_loc, "global initializer is not constant");
                     }
                 }
             } else {
                 const auto k = st.ty->getKind();
                 if (isTopLevel() || st.ty->isGlobalStorage()) {
                     if (k == TYVLA)
-                        type_error(full_loc, "variable length array declaration not allowed at file scope");
+                        type_error(current_declator_loc, "variable length array declaration not allowed at file scope");
                     else if (k == TYARRAY && (!st.ty->hassize)) {
-                        warning(full_loc, "array %I assumed to have one element", st.name);
+                        warning(current_declator_loc, "array %I assumed to have one element", st.name);
                         st.ty->hassize = true, st.ty->arrsize = 1;
                     } else if (st.ty->isIncomplete()) {
-                        type_error("storage size of %I is not known", st.name);
+                        type_error(current_declator_loc, "storage size of %I is not known", st.name);
                     }
                 } else {
                     if (k == TYARRAY && (!st.ty->hassize))
-                        type_error(full_loc, "array size missing in %I", st.name);
+                        type_error(current_declator_loc, "array size missing in %I", st.name);
                 }
             }
             if (l.tok.tok == TComma) {
@@ -3090,7 +3093,6 @@ ARGV_OK:;
                 return e;
             }
             if (e->k == EArrToAddress) {
-                llvm::errs( ) << "e->arr3->ty=" << e->arr3->ty << '\n';
                 return e->ty = context.getPointerType(e->arr3->ty), e;
             }
             if (e->ty->hasTag(TYREGISTER))
@@ -3513,6 +3515,49 @@ NEXT:
                                        .constantArrayLoc = loc,
                                        .constantArrayLocEnd = endLoc};
     }
+    struct best_match {
+        best_match(IdentRef goal): m_goal{goal->getKey()} {}
+        size_t m_best = 0;
+        bool m_hasBest = false;
+        StringRef m_goal;
+        void consider(IdentRef candidate, size_t idx) {
+            StringRef key = candidate->getKey();
+
+            unsigned MinED = abs((int)key.size() - (int)m_goal.size());
+            if (MinED && m_goal.size() / MinED < 3) return;
+
+            // Compute an upper bound on the allowable edit distance, so that the
+            // edit-distance algorithm can short-circuit.
+            unsigned UpperBound = (m_goal.size() + 2) / 3;
+            unsigned ED = m_goal.edit_distance(key, true, UpperBound);
+            if (ED > UpperBound) return;
+
+            if (ED > m_best)
+                return select(idx);
+        }
+        void select(size_t idx) {
+            m_hasBest = true;
+            m_best = idx;
+        }
+        size_t best() const { return m_best; }
+        bool hasBest() const { return m_hasBest; }
+    };
+    // clang::TypoCorrectionConsumer::addName
+    // https://splichal.eu/doxygen/spellcheck_8h_source.html
+    // quote from gcc[https://gcc.gnu.org/git/?p=gcc.git;a=blob;f=gcc/c/c-decl.cc;h=4adb89e4aaf1b53448cc9c3ca05eb5d05f0d02bf;hb=HEAD]
+    // > Scopes are searched from innermost outwards, and within a scope in reverse order of declaration, thus benefiting candidates "near" to the current scope.
+    IdentRef try_suggest_identfier(IdentRef ID, SourceRange &declRange) {
+        best_match result(ID);
+        const auto &data = sema.typedefs.data;
+        for (size_t i = data.size();i--;) 
+            result.consider(data[i].sym, i);
+        if (result.hasBest()) {
+            auto &it = data[result.best()];
+            declRange = SourceRange(it.info.loc, it.info.loc + it.sym->getKey().size() - 1);
+            return it.sym;
+        }
+        return nullptr;
+    }
     Expr primary_expression() {
         Expr result;
         location_t loc = getLoc();
@@ -3584,9 +3629,20 @@ NEXT:
                 Variable_Info *it = sema.typedefs.getSym(sym, idx);
                 location_t endLoc = getEndLoc();
                 consume();
-                if (!it)
-                    return (type_error(loc, "use of undeclared identifier %I", sym) << SourceRange(loc, endLoc)),
-                           getIntZero();
+                if (!it) {
+                    SourceRange range(loc, endLoc);
+                    SourceRange declRange;
+                    IdentRef Name = try_suggest_identfier(sym, declRange);
+                    if (Name) {
+                        type_error(loc, "use of undeclared identifier %I; did you mean %I?", sym) << Name << range
+                        <<  FixItHint::CreateInsertion(Name->getKey(), loc);
+                        if (declRange.isValid())
+                            note(declRange.getStart(), "%I declared here", Name) << declRange;
+                    } else {
+                        type_error(loc, "use of undeclared identifier %I", sym) << range;
+                    }
+                    return getIntZero();
+                }
                 if (it->ty->hasTag(TYTYPEDEF))
                     return (type_error(loc, "typedefs are not allowed here %I", sym) << SourceRange(loc, endLoc)),
                            getIntZero();
@@ -3759,14 +3815,10 @@ GENERIC_END:
                 return getFunctionNameExpr(loc, endLoc);
             case K__builtin_LINE:
                 return wrap(context.getInt(),
-                            ConstantInt::get(irgen.integer_types[context.getIntLog2()], SM().getLine()), loc, endLoc);
-            case K__builtin_COLUMN: {
-                uint64_t offset;
-                const auto FD = SM().getFileID(loc, offset);
-                const auto column = SM().getLineNumber(offset, FD);
-                return wrap(context.getInt(), ConstantInt::get(irgen.integer_types[context.getIntLog2()], column), loc,
+                            ConstantInt::get(irgen.integer_types[context.getIntLog2()], SM().getLineNumber(loc)), loc, endLoc);
+            case K__builtin_COLUMN: 
+                return wrap(context.getInt(), ConstantInt::get(irgen.integer_types[context.getIntLog2()], SM().getColumnNumber(loc)), loc,
                             endLoc);
-            }
             case K__builtin_FILE:
                 return ENEW(ConstantArrayExpr){.ty = context.stringty,
                                                .array = string_pool.getAsUTF8(SM().getFileName()),
@@ -3801,28 +3853,32 @@ ADD:
             case TDot: {
                 isarrow = false;
 DOT:
+                location_t opLoc = getLoc();
                 CType ty = result->ty;
                 auto k = ty->getKind();
                 bool isLvalue = false;
                 consume();
                 if (l.tok.tok != TIdentifier)
-                    return expect(getLoc(), "identifier"), nullptr;
+                    return expect(opLoc, "identifier"), nullptr;
+                location_t mem_loc_begin = getLoc();
+                location_t mem_loc_end = getEndLoc();
                 if (isarrow) {
-                    if (k != TYPOINTER)
-                        return type_error(getLoc(),
-                                          "member reference type %T is not a pointer; did you mean to use '.'"),
-                               result;
+                    if (k != TYPOINTER) {
+                        type_error(opLoc, "member reference type %T is not a pointer; did you mean to use '.'", ty) << result->getSourceRange();
+                        return result;
+                    }
                     ty = result->ty->p;
                     isLvalue = true;
                 } else {
                     if (k == TYPOINTER) {
-                        return type_error(getLoc(), "member reference type %T is a pointer; did you mean to use '->'",
-                                          result->ty),
-                               result;
+                        type_error(opLoc, "member reference type %T is a pointer; did you mean to use '->'", ty) << result->getSourceRange();
+                        return result;
                     }
                 }
-                if (k != TYSTRUCT && k != TYUNION)
-                    return type_error(getLoc(), "member access is not struct or union"), result;
+                if (k != TYSTRUCT && k != TYUNION) {
+                    type_error(opLoc, "member access is not struct or union") << result->getSourceRange();
+                    return result;
+                }
                 for (size_t i = 0; i < ty->selems.size(); ++i) {
                     Declator pair = ty->selems[i];
                     if (l.tok.s == pair.name) {
@@ -3836,7 +3892,8 @@ DOT:
                         goto CONTINUE;
                     }
                 }
-                return type_error(getLoc(), "struct/union %I has no member %I", result->ty->sname, l.tok.s), nullptr;
+                type_error(opLoc, "struct/union %I has no member %I", result->ty->sname, l.tok.s) << SourceRange(mem_loc_begin, mem_loc_end);
+                return nullptr;
 CONTINUE:;
             } break;
             case TLbracket: // function call
@@ -3844,8 +3901,7 @@ CONTINUE:;
                 CType ty = (result->k == EUnary && result->uop == AddressOf)
                                ? result->ty->p
                                : ((result->ty->getKind() == TYPOINTER) ? result->ty->p : result->ty);
-                Expr f = result;
-                result = ENEW(CallExpr){.ty = ty->ret, .callfunc = f, .callargs = xvector<Expr>::get()};
+                result = ENEW(CallExpr){.ty = ty->ret, .callfunc = result, .callargs = xvector<Expr>::get()};
                 if (ty->getKind() != TYFUNCTION)
                     return type_error(getLoc(), "expect function or function pointer, but the expression has type %T",
                                       ty),
@@ -3955,10 +4011,6 @@ CONTINUE:;
         CType ty = context.clone(e->ty->p);
         ty->addTag(TYLVALUE);
         e = unary(e, Dereference, ty);
-    }
-    void tryContinue() {
-        if (jumper.topContinue == INVALID_LABEL)
-            type_error(getLoc(), "%s", "connot continue: no outer for/while/do-while");
     }
     Expr getCBool(bool b) { return b ? ctrue : cfalse; }
     Expr getBool(bool b) { return b ? getIntOne() : getIntZero(); }
@@ -4098,7 +4150,9 @@ NEXT:
     void condJump(Expr test, label_t T, label_t F) {
         return insertStmt(SNEW(CondJumpStmt){.test = test, .T = T, .F = F});
     }
-    void insertBr(label_t L) { return insertStmt(SNEW(GotoStmt){.location = L}); }
+    void insertBr(label_t L) { 
+        return insertStmt(SNEW(GotoStmt){.location = L});
+    }
     void insertLabel(label_t L, IdentRef Name = nullptr) {
         sreachable = true;
         return insertStmtInternal(SNEW(LabelStmt){.label = L, .labelName = Name});
@@ -4107,18 +4161,21 @@ NEXT:
         InsertPt->next = s;
         InsertPt = s;
     }
+    void setUnreachable(location_t loc, enum UnreachableReason reason) {
+        unreachable_reason = reason;
+        unreachable_reason_loc = loc;
+        sreachable = false;
+    }
     void insertStmt(Stmt s) {
         if (sreachable || s->k == SCompound) {
             insertStmtInternal(s);
-            if (s->isTerminator())
-                sreachable = false;
         } else {
-            if (unreachable_reason != 0) {
+            if (unreachable_reason_loc) {
                 const char *desc_table[] = {"break statement",  "continue statement", "goto statement",
                                             "switch statement", "return statement",   "call to noreturn function"};
-                warning(current_stmt_loc, "this statement is unreachable");
-                note(unreachable_reason, "after %s is unreachable", desc_table[u_unreachable_reason]);
-                unreachable_reason = 0;
+                warning(current_stmt_loc, "unreachable statement after %s", desc_table[static_cast<size_t>(unreachable_reason)]);
+                note(unreachable_reason_loc, "after this statemet is unreachable");
+                unreachable_reason_loc = 0;
             }
         }
     }
@@ -4200,56 +4257,50 @@ ONE_CASE:
             label_t L = getLabel(Name);
             consume();
             checkSemicolon();
-            u_unreachable_reason = UR_goto;
-            unreachable_reason = loc;
-            return insertBr(L);
+            insertBr(L);
+            return setUnreachable(loc, UR_goto);
         }
         case Kcontinue:
-            tryContinue();
             consume();
             checkSemicolon();
-            u_unreachable_reason = UR_continue;
-            unreachable_reason = loc;
-            return insertBr(jumper.topContinue);
-        case Kbreak: {
+            if (jumper.topContinue == INVALID_LABEL)
+                parse_error(loc, "'continue' statement not in loop statement");
+            else
+                insertBr(jumper.topContinue);
+            return setUnreachable(loc, UR_continue);
+        case Kbreak: 
             consume();
             checkSemicolon();
             if (jumper.topBreak == INVALID_LABEL)
-                type_error(getLoc(), "%s", "connot break: no outer for/while/switch/do-while");
-            else {
-                u_unreachable_reason = UR_break;
-                unreachable_reason = loc;
-                return insertBr(jumper.topBreak);
-            }
-            return;
-        }
+                parse_error(loc, "'break' statement not in loop or switch statement");
+            else 
+                insertBr(jumper.topBreak);
+            return setUnreachable(loc, UR_break);
         case Kreturn: {
-            u_unreachable_reason = UR_return;
-            unreachable_reason = loc;
             consume();
             if (l.tok.tok == TSemicolon) {
+                Expr ret = nullptr;
                 consume();
-                if (sema.currentfunction->ret->isVoid())
-                    return insertStmt(SNEW(ReturnStmt){.ret = nullptr});
-
-                return warning(loc, "function should not return void in a function return %T",
-                               sema.currentfunction->ret),
-                       note("%s", "A return statement without an expression shall only appear in a function whose "
-                                  "return type is void"),
-                       insertStmt(SNEW(ReturnStmt){
-                           .ret = wrap(sema.currentfunction->ret,
-                                       llvm::UndefValue::get(irgen.wrap2(sema.currentfunction->ret)), loc, loc)});
+                if (!sema.currentfunction->ret->isVoid()) {
+                    type_error(loc, "function should not return void in a function return %T", sema.currentfunction->ret);
+                    ret = wrap(sema.currentfunction->ret, llvm::UndefValue::get(irgen.wrap2(sema.currentfunction->ret)), loc, loc);
+                }
+                insertStmt(SNEW(ReturnStmt) {.ret = ret});
+                return setUnreachable(loc, UR_return);
             }
             Expr e;
             if (!(e = expression()))
                 return;
             checkSemicolon();
-            if (sema.currentfunction->ret->isVoid())
-                return warning(loc, "function should return a value in a function return void"),
-                       note("A return statement with an expression shall not appear in a function whose return type is "
-                            "void"),
-                       insertStmt(SNEW(ReturnStmt){.ret = nullptr});
-            return insertStmt(SNEW(ReturnStmt){.ret = castto(e, sema.currentfunction->ret, Implict_Return)});
+
+            if (sema.currentfunction->ret->isVoid()) {
+                error(loc, "function should return a value in a function return void");
+                e = nullptr;
+            } else {
+                e = castto(e, sema.currentfunction->ret, Implict_Return);
+            }
+            insertStmt(SNEW(ReturnStmt){.ret = e});
+            return setUnreachable(loc, UR_return);
         }
         case Kwhile:
         case Kswitch: {
@@ -4276,9 +4327,7 @@ ONE_CASE:
                 llvm::SaveAndRestore<Stmt> saved_sw(sema.currentswitch, sw);
                 llvm::SaveAndRestore<label_t> saved_b(jumper.topBreak, LEAVE);
                 insertStmt(sw); // insert switch instruction
-                u_unreachable_reason = UR_switch;
-                unreachable_reason = loc;
-                sreachable = false;
+                setUnreachable(loc, UR_switch);
                 statement();
                 bool hasDefault = true;
                 if (sema.currentswitch->sw_default_loc == 0) {
@@ -4526,10 +4575,9 @@ ONE_CASE:
             return;
         }
         if (e->k == ECall) {
-            if (LLVM_UNLIKELY(e->callfunc->ty->hasTag(TYNORETURN))) {
-                unreachable_reason = loc;
-                u_unreachable_reason = UR_noreturn;
-                return insertStmt(SNEW(NoReturnCallStmt){.call_expr = e});
+            if (LLVM_UNLIKELY(e->callfunc->ty->ret->hasTag(TYNORETURN))) {
+                insertStmt(SNEW(NoReturnCallStmt){.call_expr = e});
+                return setUnreachable(loc, UR_noreturn);
             }
         }
         return insertStmt(SNEW(ExprStmt){.exprbody = e});

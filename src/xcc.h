@@ -676,7 +676,7 @@ static char hexed(unsigned a) { return hexs[a & 0b1111]; }
 struct SourceRange {
     location_t start, end;
     SourceRange() : start{0}, end{0} {};
-    SourceRange(location_t loc) : start{loc}, end{loc} { }
+    SourceRange(location_t loc) : start{loc}, end{loc} { assert(end <= start && "attempt to construct an invalid SourceRange"); }
     SourceRange(location_t L, location_t R) : start{L}, end{R} { }
     location_t getStart() const { return start; }
     location_t getEnd() const { return end; }
@@ -711,7 +711,7 @@ struct SourceLine {
         assert(!FixItHints.empty());
         std::string line(CaretLine.size(), ' ');
         location_t loc = startLoc;
-        for (size_t Repeat = line.size(); --Repeat; loc++) {
+        for (size_t Repeat = line.size(); Repeat--; loc++) {
             for (const auto &it : FixItHints) {
                 if (it.insertPos == loc) {
                     size_t FixItinsertLoc = static_cast<size_t>(loc) - static_cast<size_t>(startLoc);
@@ -792,6 +792,12 @@ struct LocTree {
     }
     void setParent(LocTree *theParent) { this->parent = theParent; }
     LocTree *getParent() const { return parent; }
+    unsigned getLastIncludeLine() const {
+        const struct LocTree *ptr = this;
+        while (!ptr->isAInclude)
+            ptr = ptr->parent;
+        return ptr ? ptr->include->line : 1;
+    }
 };
 struct Declator {
     IdentRef name;
@@ -904,7 +910,7 @@ location_t OpaqueExpr::getEndLoc() const {
     switch (k) {
     case EBitCast: return src->getEndLoc();
     case ESizeof: return sizeof_loc_end;
-    case EConstant: return constantEndLoc ? constantLoc : constantEndLoc;
+    case EConstant: return constantEndLoc;
     case EBin: return rhs->getEndLoc();
     case EUnary: return uoperand->getEndLoc();
     case ESubscript: return right->getEndLoc();

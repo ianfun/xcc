@@ -770,7 +770,7 @@ void RunOptimizationPipeline() {
         case SFunction: {
             assert(this->labels.empty());
             auto ty = cast<llvm::FunctionType>(wrap(s->functy));
-            currentfunction = newFunction(ty, s->funcname, s->functy->getTags(), s->func_idx, true);
+            currentfunction = newFunction(ty, s->funcname, s->functy->ret->getTags(), s->func_idx, true);
             llvm::DISubprogram *sp = nullptr;
             /*if (options.g) {
                 sp =
@@ -866,7 +866,7 @@ void RunOptimizationPipeline() {
                 if (varty->hasTag(TYTYPEDEF)) {
                     /* nothing */
                 } else if (varty->getKind() == TYFUNCTION) {
-                    newFunction(cast<llvm::FunctionType>(wrap(varty)), name, varty->getTags(), idx);
+                    newFunction(cast<llvm::FunctionType>(wrap(varty)), name, varty->ret->getTags(), idx);
                 } else if (!currentfunction || varty->isGlobalStorage()) {
                     auto GV = module->getGlobalVariable(name->getKey(), true);
                     if (GV) {
