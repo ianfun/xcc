@@ -81,8 +81,12 @@ raw_ostream &operator<<(llvm::raw_ostream &OS, const_CType ty) {
             OS << ty->arrsize;
         return OS << ']';
     case TYVLA:
-        OS << ty->vla_arraytype << " [" << ty->vla_expr << ']';
-        break;
+    {
+        Expr vla_expr = ty->vla_expr;
+        if (vla_expr->k == ECast)
+            vla_expr = vla_expr->castval;
+        return OS << ty->vla_arraytype << " [" << vla_expr << ']';
+    }
     case TYFUNCTION: {
         auto str = ty->get_storage_str();
         OS << '(' << ty->ret;
@@ -143,8 +147,12 @@ raw_ostream &operator>>(llvm::raw_ostream &OS, const_CType ty) {
             OS << ty->arrsize;
         return OS << "]";
     case TYVLA:
-        OS << "variableLengthArray[elementType=" << ty->vla_arraytype << ", size=" << ty->vla_expr << "]";
-        break;
+    {
+        Expr vla_expr = ty->vla_expr;
+        if (vla_expr->k == ECast)
+            vla_expr = vla_expr->castval;
+        OS << "variableLengthArray[elementType=" << ty->vla_arraytype << ", size=" << vla_expr << "]";
+    } break;
     case TYFUNCTION: {
         auto str = ty->get_storage_str();
         OS << "Function[ret=" << ty->ret;
@@ -214,9 +222,13 @@ void print_cdecl(const_CType ty, raw_ostream &OS) {
         print_cdecl(ty->arrtype, OS);
         break;
     case TYVLA:
-        OS << "variable length array " << ty->vla_expr << " of ";
+    {
+        Expr vla_expr = ty->vla_expr;
+        if (vla_expr->k == ECast)
+            vla_expr = vla_expr->castval;
+        OS << "variable length array " << vla_expr << " of ";
         print_cdecl(ty->vla_arraytype, OS);
-        break;
+    } break;
     case TYFUNCTION: {
         auto str = ty->get_storage_str();
         OS << "function (";

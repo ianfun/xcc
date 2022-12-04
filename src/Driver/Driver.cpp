@@ -304,6 +304,98 @@ bool BuildInputs(SourceMgr &SM, Options &opts) {
   opts.mainFileName = SM.streams.front()->getFileNameFromMemoryBuffer();
   return false;
 }
+
+template <typename IntTy>
+IntTy getLastArgIntValue(const ArgList &Args, OptSpecifier Id, IntTy Default = 0, unsigned Base = 10) {
+    IntTy Res = Default;
+    if (Arg *A = Args.getLastArg(Id)) {
+          if (StringRef(A->getValue()).getAsInteger(Base, Res)) {
+            error("invalid integral value %R in %R", A->getValue(), A->getAsString(Args));
+        }
+    }
+    return Res;
+}
+llvm::Reloc::Model getRelocModel() {
+  const ArgList &Args = getArgs();
+  if (Arg *A = Args.getLastArg(OPT_mrelocation_model)) {
+    StringRef Value = A->getValue();
+    auto RM = llvm::StringSwitch<llvm::Optional<llvm::Reloc::Model>>(Value)
+                  .Case("static", llvm::Reloc::Static)
+                  .Case("pic", llvm::Reloc::PIC_)
+                  .Case("ropi", llvm::Reloc::ROPI)
+                  .Case("rwpi", llvm::Reloc::RWPI)
+                  .Case("ropi-rwpi", llvm::Reloc::ROPI_RWPI)
+                  .Case("dynamic-no-pic", llvm::Reloc::DynamicNoPIC)
+                  .Default(None);
+    if (RM.hasValue())
+      return *RM;
+    error("invalid value %R in %R", Value, A->getAsString(Args));
+  }
+  return llvm::Reloc::PIC_;
+}
+unsigned getOptimizationLevel() {
+  const ArgList &Args = getArgs();
+  unsigned DefaultOpt = llvm::CodeGenOpt::None;
+
+  if (Arg *A = Args.getLastArg(options::OPT_O_Group)) {
+    if (A->getOption().matches(options::OPT_O0))
+      return llvm::CodeGenOpt::None;
+
+    if (A->getOption().matches(options::OPT_Ofast))
+      return llvm::CodeGenOpt::Aggressive;
+
+    assert(A->getOption().matches(options::OPT_O));
+
+    StringRef S(A->getValue());
+    if (S == "s" || S == "z" || S.empty())
+      return llvm::CodeGenOpt::Default;
+
+    if (S == "g")
+      return llvm::CodeGenOpt::Less;
+
+    return getLastArgIntValue(Args, OPT_O, DefaultOpt);
+  }
+
+  return DefaultOpt;
+}
+
+unsigned getOptimizationLevelSize() {
+  ArgList &Args = getArgs();
+  if (Arg *A = Args.getLastArg(options::OPT_O_Group)) {
+    if (A->getOption().matches(options::OPT_O)) {
+      switch (A->getValue()[0]) {
+      default:
+        return 0;
+      case 's':
+        return 1;
+      case 'z':
+        return 2;
+      }
+    }
+  }
+  return 0;
+}
+llvm::Optional<llvm::CodeModel::Model>
+getCodeModel() {
+  if (Arg *A = getArgs().getLastArg(OPT_mcmodel_EQ)) {
+    StringRef Value = A->getValue();
+    unsigned CodeModel = llvm::StringSwitch<unsigned>(Value)
+                             .Case("tiny", llvm::CodeModel::Tiny)
+                             .Case("small", llvm::CodeModel::Small)
+                             .Case("kernel", llvm::CodeModel::Kernel)
+                             .Case("medium", llvm::CodeModel::Medium)
+                             .Case("large", llvm::CodeModel::Large)
+                             .Case("default", ~1u)
+                             .Default(~0u);
+    assert(CodeModel != ~0u && "invalid code model!");
+    if (CodeModel == ~1u) {
+      error("invalid value %R in %R", Value, A->getAsString(getArgs()));
+      return llvm::None;
+    }
+    return static_cast<llvm::CodeModel::Model>(CodeModel);
+    }
+  return llvm::None;
+}
 bool BuildCompilation(ArrayRef<const char *> Args, Options &opts, SourceMgr &SM, int &ret) {
   bool should_exit = false;
   ParseArgStrings(Args.slice(1), should_exit);
@@ -320,7 +412,20 @@ bool BuildCompilation(ArrayRef<const char *> Args, Options &opts, SourceMgr &SM,
    error("unknown target triple %R, please use -triple or -arch", opts.triple.str());
    should_exit |= true;
   }
+
+  opts.VectorizeLoop = getArgs().hasArg(OPT_vectorize_loops);
+  opts.VectorizeSLP = getArgs().hasArg(OPT_vectorize_slp);
+  opts.OptimizationLevel = getOptimizationLevel();
+  opts.DisableIntegratedAS = getArgs().hasArg(OPT_fno_integrated_as);
+  opts.UnrollLoops = getArgs().hasFlag(OPT_funroll_loops, OPT_fno_unroll_loops, (opts.OptimizationLevel > 1));
+  opts.RerollLoops = getArgs().hasArg(OPT_freroll_loops);
+  opts.OptimizeSize = getOptimizationLevelSize();
+  opts.CodeModel = getCodeModel();
   opts.g = getArgs().hasArg(OPT_g_Flag);
+  opts.RelocationModel = getRelocModel();
+  opts.PassPlugins = getArgs().getAllArgValues(OPT_fpass_plugin_EQ);
+  opts.mainFileName = getArgs().getLastArgValue(OPT_main_file_name);
+  opts.VerifyModule = !getArgs().hasArg(OPT_disable_llvm_verifier);
   should_exit |= BuildInputs(SM, opts);
   ret = should_exit ? 1 : 0;
   return should_exit;

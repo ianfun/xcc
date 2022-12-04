@@ -1,5 +1,23 @@
-#include "config.h"
+#include "xcc_config.h"
 
+#if !WINDOWS
+#include <sys/types.h>
+#include <sys/stat.h>
+#endif
+#include <unistd.h>
+#include <fcntl.h>
+
+#if !CC_NO_RAEADLINE
+#include <readline/history.h>  // add_history
+#include <readline/readline.h> // readline
+#endif
+
+#include <llvm/Config/llvm-config.h>
+#include <llvm/Analysis/AliasAnalysis.h>
+#include <llvm/Analysis/GlobalsModRef.h>
+#include <llvm/Analysis/StackSafetyAnalysis.h>
+#include <llvm/Analysis/TargetLibraryInfo.h>
+#include <llvm/Analysis/TargetTransformInfo.h>
 #include <llvm/ADT/APFloat.h>
 #include <llvm/ADT/APInt.h>
 #include <llvm/ADT/ArrayRef.h>
@@ -44,8 +62,13 @@
 #include <llvm/IR/LegacyPassManager.h>
 #include <llvm/IR/Metadata.h>
 #include <llvm/IR/Module.h>
+#include <llvm/IR/ModuleSummaryIndex.h>
+#include <llvm/IR/PassManager.h>
 #include <llvm/IR/Type.h>
 #include <llvm/IR/Verifier.h>
+#include <llvm/Passes/PassBuilder.h>
+#include <llvm/Passes/PassPlugin.h>
+#include <llvm/Passes/StandardInstrumentations.h>
 #include <llvm/Linker/Linker.h>
 #include <llvm/Support/Casting.h>
 #include <llvm/Support/Compiler.h>
@@ -59,7 +82,6 @@
 #include <llvm/Support/TargetSelect.h>
 #include <llvm/Support/WithColor.h>
 #include <llvm/Support/raw_ostream.h>
-#include <llvm/Target/TargetMachine.h>
 #include <llvm/Support/VersionTuple.h>
 #include <llvm/Support/TargetParser.h>
 #include <llvm/Support/AArch64TargetParser.h>
@@ -67,11 +89,7 @@
 #include <llvm/Support/SaveAndRestore.h>
 #include <llvm/Support/RISCVISAInfo.h>
 #include <llvm/Support/DataTypes.h>
-#include <llvm/Target/TargetOptions.h>
-#include <llvm/Frontend/OpenMP/OMPGridValues.h>
 #include <llvm/Support/CSKYTargetParser.h>
-#include <llvm/BinaryFormat/Magic.h>
-#include <llvm/Config/llvm-config.h>
 #include <llvm/Support/CodeGen.h>
 #include <llvm/Support/Compression.h>
 #include <llvm/Support/CommandLine.h>
@@ -100,36 +118,57 @@
 #include <llvm/Option/ArgList.h>
 #include <llvm/Option/Arg.h>
 #include <llvm/ProfileData/InstrProf.h>
+#include <llvm/BinaryFormat/Magic.h>
+#include <llvm/Target/TargetOptions.h>
+#include <llvm/Target/TargetMachine.h>
+#include <llvm/Frontend/OpenMP/OMPGridValues.h>
+#include <llvm/Transforms/Coroutines/CoroCleanup.h>
+#include <llvm/Transforms/Coroutines/CoroEarly.h>
+#include <llvm/Transforms/Coroutines/CoroElide.h>
+#include <llvm/Transforms/Coroutines/CoroSplit.h>
+#include <llvm/Transforms/IPO.h>
+#include <llvm/Transforms/IPO/AlwaysInliner.h>
+#include <llvm/Transforms/IPO/LowerTypeTests.h>
+#include <llvm/Transforms/IPO/ThinLTOBitcodeWriter.h>
+#include <llvm/Transforms/InstCombine/InstCombine.h>
+#include <llvm/Transforms/Instrumentation.h>
+#include <llvm/Transforms/Instrumentation/AddressSanitizer.h>
+#include <llvm/Transforms/Instrumentation/AddressSanitizerOptions.h>
+#include <llvm/Transforms/Instrumentation/BoundsChecking.h>
+#include <llvm/Transforms/Instrumentation/DataFlowSanitizer.h>
+#include <llvm/Transforms/Instrumentation/GCOVProfiler.h>
+#include <llvm/Transforms/Instrumentation/HWAddressSanitizer.h>
+#include <llvm/Transforms/Instrumentation/InstrProfiling.h>
+#include <llvm/Transforms/Instrumentation/MemProfiler.h>
+#include <llvm/Transforms/Instrumentation/MemorySanitizer.h>
+#include <llvm/Transforms/Instrumentation/SanitizerCoverage.h>
+#include <llvm/Transforms/Instrumentation/ThreadSanitizer.h>
+#include <llvm/Transforms/Scalar.h>
+#include <llvm/Transforms/Scalar/EarlyCSE.h>
+#include <llvm/Transforms/Scalar/GVN.h>
+#include <llvm/Transforms/Scalar/JumpThreading.h>
+#include <llvm/Transforms/Scalar/LowerMatrixIntrinsics.h>
+#include <llvm/Transforms/Utils.h>
+#include <llvm/Transforms/Utils/CanonicalizeAliases.h>
+#include <llvm/Transforms/Utils/Debugify.h>
+#include <llvm/Transforms/Utils/EntryExitInstrumenter.h>
+#include <llvm/Transforms/Utils/ModuleUtils.h>
+#include <llvm/Transforms/Utils/NameAnonGlobals.h>
+#include <llvm/Transforms/Utils/SymbolRewriter.h>
 
-// va_list, va_arg
 #include <cstdarg>
 #include <cstdint>
-
-// open/read/close
-#include <algorithm> // std::max
-#include <cmath>     // pow
-#include <cstdint>   // intmax_t, uintmax_t
+#include <optional>
+#include <algorithm>
+#include <cmath>
+#include <cstdint>  
 #include <cstdio>
 #include <ctime>
 #include <deque>
-
-#if !WINDOWS
-#include <sys/types.h>
-#include <sys/stat.h>
-#endif
-#include <unistd.h>
-#include <fcntl.h>
-
 #include <cassert>
 #include <string>
 #include <vector>
 #include <map>
-
-#if !CC_NO_RAEADLINE
-#include <readline/history.h>  // add_history
-#include <readline/readline.h> // readline
-#endif
-
 #include <cctype>
 
 #if CC_DEBUG
@@ -145,6 +184,9 @@
 #define endStatics() (void)0
 #define statics(...) (void)0
 #endif
+
+#define HANDLE_EXTENSION(Ext) llvm::PassPluginLibraryInfo get##Ext##PluginInfo();
+#include "llvm/Support/Extension.def"
 
 namespace xcc {
 #if WINDOWS
@@ -186,8 +228,6 @@ using llvm::SmallVector;
 using llvm::SmallVectorImpl;
 using llvm::StringRef;
 using llvm::Twine;
-using llvm::VersionTuple;
-using llvm::sys::ProcessInfo;
 using type_tag_t = uint64_t;
 constexpr APFloat::cmpResult cmpGreaterThan = APFloat::cmpGreaterThan, cmpEqual = APFloat::cmpEqual,
                              cmpLessThan = APFloat::cmpLessThan;

@@ -39,6 +39,42 @@ struct IRGen : public DiagnosticHelper {
         ptrty,
         TypeIndexHigh
     };
+    uint64_t getsizeof(llvm::Type *ty) { return layout->getTypeStoreSize(ty); }
+    uint64_t getsizeof(CType ty) { 
+        assert((!ty->isVLA()) && "VLA should handled in other case");
+        const auto k = ty->getKind();
+        if (ty->isVoid() || k == TYFUNCTION)
+            return 1;
+        return getsizeof(wrap2(ty)); 
+    }
+    uint64_t getsizeof(Expr e) { return getsizeof(e->ty); }
+    uint64_t getAlignof(llvm::Type *ty) { return layout->getPrefTypeAlign(ty).value(); }
+    uint64_t getAlignof(CType ty) { return getAlignof(wrap2(ty)); }
+    uint64_t getAlignof(Expr e) { return getAlignof(e->ty); }
+    llvm::Type *wrapNoComplexScalar(CType ty) {
+        assert(ty->getKind() == TYPRIM);
+        if (ty->isInteger())
+            return integer_types[ty->getIntegerKind().asLog2()];
+        return float_types[static_cast<uint64_t>(ty->getFloatKind())];
+    }
+    llvm::Type *wrap2(CType ty) {
+        switch (ty->getKind()) {
+        case TYPRIM: return wrapPrim(ty);
+        case TYPOINTER: return pointer_type;
+        case TYSTRUCT:
+        case TYUNION: {
+            size_t L = ty->selems.size();
+            llvm::Type **buf = alloc.Allocate<llvm::Type *>(L);
+            for (size_t i = 0; i < L; ++i)
+                buf[i] = wrap2(ty->selems[i].ty);
+            return llvm::StructType::create(ctx, ArrayRef<llvm::Type *>(buf, L));
+        }
+        case TYARRAY: return llvm::ArrayType::get(wrap(ty->arrtype), ty->arrsize);
+        case TYENUM: return integer_types[context.getIntLog2()];
+        case TYVLA: llvm_unreachable("VLA should handled other case!");
+        default: llvm_unreachable("unexpected type");
+        }
+    }
     static enum TypeIndex getTypeIndex(CType ty) {
         // TODO: Complex, Imaginary
         if (ty->hasTag(TYVOID))
@@ -72,50 +108,36 @@ struct IRGen : public DiagnosticHelper {
         }
         llvm_unreachable("invalid FloatKind");
     }
-    IRGen(xcc_context &context, DiagnosticsEngine &Diag, SourceMgr &SM, LLVMContext &ctx, const Options &options)
-        : DiagnosticHelper{Diag}, context{context}, SM{SM}, ctx{ctx}, B{ctx}, options{options} {
-        auto CPU = "generic";
-        auto Features = "";
-        llvm::TargetOptions opt;
-
-        machine = options.theTarget->createTargetMachine(options.triple.str(), CPU, Features, opt, llvm::Reloc::PIC_,
-                                                         llvm::None, llvm::CodeGenOpt::Aggressive);
-        if (!machine) {
-            fatal("Target::createTargetMachine failed!");
-            return;
+    CodeGenOpt::Level getCGOptLevel() const {
+      switch (options.OptimizationLevel) {
+        default:
+              llvm_unreachable("Invalid optimization level!");
+        case 0:
+              return CodeGenOpt::None;
+        case 1:
+              return CodeGenOpt::Less;
+        case 2:
+              return CodeGenOpt::Default; // O2/Os/Oz
+        case 3:
+            return CodeGenOpt::Aggressive;
         }
-        layout = new llvm::DataLayout(machine->createDataLayout());
-        void_type = llvm::Type::getVoidTy(ctx);
-
-        pointer_type = llvm::PointerType::get(ctx, 0);
-        integer_types[0] = llvm::Type::getInt1Ty(ctx);
-        integer_types[1] = nullptr;
-        integer_types[2] = nullptr;
-        integer_types[3] = llvm::Type::getInt8Ty(ctx);
-        integer_types[4] = llvm::Type::getInt16Ty(ctx);
-        integer_types[5] = llvm::Type::getInt32Ty(ctx);
-        integer_types[6] = llvm::Type::getInt64Ty(ctx);
-        integer_types[7] = llvm::Type::getInt128Ty(ctx);
-
-        float_types[F_Half] = llvm::Type::getHalfTy(ctx);
-        float_types[F_BFloat] = llvm::Type::getBFloatTy(ctx);
-        float_types[F_Float] = llvm::Type::getFloatTy(ctx);
-        float_types[F_Double] = llvm::Type::getDoubleTy(ctx);
-        float_types[F_Quadruple] = llvm::Type::getFP128Ty(ctx);
-        float_types[F_PPC128] = llvm::Type::getPPC_FP128Ty(ctx);
-        // TODO: Decimal float types
-
-        intptrTy = layout->getIntPtrType(ctx);
-        pointerSizeInBits = intptrTy->getBitWidth();
-
-        i32_n1 = llvm::ConstantInt::get(integer_types[4], -1);
-        i32_1 = llvm::ConstantInt::get(integer_types[4], 1);
-        i32_0 = llvm::ConstantInt::get(integer_types[4], 0);
-        i1_0 = llvm::ConstantInt::getFalse(ctx);
-        i1_1 = llvm::ConstantInt::getTrue(ctx);
-        _complex_double = llvm::StructType::get(float_types[F_Double], float_types[F_Double]);
-        _complex_float = llvm::StructType::get(float_types[F_Float], float_types[F_Float]);
-        addModule("main");
+    }
+    llvm::Type *wrapFloating(CType ty) { return float_types[static_cast<uint64_t>(ty->getFloatKind())]; }
+    llvm::StructType *wrapComplex(const_CType ty) {
+        if (ty->isFloating()) {
+            FloatKind k = ty->getFloatKind();
+            if (k.equals(F_Double))
+                return _complex_double;
+            if (k.equals(F_Float))
+                return _complex_float;
+            auto T = float_types[(uint64_t)k];
+            return llvm::StructType::get(T, T);
+        }
+        return wrapComplexForInteger(ty);
+    }
+    llvm::StructType *wrapComplexForInteger(const_CType ty) {
+        auto T = integer_types[ty->getIntegerKind().asLog2()];
+        return llvm::StructType::get(T, T);
     }
     xcc_context &context;
     llvm::Module *module = nullptr;
@@ -156,31 +178,31 @@ struct IRGen : public DiagnosticHelper {
     location_t debugLoc;
     DenseMap<CType, llvm::FunctionType *> function_type_cache{};
     DenseMap<Expr, llvm::Value*> vla_size_map{};
-
-    inline void store(llvm::Value *p, llvm::Value *v) { (void)B.CreateStore(v, p); }
-    inline llvm::LoadInst *load(llvm::Value *p, llvm::Type *t) {
+private:
+    void store(llvm::Value *p, llvm::Value *v) { (void)B.CreateStore(v, p); }
+    llvm::LoadInst *load(llvm::Value *p, llvm::Type *t) {
         assert(p);
         assert(t);
         llvm::LoadInst *i = B.CreateLoad(t, p, false);
         return i;
     }
-    inline void store(llvm::Value *p, llvm::Value *v, llvm::Align align) {
+    void store(llvm::Value *p, llvm::Value *v, llvm::Align align) {
         llvm::StoreInst *s = B.CreateStore(v, p);
         s->setAlignment(align);
     }
-    inline llvm::LoadInst *load(llvm::Value *p, llvm::Type *t, llvm::Align align) {
+    llvm::LoadInst *load(llvm::Value *p, llvm::Type *t, llvm::Align align) {
         assert(p);
         assert(t);
         llvm::LoadInst *i = B.CreateLoad(t, p, false);
         i->setAlignment(align);
         return i;
     }
-    inline void store(llvm::Value *p, llvm::Value *v, llvm::MaybeAlign align) {
+    void store(llvm::Value *p, llvm::Value *v, llvm::MaybeAlign align) {
         llvm::StoreInst *s = B.CreateStore(v, p);
         if (align.hasValue())
             s->setAlignment(*align);
     }
-    inline llvm::LoadInst *load(llvm::Value *p, llvm::Type *t, llvm::MaybeAlign align) {
+    llvm::LoadInst *load(llvm::Value *p, llvm::Type *t, llvm::MaybeAlign align) {
         assert(p);
         assert(t);
         llvm::LoadInst *i = B.CreateLoad(t, p, false);
@@ -208,22 +230,6 @@ struct IRGen : public DiagnosticHelper {
     }
     void after(llvm::BasicBlock *loc) { B.SetInsertPoint(loc); }
     void emitDebugLocation() { B.SetCurrentDebugLocation(llvm::DebugLoc()); }
-    llvm::StructType *wrapComplex(const_CType ty) {
-        if (ty->isFloating()) {
-            FloatKind k = ty->getFloatKind();
-            if (k.equals(F_Double))
-                return _complex_double;
-            if (k.equals(F_Float))
-                return _complex_float;
-            auto T = float_types[(uint64_t)k];
-            return llvm::StructType::get(T, T);
-        }
-        return wrapComplexForInteger(ty);
-    }
-    llvm::StructType *wrapComplexForInteger(const_CType ty) {
-        auto T = integer_types[ty->getIntegerKind().asLog2()];
-        return llvm::StructType::get(T, T);
-    }
     llvm::Type *wrap(CType ty) {
         // wrap a CType to LLVM Type
         assert(ty && "wrap a nullptr");
@@ -257,6 +263,7 @@ struct IRGen : public DiagnosticHelper {
         case TYBITFIELD:
         case TYSTRUCT: return tags[ty->sidx];
         case TYUNION: return tags[ty->uidx];
+        case TYVLA: llvm_unreachable("VLA should handled other case!");
         default: llvm_unreachable("unexpected type!");
         }
     }
@@ -299,18 +306,6 @@ struct IRGen : public DiagnosticHelper {
     uint64_t getSizeInBits(llvm::Type *ty) { return layout->getTypeSizeInBits(ty); }
     uint64_t getSizeInBits(CType ty) { return getSizeInBits(wrap2(ty)); }
     uint64_t getSizeInBits(Expr e) { return getSizeInBits(e->ty); }
-    uint64_t getsizeof(llvm::Type *ty) { return layout->getTypeStoreSize(ty); }
-    uint64_t getsizeof(CType ty) { 
-        assert((!ty->isVLA()) && "VLA should handled in other case");
-        const auto k = ty->getKind();
-        if (ty->isVoid() || k == TYFUNCTION)
-            return 1;
-        return getsizeof(wrap2(ty)); 
-    }
-    uint64_t getsizeof(Expr e) { return getsizeof(e->ty); }
-    uint64_t getAlignof(llvm::Type *ty) { return layout->getPrefTypeAlign(ty).value(); }
-    uint64_t getAlignof(CType ty) { return getAlignof(wrap2(ty)); }
-    uint64_t getAlignof(Expr e) { return getAlignof(e->ty); }
     llvm::MDString *mdStr(StringRef str) { return llvm::MDString::get(ctx, str); }
     llvm::MDNode *mdNode(llvm::Metadata *m) { return llvm::MDNode::get(ctx, {m}); }
     llvm::MDNode *mdNode(ArrayRef<llvm::Metadata *> m) { return llvm::MDNode::get(ctx, m); }
@@ -357,6 +352,114 @@ struct IRGen : public DiagnosticHelper {
             module->addModuleFlag(llvm::Module::Warning, "Dwarf Version", llvm::dwarf::DWARF_VERSION);
         }
     }
+llvm::OptimizationLevel mapToLevel() const {
+  switch (options.OptimizationLevel) {
+  default:
+    llvm_unreachable("Invalid optimization level!");
+
+  case 0:
+    return llvm::OptimizationLevel::O0;
+
+  case 1:
+    return llvm::OptimizationLevel::O1;
+
+  case 2:
+    switch (options.OptimizeSize) {
+    default:
+      llvm_unreachable("Invalid optimization level for size!");
+
+    case 0:
+      return llvm::OptimizationLevel::O2;
+
+    case 1:
+      return llvm::OptimizationLevel::Os;
+
+    case 2:
+      return llvm::OptimizationLevel::Oz;
+    }
+
+  case 3:
+    return llvm::OptimizationLevel::O3;
+  }
+}
+    // clang::EmitAssemblyHelper::RunOptimizationPipeline
+void RunOptimizationPipeline() {
+  llvm::Optional<llvm::PGOOptions> PGOOpt;
+  machine->setPGOOption(PGOOpt);
+
+  llvm::PipelineTuningOptions PTO;
+  PTO.LoopUnrolling = options.UnrollLoops;
+  // For historical reasons, loop interleaving is set to mirror setting for loop
+  // unrolling.
+  PTO.LoopInterleaving = options.UnrollLoops;
+  PTO.LoopVectorization = options.VectorizeLoop;
+  PTO.SLPVectorization = options.VectorizeSLP;
+  PTO.MergeFunctions = options.MergeFunctions;
+  // Only enable CGProfilePass when using integrated assembler, since
+  // non-integrated assemblers don't recognize .cgprofile section.
+  PTO.CallGraphProfile = !options.DisableIntegratedAS;
+
+  llvm::LoopAnalysisManager LAM;
+  llvm::FunctionAnalysisManager FAM;
+  llvm::CGSCCAnalysisManager CGAM;
+  llvm::ModuleAnalysisManager MAM;
+
+  llvm::PassInstrumentationCallbacks PIC;
+  llvm::PrintPassOptions PrintPassOpts;
+  llvm::StandardInstrumentations SI(
+      false,
+      /*VerifyEach*/ false, PrintPassOpts);
+  SI.registerCallbacks(PIC, &FAM);
+  llvm::PassBuilder PB(machine, PTO, PGOOpt, &PIC);
+
+
+  // Enable verify-debuginfo-preserve-each for new PM.
+  DebugInfoPerPass DebugInfoBeforePass;
+  // Attempt to load pass plugins and register their callbacks with PB.
+  for (auto &PluginFN : options.PassPlugins) {
+    auto PassPlugin = PassPlugin::Load(PluginFN);
+    if (PassPlugin) {
+      PassPlugin->registerPassBuilderCallbacks(PB);
+    } else {
+      StringRef str(PluginFN);
+      std::string errStr(llvm::toString(PassPlugin.takeError()));
+      StringRef errStr2(errStr);
+      error("unable to load plugin %R: %R") << str << errStr2;
+    }
+  }
+#define HANDLE_EXTENSION(Ext)                                                  \
+  get##Ext##PluginInfo().RegisterPassBuilderCallbacks(PB);
+#include "llvm/Support/Extension.def"
+
+  // Register all the basic analyses with the managers.
+  PB.registerModuleAnalyses(MAM);
+  PB.registerCGSCCAnalyses(CGAM);
+  PB.registerFunctionAnalyses(FAM);
+  PB.registerLoopAnalyses(LAM);
+  PB.crossRegisterProxies(LAM, FAM, CGAM, MAM);
+
+  llvm::ModulePassManager MPM;
+    // Map our optimization levels into one of the distinct levels used to
+    // configure the pipeline.
+    llvm::OptimizationLevel Level = mapToLevel();
+    if (options.OptimizationLevel == 0) {
+      MPM = PB.buildO0DefaultPipeline(Level, false);
+    } else {
+      MPM = PB.buildPerModuleDefaultPipeline(Level);
+    }
+  if (options.VerifyModule)
+    MPM.addPass(VerifierPass());
+  {
+    llvm::PrettyStackTraceString CrashInfo("Optimizer");
+    llvm::TimeTraceScope TimeScope("Optimizer");
+    MPM.run(*module, MAM);
+  }
+}
+    void runOptmize() {
+        // setCommandLineOpts();
+        // llvm::cl::PrintOptionValues();
+        RunOptimizationPipeline();
+    }
     void finalsizeCodeGen() {
         if (di) {
             di->finalize();
@@ -367,14 +470,15 @@ struct IRGen : public DiagnosticHelper {
         if (dtags)
             delete[] dtags;
     }
-    void run(Stmt s, size_t num_typedefs, size_t num_tags) {
+    void startCodeGen(size_t num_typedefs, size_t num_tags) {
         vars = new llvm::Value *[num_typedefs]; // not initialized!
         tags = new llvm::Type *[num_tags];      // not initialized!
         if (options.g)
             dtags = new llvm::DIType *[num_tags]; // not initialized!
+    }
+    void runCodeGenTranslationUnit(Stmt s) {
         for (Stmt ptr = s->next; ptr; ptr = ptr->next)
             gen(ptr);
-        finalsizeCodeGen();
     }
     llvm::Value *gen_complex_real(llvm::Value *v) { return B.CreateExtractValue(v, {0}); }
     llvm::Value *gen_complex_imag(llvm::Value *v) { return B.CreateExtractValue(v, {1}); }
@@ -410,13 +514,6 @@ struct IRGen : public DiagnosticHelper {
             return B.CreateICmpNE(V, ConstantInt::get(I, 0));
         return B.CreateFCmpONE(V, ConstantFP::getZero(T, false));
     }
-    llvm::Type *wrapNoComplexScalar(CType ty) {
-        assert(ty->getKind() == TYPRIM);
-        if (ty->isInteger())
-            return integer_types[ty->getIntegerKind().asLog2()];
-        return float_types[static_cast<uint64_t>(ty->getFloatKind())];
-    }
-    llvm::Type *wrapFloating(CType ty) { return float_types[static_cast<uint64_t>(ty->getFloatKind())]; }
     llvm::Type *wrapPrim(const_CType ty) {
         assert(ty->getKind() == TYPRIM);
         if (LLVM_UNLIKELY(ty->isComplex()))
@@ -428,23 +525,6 @@ struct IRGen : public DiagnosticHelper {
             return integer_types[ty->getIntegerKind().asLog2()];
         }
         return float_types[static_cast<uint64_t>(ty->getFloatKind())];
-    }
-    llvm::Type *wrap2(CType ty) {
-        switch (ty->getKind()) {
-        case TYPRIM: return wrapPrim(ty);
-        case TYPOINTER: return pointer_type;
-        case TYSTRUCT:
-        case TYUNION: {
-            size_t L = ty->selems.size();
-            llvm::Type **buf = alloc.Allocate<llvm::Type *>(L);
-            for (size_t i = 0; i < L; ++i)
-                buf[i] = wrap2(ty->selems[i].ty);
-            return llvm::StructType::create(ctx, ArrayRef<llvm::Type *>(buf, L));
-        }
-        case TYARRAY: return llvm::ArrayType::get(wrap(ty->arrtype), ty->arrsize);
-        case TYENUM: return integer_types[context.getIntLog2()];
-        default: llvm_unreachable("");
-        }
     }
     llvm::DIType *createEnum(CType ty, llvm::DICompositeType *old) {
         llvm::Metadata **buf = alloc.Allocate<llvm::Metadata *>(ty->eelems.size());
@@ -565,14 +645,19 @@ struct IRGen : public DiagnosticHelper {
         default: llvm_unreachable("bad cast operator");
         }
     }
-    llvm::Function *newFunction(llvm::FunctionType *fty, IdentRef name, type_tag_t tags, size_t idx) {
+    llvm::Function *newFunction(llvm::FunctionType *fty, IdentRef name, type_tag_t tags, size_t idx, bool isDefinition = false) {
         auto old = module->getFunction(name->getKey());
         if (old)
             return old;
         auto F = addFunction(fty, name->getKey());
         F->setDSOLocal(true);
         F->setDoesNotThrow();
-        F->addFnAttr(llvm::Attribute::OptimizeForSize);
+        if (options.OptimizationLevel == 0) {
+            F->addFnAttr(llvm::Attribute::NoInline);
+            F->addFnAttr(llvm::Attribute::OptimizeNone);
+        } else if (isDefinition) {
+            F->addFnAttr(llvm::Attribute::OptimizeForSize);
+        }
         if (tags & TYSTATIC)
             F->setLinkage(InternalLinkage);
         if (tags & TYNORETURN)
@@ -685,7 +770,7 @@ struct IRGen : public DiagnosticHelper {
         case SFunction: {
             assert(this->labels.empty());
             auto ty = cast<llvm::FunctionType>(wrap(s->functy));
-            currentfunction = newFunction(ty, s->funcname, s->functy->getTags(), s->func_idx);
+            currentfunction = newFunction(ty, s->funcname, s->functy->getTags(), s->func_idx, true);
             llvm::DISubprogram *sp = nullptr;
             /*if (options.g) {
                 sp =
@@ -827,15 +912,19 @@ struct IRGen : public DiagnosticHelper {
                                         }*/
                 } else {
                     bool isVLA = false;
-                    llvm::Value *alloca_size = nullptr;
+                    llvm::Value *alloca_size;
+                    llvm::Type *ty;
                     if (LLVM_UNLIKELY(varty->isVLA())) {
                         // llvm.stackrestore()
                         // llvm.stacksave()
                         isVLA = true;
-                        alloca_size = genVLAExpr(varty);
-                        varty = varty->vla_arraytype;
+                        const std::pair<llvm::Value*, llvm::Type*> pair = genVLASizeof(varty);
+                        alloca_size = pair.first;
+                        ty = pair.second;
+                    } else {
+                        alloca_size = nullptr;
+                        ty = wrap(varty);
                     }
-                    llvm::Type *ty = wrap(varty);
                     llvm::AllocaInst *val =
                         new llvm::AllocaInst(ty, layout->getAllocaAddrSpace(), alloca_size,
                                              layout->getPrefTypeAlign(ty), name->getKey());
@@ -928,15 +1017,27 @@ struct IRGen : public DiagnosticHelper {
             llvm_unreachable("");
         }
     }
-    llvm::Value *genVLAExpr(Expr e) {
+    llvm::Value *genVLANumelements(Expr e) {
         auto it = vla_size_map.insert(std::make_pair(e, nullptr));
         if (it.second)
             it.first->second = gen(e);
         return it.first->second;
     }
-    llvm::Value *genVLAExpr(CType ty) {
+    llvm::Value *genVLANumelements(CType ty) {
         assert(ty->isVLA());
-        return genVLAExpr(ty->vla_expr);
+        return genVLANumelements(ty->vla_expr);
+    }
+    std::pair<llvm::Value*, llvm::Type*> genVLASizeof(Expr e, CType elementType) {
+        llvm::Value *numElements = genVLANumelements(e);
+        if (elementType->getKind() == TYVLA) {
+            const auto pair = genVLASizeof(elementType->vla_expr, elementType->vla_arraytype);
+            return std::make_pair(B.CreateNSWMul(numElements, pair.first), pair.second);
+        }
+        return std::make_pair(numElements, wrap(elementType));
+    }
+    std::pair<llvm::Value*, llvm::Type*> genVLASizeof(CType ty) {
+        assert(ty->isVLA());
+        return genVLASizeof(ty->vla_expr, ty->vla_arraytype);
     }
     llvm::Value *gen(Expr e) {
         emitDebugLocation(e);
@@ -1187,41 +1288,48 @@ BINOP_ATOMIC_RMW:
             case SSub: return B.CreateNSWSub(lhs, rhs);
             case SMul: return B.CreateNSWMul(lhs, rhs);
             case PtrDiff: {
-                CType target = e->lhs->ty;
+                CType target = e->lhs->ty->p;
+                llvm::Value *dividend;
 
                 lhs = B.CreatePtrToInt(lhs, intptrTy);
                 rhs = B.CreatePtrToInt(rhs, intptrTy);
                 auto sub = B.CreateSub(lhs, rhs);
 
-                if (LLVM_UNLIKELY(target->isVLA()))
-                    return B.CreateExactSDiv(sub, genVLAExpr(target));
-
-                uint64_t s = getsizeof(target);
-                if (s != 1)
-                    return B.CreateExactSDiv(sub, llvm::ConstantInt::get(intptrTy, s));
-                return sub;
+                if (LLVM_UNLIKELY(target->isVLA())) {
+                    std::pair<llvm::Value*, llvm::Type*> pair = genVLASizeof(target);
+                    uint64_t Size = getsizeof(pair.second);
+                    dividend = Size == 1 ? pair.first : B.CreateNSWMul(pair.first, llvm::ConstantInt::get(intptrTy, Size));
+                }
+                else {
+                    uint64_t Size = getsizeof(target);
+                    if (Size == 1)
+                        return sub;
+                    dividend = llvm::ConstantInt::get(intptrTy, Size);
+                }
+                return B.CreateExactSDiv(sub, dividend);
             }
             case SAddP:
             {
+                if (const ConstantInt *CI = dyn_cast<ConstantInt>(rhs))
+                    if (CI->isZero())
+                        return lhs;
                 CType target = e->ty->p;
+                llvm::Type *T;
                 if (LLVM_UNLIKELY(target->isVLA())) {
-                    llvm::Value *vla_size = genVLAExpr(target);
+                    const std::pair<llvm::Value*, llvm::Type*> pair = genVLASizeof(target);
+                    T = pair.second;
                     if (const ConstantInt *CI = dyn_cast<ConstantInt>(rhs)) {
-                        if (CI->isZero())
-                            return rhs;
                         if (CI->getLimitedValue() == 1) {
-                            rhs = vla_size;
-                            goto FALLBACK_OK;
+                            rhs = pair.first;
+                            goto VLA_NEXT;
                         }
                     }
-                    rhs = B.CreateNSWMul(vla_size, rhs);
-                    FALLBACK_OK:
-                    target = target->vla_arraytype;
+                    rhs = B.CreateNSWMul(pair.first, rhs);
+                } else {
+                    T = wrap(target);
                 }
-                if (const ConstantInt *CI = dyn_cast<ConstantInt>(rhs)) {
-                    if (CI->isZero()) return lhs;
-                }
-                return B.CreateInBoundsGEP(wrap(target), lhs, {rhs});
+                VLA_NEXT: ;
+                return B.CreateInBoundsGEP(T, lhs, {rhs});
             }
             case Complex_CMPLX: return make_complex_pair(e->ty, lhs, rhs);
             case EQ: pop = static_cast<unsigned>(llvm::CmpInst::ICMP_EQ); goto BINOP_ICMP;
@@ -1371,8 +1479,10 @@ BINOP_SHIFT:
         }
         case ESizeof:
         {
-            assert(e->ty->isVLA());
-            return genVLAExpr(e->theType);
+            std::pair<llvm::Value*, llvm::Type*> pair = genVLASizeof(e->theType);
+            if (pair.second->isIntegerTy(1))
+                return pair.first;
+            return B.CreateNSWMul(pair.first, /*llvm::ConstantExpr::getSizeOf(pair.second)*/ llvm::ConstantInt::get(intptrTy, getsizeof(pair.second)));
         }
         case ECast: return B.CreateCast(getCastOp(e->castop), gen(e->castval), wrap(e->ty));
         case ECall: {
@@ -1395,5 +1505,55 @@ BINOP_SHIFT:
         case EArray: return getArray(e);
         default: llvm_unreachable("bad enum kind!");
         }
+    }
+public:
+    IRGen(xcc_context &context, DiagnosticsEngine &Diag, SourceMgr &SM, LLVMContext &ctx, const Options &options)
+        : DiagnosticHelper{Diag}, context{context}, SM{SM}, ctx{ctx}, B{ctx}, options{options} {
+        auto CPU = "generic";
+        auto Features = "";
+        llvm::TargetOptions opt;
+
+        machine = options.theTarget->createTargetMachine(options.triple.str(), CPU, Features, opt, options.RelocationModel,
+                                                         options.CodeModel, getCGOptLevel());
+        if (LLVM_UNLIKELY(!machine))
+            llvm::report_fatal_error("failed to create llvm::TargetMachine: the target might has no target machine");
+        layout = new llvm::DataLayout(machine->createDataLayout());
+        void_type = llvm::Type::getVoidTy(ctx);
+
+        pointer_type = llvm::PointerType::get(ctx, 0);
+        integer_types[0] = llvm::Type::getInt1Ty(ctx);
+        integer_types[1] = nullptr;
+        integer_types[2] = nullptr;
+        integer_types[3] = llvm::Type::getInt8Ty(ctx);
+        integer_types[4] = llvm::Type::getInt16Ty(ctx);
+        integer_types[5] = llvm::Type::getInt32Ty(ctx);
+        integer_types[6] = llvm::Type::getInt64Ty(ctx);
+        integer_types[7] = llvm::Type::getInt128Ty(ctx);
+
+        float_types[F_Half] = llvm::Type::getHalfTy(ctx);
+        float_types[F_BFloat] = llvm::Type::getBFloatTy(ctx);
+        float_types[F_Float] = llvm::Type::getFloatTy(ctx);
+        float_types[F_Double] = llvm::Type::getDoubleTy(ctx);
+        float_types[F_Quadruple] = llvm::Type::getFP128Ty(ctx);
+        float_types[F_PPC128] = llvm::Type::getPPC_FP128Ty(ctx);
+        // TODO: Decimal float types
+
+        intptrTy = layout->getIntPtrType(ctx);
+        pointerSizeInBits = intptrTy->getBitWidth();
+
+        i32_n1 = llvm::ConstantInt::get(integer_types[4], -1);
+        i32_1 = llvm::ConstantInt::get(integer_types[4], 1);
+        i32_0 = llvm::ConstantInt::get(integer_types[4], 0);
+        i1_0 = llvm::ConstantInt::getFalse(ctx);
+        i1_1 = llvm::ConstantInt::getTrue(ctx);
+        _complex_double = llvm::StructType::get(float_types[F_Double], float_types[F_Double]);
+        _complex_float = llvm::StructType::get(float_types[F_Float], float_types[F_Float]);
+        addModule("main");
+    }
+    void run(Stmt s, size_t num_typedefs, size_t num_tags) {
+        startCodeGen(num_typedefs, num_tags);
+        runCodeGenTranslationUnit(s);
+        runOptmize();
+        finalsizeCodeGen();
     }
 };

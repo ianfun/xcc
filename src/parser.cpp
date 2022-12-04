@@ -76,10 +76,19 @@ struct Parser : public EvalHelper {
     StringPool string_pool;
     llvm::ConstantPointerNull *null_ptr;
     Expr null_ptr_expr;
-    template <typename T> auto getsizeof(T a) { return irgen.getsizeof(a); }
-    template <typename T> auto getAlignof(T a) { return irgen.getAlignof(a); }
-
-  private:
+private:
+    uint64_t getsizeof(CType ty) { return irgen.getsizeof(ty); }
+    uint64_t getAlignof(CType ty) { return irgen.getAlignof(ty); }
+    uint64_t getAlignof(Expr e) { return getAlignof(e->ty); }
+    Expr getsizeofEx(Expr e, location_t begin, location_t end) {
+        if (e->k == EArrToAddress) {
+            CType ty = e->arr3->ty;
+            if (ty->isVLA())
+                return ENEW(SizeofExpr) {.ty = context.getSize_t(), .theType = ty, .sizeof_loc_begin = begin, .sizeof_loc_end = end};
+        }
+        return wrap(context.getSize_t(),
+                ConstantInt::get(irgen.ctx, APInt(context.getSize_tBitWidth(), getsizeof(e->ty))), begin, end);
+    }
     [[nodiscard]] Expr binop(Expr a, BinOp op, Expr b, CType ty) {
         return ENEW(BinExpr){.ty = ty, .lhs = a, .bop = op, .rhs = b};
     }
@@ -625,9 +634,6 @@ PTR_CAST:
         return bit_cast(e, to);
     }
     Expr castto(Expr e, CType to, enum Implict_Conversion_Kind implict = Implict_Cast) {
-#if 0
-        llvm::errs() << "# from " << e->ty << " to " << to << '\n';
-#endif
         assert(e && "cast object is nullptr");
         assert(e->ty && "cannot cast from expression with no type");
         assert(to && "cast type is nullptr");
@@ -2820,7 +2826,7 @@ BREAK:
         }
         if (!(base = declaration_specifiers()))
             return expect(loc, "declaration-specifiers");
-        if (sema.currentAlign) {
+        if (sema.currentAlign) { 
             size_t m = getAlignof(base) * 8;
             if (sema.currentAlign < m) {
                 type_error(loc, "requested alignment is less than minimum alignment of %Z for type %T", m, base);
@@ -2845,7 +2851,7 @@ BREAK:
                 if (st.ty->getKind() != TYFUNCTION)
                     return (void)type_error(full_loc, "unexpected function definition");
                     // function definition
-#if 0
+#if CC_PRINT_CDECL_FUNCTION
                 print_cdecl(st.name->getKey(), st.ty, llvm::errs(), true);
 #endif
                 if (st.name->second.getToken() == PP_main) {
@@ -2895,7 +2901,7 @@ ARGV_OK:;
                 return insertStmt(res);
             }
             st.ty->noralize();
-#if 1
+#if CC_PRINT_CDECL
             print_cdecl(st.name->getKey(), st.ty, llvm::errs(), true);
 #endif
             size_t idx = putsymtype(st.name, st.ty, full_loc);
@@ -3083,8 +3089,10 @@ ARGV_OK:;
                 }
                 return e;
             }
-            if (e->k == EArrToAddress)
+            if (e->k == EArrToAddress) {
+                llvm::errs( ) << "e->arr3->ty=" << e->arr3->ty << '\n';
                 return e->ty = context.getPointerType(e->arr3->ty), e;
+            }
             if (e->ty->hasTag(TYREGISTER))
                 warning(loc, "taking address of register variable");
             if (e->k == EUnary && e->uop == AddressOf && e->ty->p->getKind() == TYFUNCTION) {
@@ -3179,8 +3187,6 @@ ARGV_OK:;
                         return expectRB(getLoc()), nullptr;
                     location_t endLoc = getLoc();
                     consume();
-                    if (e->k == EArrToAddress && e->ty->p->isVLA())
-                        return ENEW(SizeofExpr) {.ty = context.getSize_t(), .theType = e->ty->p, .sizeof_loc_begin = loc, .sizeof_loc_end = endLoc};
                     return wrap(context.getSize_t(),
                                 ConstantInt::get(irgen.ctx, APInt(context.getSize_tBitWidth(), getsizeof(ty))), loc,
                                 endLoc);
@@ -3191,18 +3197,11 @@ ARGV_OK:;
                     return expectRB(getLoc()), nullptr;
                 location_t endLoc = getLoc();
                 consume();
-                if (e->k == EArrToAddress && e->ty->p->isVLA())
-                    return ENEW(SizeofExpr) {.ty = context.getSize_t(), .theType = e->ty->p, .sizeof_loc_begin = loc, .sizeof_loc_end = endLoc};
-                return wrap(context.getSize_t(),
-                            ConstantInt::get(irgen.ctx, APInt(context.getSize_tBitWidth(), getsizeof(e))), loc, endLoc);
+                return getsizeofEx(e, loc, endLoc);
             }
             if (!(e = unary_expression()))
                 return nullptr;
-            if (e->k == EArrToAddress && e->ty->p->isVLA())
-                return ENEW(SizeofExpr) {.ty = context.getSize_t(), .theType = e->ty->p, .sizeof_loc_begin = loc, .sizeof_loc_end = e->getEndLoc()};
-            return wrap(context.getSize_t(),
-                        ConstantInt::get(irgen.ctx, APInt(context.getSize_tBitWidth(), getsizeof(e))), loc,
-                        e->getEndLoc());
+            return getsizeofEx(e, loc, e->getEndLoc());
         }
         case K_Alignof: {
             location_t loc = getLoc();

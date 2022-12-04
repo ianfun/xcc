@@ -4,7 +4,7 @@ void* vla(int N) {
 }
 void * vla2(int N) {
 	int array[N];
-	return &array + 1;
+	return &array + 20;
 }
 void *array() {
 	int arr[5];
@@ -17,4 +17,12 @@ void *array2() {
 unsigned long long vla3(int N) {
 	int array[N];
 	return sizeof(array);
+}
+unsigned index(unsigned a) {
+	int vla[a];
+	return vla[a - 1];
+}
+unsigned long long diff(unsigned a) {
+	int vla[a];
+	return (&vla + 1) - &vla;
 }
