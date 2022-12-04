@@ -155,6 +155,7 @@ struct IRGen : public DiagnosticHelper {
     llvm::StructType *_complex_float, *_complex_double;
     location_t debugLoc;
     DenseMap<CType, llvm::FunctionType *> function_type_cache{};
+    DenseMap<Expr, llvm::Value*> vla_size_map{};
 
     inline void store(llvm::Value *p, llvm::Value *v) { (void)B.CreateStore(v, p); }
     inline llvm::LoadInst *load(llvm::Value *p, llvm::Type *t) {
@@ -295,15 +296,21 @@ struct IRGen : public DiagnosticHelper {
             buf[i] = wrap3(ty->params[i].ty);
         return di->createSubroutineType(di->getOrCreateTypeArray(ArrayRef<llvm::Metadata *>(buf, L)));
     }
-    auto getSizeInBits(llvm::Type *ty) { return layout->getTypeSizeInBits(ty); }
-    auto getSizeInBits(CType ty) { return getSizeInBits(wrap2(ty)); }
-    auto getSizeInBits(Expr e) { return getSizeInBits(e->ty); }
-    auto getsizeof(llvm::Type *ty) { return layout->getTypeStoreSize(ty); }
-    auto getsizeof(CType ty) { return getsizeof(wrap2(ty)); }
-    auto getsizeof(Expr e) { return getsizeof(e->ty); }
-    auto getAlignof(llvm::Type *ty) { return layout->getPrefTypeAlign(ty).value(); }
-    auto getAlignof(CType ty) { return getAlignof(wrap2(ty)); }
-    auto getAlignof(Expr e) { return getAlignof(e->ty); }
+    uint64_t getSizeInBits(llvm::Type *ty) { return layout->getTypeSizeInBits(ty); }
+    uint64_t getSizeInBits(CType ty) { return getSizeInBits(wrap2(ty)); }
+    uint64_t getSizeInBits(Expr e) { return getSizeInBits(e->ty); }
+    uint64_t getsizeof(llvm::Type *ty) { return layout->getTypeStoreSize(ty); }
+    uint64_t getsizeof(CType ty) { 
+        assert((!ty->isVLA()) && "VLA should handled in other case");
+        const auto k = ty->getKind();
+        if (ty->isVoid() || k == TYFUNCTION)
+            return 1;
+        return getsizeof(wrap2(ty)); 
+    }
+    uint64_t getsizeof(Expr e) { return getsizeof(e->ty); }
+    uint64_t getAlignof(llvm::Type *ty) { return layout->getPrefTypeAlign(ty).value(); }
+    uint64_t getAlignof(CType ty) { return getAlignof(wrap2(ty)); }
+    uint64_t getAlignof(Expr e) { return getAlignof(e->ty); }
     llvm::MDString *mdStr(StringRef str) { return llvm::MDString::get(ctx, str); }
     llvm::MDNode *mdNode(llvm::Metadata *m) { return llvm::MDNode::get(ctx, {m}); }
     llvm::MDNode *mdNode(ArrayRef<llvm::Metadata *> m) { return llvm::MDNode::get(ctx, m); }
@@ -725,7 +732,8 @@ struct IRGen : public DiagnosticHelper {
             this->labels.clear();
             this->currentfunction = nullptr;
         } break;
-        case SReturn: B.CreateRet(s->ret ? gen(s->ret) : nullptr); break;
+        case SReturn:
+            B.CreateRet(s->ret ? gen(s->ret) : nullptr); break;
         case SDeclOnly:
             if (options.g)
                 (void)wrap3Noqualified(s->decl);
@@ -818,16 +826,22 @@ struct IRGen : public DiagnosticHelper {
                                             GV->addDebugInfo(gve);
                                         }*/
                 } else {
-                    llvm::Type *ty = wrap(varty);
-                    llvm::AllocaInst *val =
-                        new llvm::AllocaInst(ty, layout->getAllocaAddrSpace(), static_cast<llvm::Value *>(nullptr),
-                                             layout->getPrefTypeAlign(ty), name->getKey());
-                    if (!varty->isVLA()) {
-                        // important!
-                        // Move allocas at entry block to prevent memory leak(re-alloca variables in loop)
-                        // for variable-length-array types, they must be dynamic allocated
+                    bool isVLA = false;
+                    llvm::Value *alloca_size = nullptr;
+                    if (LLVM_UNLIKELY(varty->isVLA())) {
                         // llvm.stackrestore()
                         // llvm.stacksave()
+                        isVLA = true;
+                        alloca_size = genVLAExpr(varty);
+                        varty = varty->vla_arraytype;
+                    }
+                    llvm::Type *ty = wrap(varty);
+                    llvm::AllocaInst *val =
+                        new llvm::AllocaInst(ty, layout->getAllocaAddrSpace(), alloca_size,
+                                             layout->getPrefTypeAlign(ty), name->getKey());
+                    if (LLVM_UNLIKELY(isVLA)) {
+                        B.Insert(val);
+                    } else {
                         auto &instList = currentfunction->getEntryBlock().getInstList();
                         instList.insert(allocaInsertPt, val);
                     }
@@ -873,6 +887,7 @@ struct IRGen : public DiagnosticHelper {
             auto ty = wrap(e->obj->ty);
             return B.CreateStructGEP(ty, basep, e->idx);
         }
+        case EBitCast: return getAddress(e->src);
         case EUnary:
             switch (e->uop) {
             case AddressOf: return getAddress(e->uoperand);
@@ -913,10 +928,22 @@ struct IRGen : public DiagnosticHelper {
             llvm_unreachable("");
         }
     }
+    llvm::Value *genVLAExpr(Expr e) {
+        auto it = vla_size_map.insert(std::make_pair(e, nullptr));
+        if (it.second)
+            it.first->second = gen(e);
+        return it.first->second;
+    }
+    llvm::Value *genVLAExpr(CType ty) {
+        assert(ty->isVLA());
+        return genVLAExpr(ty->vla_expr);
+    }
     llvm::Value *gen(Expr e) {
         emitDebugLocation(e);
         switch (e->k) {
         case EConstant: return e->C;
+        case EBitCast:
+            return gen(e->src);
         case EConstantArraySubstript:
             return llvm::ConstantExpr::getInBoundsGetElementPtr(wrap(e->ty->p), e->carray,
                                                                 ConstantInt::get(ctx, e->cidx));
@@ -1160,19 +1187,42 @@ BINOP_ATOMIC_RMW:
             case SSub: return B.CreateNSWSub(lhs, rhs);
             case SMul: return B.CreateNSWMul(lhs, rhs);
             case PtrDiff: {
+                CType target = e->lhs->ty;
+
+                lhs = B.CreatePtrToInt(lhs, intptrTy);
+                rhs = B.CreatePtrToInt(rhs, intptrTy);
                 auto sub = B.CreateSub(lhs, rhs);
-                auto s = getsizeof(e->lhs->castval->ty->p);
-                if (s != 1) {
-                    auto c = llvm::ConstantInt::get(intptrTy, s);
-                    return B.CreateExactSDiv(sub, c);
-                }
+
+                if (LLVM_UNLIKELY(target->isVLA()))
+                    return B.CreateExactSDiv(sub, genVLAExpr(target));
+
+                uint64_t s = getsizeof(target);
+                if (s != 1)
+                    return B.CreateExactSDiv(sub, llvm::ConstantInt::get(intptrTy, s));
                 return sub;
             }
             case SAddP:
-                // getelementptr treat operand as signed, so we need to prmote to intptr type
-                if (!e->rhs->ty->isSigned())
-                    rhs = B.CreateZExt(rhs, intptrTy);
-                return B.CreateInBoundsGEP(wrap(e->ty->p), lhs, {rhs});
+            {
+                CType target = e->ty->p;
+                if (LLVM_UNLIKELY(target->isVLA())) {
+                    llvm::Value *vla_size = genVLAExpr(target);
+                    if (const ConstantInt *CI = dyn_cast<ConstantInt>(rhs)) {
+                        if (CI->isZero())
+                            return rhs;
+                        if (CI->getLimitedValue() == 1) {
+                            rhs = vla_size;
+                            goto FALLBACK_OK;
+                        }
+                    }
+                    rhs = B.CreateNSWMul(vla_size, rhs);
+                    FALLBACK_OK:
+                    target = target->vla_arraytype;
+                }
+                if (const ConstantInt *CI = dyn_cast<ConstantInt>(rhs)) {
+                    if (CI->isZero()) return lhs;
+                }
+                return B.CreateInBoundsGEP(wrap(target), lhs, {rhs});
+            }
             case Complex_CMPLX: return make_complex_pair(e->ty, lhs, rhs);
             case EQ: pop = static_cast<unsigned>(llvm::CmpInst::ICMP_EQ); goto BINOP_ICMP;
             case NE: pop = static_cast<unsigned>(llvm::CmpInst::ICMP_NE); goto BINOP_ICMP;
@@ -1318,6 +1368,11 @@ BINOP_SHIFT:
             phi->addIncoming(left, iftrue);
             phi->addIncoming(right, iffalse);
             return phi;
+        }
+        case ESizeof:
+        {
+            assert(e->ty->isVLA());
+            return genVLAExpr(e->theType);
         }
         case ECast: return B.CreateCast(getCastOp(e->castop), gen(e->castval), wrap(e->ty));
         case ECall: {

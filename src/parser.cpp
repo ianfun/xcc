@@ -71,7 +71,7 @@ struct Parser : public EvalHelper {
     IRGen &irgen;
     Stmt InsertPt = nullptr;
     bool sreachable;
-    location_t unreachable_reason = 0, current_stmt_loc = 0;
+    location_t unreachable_reason = 0, current_stmt_loc = 0, current_declator_loc = 0;
     Expr intzero, intone, size_t_one, cfalse, ctrue;
     StringPool string_pool;
     llvm::ConstantPointerNull *null_ptr;
@@ -276,7 +276,7 @@ struct Parser : public EvalHelper {
                                    });
     }
     // function
-    size_t putsymtype2(IdentRef Name, CType yt, location_t full_loc) {
+    size_t putsymtype2(IdentRef Name, CType yt, location_t full_loc, bool isDefinition) {
         CType base = yt->ret;
         if (base->getKind() == TYARRAY)
             type_error(full_loc, "function cannot return array");
@@ -289,6 +289,10 @@ struct Parser : public EvalHelper {
         size_t idx;
         auto it = sema.typedefs.getSymInCurrentScope(Name, idx);
         if (it) {
+            if ((it->tags & ASSIGNED) && isDefinition) {
+                type_error(full_loc, "redefinition of function %I", Name);
+                note(it->loc, "previous declaration of %I was here", Name);
+            }
             if (!compatible(yt, it->ty)) {
                 type_error(full_loc, "conflicting types for function declaration %I", Name);
             } else if (!it->ty->ret->hasTag(TYSTATIC) && base->hasTag(TYSTATIC)) {
@@ -299,7 +303,7 @@ struct Parser : public EvalHelper {
             }
         } else {
             idx = sema.typedefs.putSym(
-                Name, Variable_Info{.ty = yt, .loc = full_loc, .tags = ASSIGNED}); // function never undefined
+                Name, Variable_Info{.ty = yt, .loc = full_loc, .tags =  static_cast<uint8_t>(isDefinition ? ASSIGNED : 0)}); // function never undefined
         }
         return idx;
     }
@@ -308,7 +312,7 @@ struct Parser : public EvalHelper {
         assert(Name && "missing a Name to put");
         assert(yt && "missing a type to put");
         if (yt->getKind() == TYFUNCTION)
-            return putsymtype2(Name, yt, full_loc);
+            return putsymtype2(Name, yt, full_loc, false);
         size_t idx;
         auto it = sema.typedefs.getSymInCurrentScope(Name, idx);
         if (it) {
@@ -674,9 +678,7 @@ PTR_CAST:
                             e->getEndLoc());
             CType ty = context.make(e->ty->del(TYIMAGINARY | TYCOMPLEX));
             CType ty2 = context.make(to->del(TYCOMPLEX | TYIMAGINARY));
-            Expr e2 = context.clone(e);
-            e2->ty = ty;
-            Expr res = castto(e2, ty2);
+            Expr res = castto(bit_cast(e, ty), ty2);
             if (to->isImaginary())
                 return res;
             return complex_pair(wrap(to, llvm::Constant::getNullValue(irgen.wrapNoComplexScalar(ty2)), e->getBeginLoc(),
@@ -974,17 +976,12 @@ PTR_CAST:
         case EMemberAccess:
         case EVar:
         case EConstant:
+        case EBitCast:
         case EArrToAddress:
+        case ESizeof:
         case EConstantArraySubstript: return e;
         }
         llvm_unreachable("bad expr kind");
-    }
-    void make_ptr_arith(Expr &e) {
-        assert(e->ty->getKind() == TYPOINTER && "expect a pointer");
-        if (e->ty->p->hasTag(TYVOID) || (e->k == EUnary && e->uop == AddressOf && e->ty->p->getKind() == TYFUNCTION)) {
-            e = context.clone(e);
-            e->ty = context.getChar();
-        }
     }
     Expr make_add_pointer(Expr rhs, Expr lhs) {
         Expr ptrPart = lhs;
@@ -993,11 +990,10 @@ PTR_CAST:
             ptrPart = rhs;
             intPart = lhs;
         }
-        if (!checkInteger(intPart->ty)) {
+        if (!(intPart->ty->getKind() == TYPRIM && intPart->ty->isInteger())) {
             type_error(lhs->getBeginLoc(), "integer type expected") << rhs->getSourceRange() << lhs->getSourceRange();
             return ptrPart;
         }
-        make_ptr_arith(ptrPart);
         if (intPart->k == EConstant) {
             if (auto CI = dyn_cast<ConstantInt>(intPart->C)) {
                 APInt offset = intPart->ty->isSigned() ? CI->getValue().sextOrTrunc(irgen.pointerSizeInBits)
@@ -1023,7 +1019,12 @@ PTR_CAST:
                 }
             }
         }
-        return binop(ptrPart, SAddP, intPart, ptrPart->ty);
+        // getelementptr treat operand as signed, so we need to prmote to intptr type
+        intPart = int_cast(intPart, context.getSize_t());
+        CType pointer_ty = ptrPart->ty;
+        if (pointer_ty->p->isVoid() || pointer_ty->p->getKind() == TYFUNCTION)
+            pointer_ty = context.stringty;
+        return binop(ptrPart, SAddP, intPart, pointer_ty);
     }
     void make_add(Expr &result, Expr &r, location_t opLoc) {
         if (result->ty->getKind() == TYPOINTER || r->ty->getKind() == TYPOINTER) {
@@ -1043,12 +1044,10 @@ PTR_CAST:
                     make_add(result, r, opLoc);
                     return;
                 }
-                Expr e2 = context.clone(result);
-                e2->ty = context.getImaginaryElementType(e2->ty);
+                Expr e2 = bit_cast(result, context.getImaginaryElementType(result->ty));
                 // imag + imag => imag
                 if (r->ty->isImaginary()) {
-                    Expr e3 = context.clone(r);
-                    e3->ty = context.getImaginaryElementType(e3->ty);
+                    Expr e3 = bit_cast(r, context.getImaginaryElementType(r->ty));
                     make_add(e2, e3, opLoc);
                     result = bit_cast(e2, context.make(e2->ty->getTags() | TYIMAGINARY));
                     return;
@@ -1065,8 +1064,7 @@ PTR_CAST:
                 make_add(result, r, opLoc);
                 return;
             }
-            Expr e2 = context.clone(r);
-            e2->ty = context.getImaginaryElementType(e2->ty);
+            Expr e2 = bit_cast(r, context.getImaginaryElementType(r->ty));
             // real + imag => complex
             conv(result, e2);
             return (void)(result = complex_pair(result, e2));
@@ -1173,9 +1171,8 @@ PTR_CAST:
         bool p2 = r->ty->getKind() == TYPOINTER;
         if (p1 && p2) {
             if (!compatible(result->ty->p, r->ty->p))
-                warning(opLoc, "incompatible type when substract two pointers");
-            CType ty = context.getPtrDiff_t();
-            result = binop(make_cast(result, PtrToInt, ty), PtrDiff, make_cast(r, PtrToInt, ty), ty);
+                warning(opLoc, "substract two pointers of incompatible types");
+            result = binop(result, PtrDiff, r, context.getPtrDiff_t());
             return;
         }
         if (p1 || p2) {
@@ -1200,12 +1197,10 @@ PTR_CAST:
                     make_sub(result, r, opLoc);
                     return;
                 }
-                Expr e2 = context.clone(result);
-                e2->ty = context.getImaginaryElementType(e2->ty);
+                Expr e2 = bit_cast(result, context.getImaginaryElementType(result->ty));
                 // imag - imag => imag
                 if (r->ty->isImaginary()) {
-                    Expr e3 = context.clone(r);
-                    e3->ty = context.getImaginaryElementType(e3->ty);
+                    Expr e3 = bit_cast(r, context.getImaginaryElementType(r->ty));
                     make_sub(e2, e3, opLoc);
                     result = bit_cast(e2, context.tryGetImaginaryTypeFromNonImaginary(e2->ty));
                     return;
@@ -1229,8 +1224,7 @@ PTR_CAST:
                 make_sub(result, r, opLoc);
                 return;
             }
-            Expr e2 = context.clone(r);
-            e2->ty = context.getImaginaryElementType(e2->ty);
+            Expr e2 = bit_cast(r, context.getImaginaryElementType(r->ty));
             // real - imag => complex
             // e.g, 4 - 3i
             conv(result, e2);
@@ -1443,9 +1437,7 @@ NOT_CONSTANT:
         result = binop(result, result->ty->isSigned() ? AShr : Shr, r, result->ty);
     }
     Expr bit_cast(Expr e, CType to) {
-        Expr r = context.clone(e);
-        r->ty = to;
-        return r;
+        return ENEW(BitCastExpr) {.ty = to, .src = e};
     }
     void make_bitop(Expr &result, Expr &r, BinOp op, location_t opLoc) {
         checkInteger(result, r);
@@ -1533,8 +1525,7 @@ ONE : {
                 // imag * real => imag
                 result = bit_cast(result, context.getImaginaryElementType(result->ty));
                 make_mul(result, r, opLoc);
-                result = context.clone(result);
-                result->ty = context.make(result->ty->getTags() | TYIMAGINARY);
+                result = bit_cast(result, context.make(result->ty->getTags() | TYIMAGINARY));
                 return;
             }
             assert(r->ty->isImaginary());
@@ -1548,8 +1539,7 @@ ONE : {
             // real * imag => imag
             Expr tmp = bit_cast(r, context.getImaginaryElementType(r->ty));
             make_mul(result, tmp, opLoc);
-            result = context.clone(result);
-            result->ty = context.make(result->ty->getTags() | TYIMAGINARY);
+            result = bit_cast(result, context.make(result->ty->getTags() | TYIMAGINARY));
             return;
         }
         conv(result, r);
@@ -1663,8 +1653,7 @@ ZERO:
                 // imag / real => imag
                 result = bit_cast(r, context.getImaginaryElementType(r->ty));
                 make_div(result, r, opLoc);
-                result = context.clone(result);
-                result->ty = context.make(result->ty->getTags() | TYIMAGINARY);
+                result = bit_cast(result, context.make(result->ty->getTags() | TYIMAGINARY));
                 return;
             }
             assert(r->ty->isImaginary());
@@ -1678,8 +1667,7 @@ ZERO:
             // real / imag => imag
             Expr tmp = bit_cast(r, context.getImaginaryElementType(r->ty));
             make_div(result, tmp, opLoc);
-            result = context.clone(result);
-            result->ty = context.make(result->ty->getTags() | TYIMAGINARY);
+            result = bit_cast(result, context.make(result->ty->getTags() | TYIMAGINARY));
             return;
         }
         conv(result, r);
@@ -2410,6 +2398,7 @@ BREAK:
     Declator direct_declarator(CType base, enum DeclaratorFlags flags = Direct) {
         switch (l.tok.tok) {
         case TIdentifier: {
+            current_declator_loc = getLoc();
             IdentRef name;
             if (flags == Abstract)
                 return Declator();
@@ -2430,8 +2419,7 @@ BREAK:
             st2 = direct_declarator_end(base, st.name);
             if (!st2.ty)
                 return Declator();
-            memcpy(reinterpret_cast<void *>(dummy), reinterpret_cast<const void *>(st2.ty),
-                   ctype_size_map[st2.ty->getKind()]);
+            memcpy(dummy, st2.ty, ctype_size_map[st2.ty->getKind()]);
             return st;
         }
         default:
@@ -2443,6 +2431,19 @@ BREAK:
     Declator direct_declarator_end(CType base, IdentRef name) {
         switch (l.tok.tok) {
         case TLSquareBrackets: {
+            if (base->getKind() == TYFUNCTION) {
+                if (name)
+                    type_error(current_declator_loc, "declaration of %I as array of functions", name);
+                else
+                    type_error(current_declator_loc, "declaration of type name as array of functions");
+            } else if (base->isVoid()) {
+                if (name)
+                    type_error(current_declator_loc, "declaration of %I as array of voids", name);
+                else
+                    type_error("declaration of type name as array of voids");
+            } else if (base->getKind() == TYINCOMPLETE) {
+                type_error("array type has incomplete element type");
+            }
             CType ty = TNEW(ArrayType){.arrtype = base, .hassize = false, .arrsize = 0};
             ty->setKind(TYARRAY);
             consume();
@@ -2469,7 +2470,8 @@ BREAK:
                 ty->hassize = true;
                 ty->arrsize = try_eval(e, ok);
                 if (!ok) {
-                    ty = TNEW(VlaType) {.vla_arraytype = base, .vla_expr = e};
+                    ty = TNEW(VlaType) {.vla_arraytype = base, .vla_expr = int_cast(e, context.getSize_t())};
+                    ty->setKind(TYVLA);
                 }
                 if (l.tok.tok != TRSquareBrackets)
                     return expect(getLoc(), "]"), Declator();
@@ -2666,6 +2668,7 @@ BREAK:
             if (!base)
                 return expect(getLoc(), "declaration-specifiers"), false;
             location_t full_loc = getLoc();
+            current_declator_loc = full_loc;
             Declator nt = declarator(base, Function);
             if (!nt.ty)
                 return expect(full_loc, "abstract-declarator"), false;
@@ -2834,6 +2837,7 @@ BREAK:
         result = SNEW(VarDeclStmt){.vars = xvector<VarDecl>::get()};
         for (;;) {
             location_t full_loc = getLoc();
+            current_declator_loc = full_loc;
             Declator st = declarator(base, Direct);
             if (!st.ty)
                 return;
@@ -2870,7 +2874,7 @@ ARGV_OK:;
                         }
                     }
                 }
-                size_t idx = putsymtype2(st.name, st.ty, full_loc);
+                size_t idx = putsymtype2(st.name, st.ty, full_loc, true);
                 if (!isTopLevel())
                     return (void)parse_error(full_loc, "function definition is not allowed here");
                 Stmt res = SNEW(FunctionStmt){.func_idx = idx,
@@ -2938,17 +2942,19 @@ ARGV_OK:;
                     }
                 }
             } else {
-                if (st.ty->getKind() == TYARRAY) {
-                    if (st.ty->getKind() == TYVLA && isTopLevel())
+                const auto k = st.ty->getKind();
+                if (isTopLevel() || st.ty->isGlobalStorage()) {
+                    if (k == TYVLA)
                         type_error(full_loc, "variable length array declaration not allowed at file scope");
-                    else if (st.ty->hassize == false && st.ty->isGlobalStorage()) {
-                        if (isTopLevel()) {
-                            warning(full_loc, "array %I assumed to have one element", st.name);
-                            st.ty->hassize = true, st.ty->arrsize = 1;
-                        } else {
-                            type_error(full_loc, "array size missing in %I", st.name);
-                        }
+                    else if (k == TYARRAY && (!st.ty->hassize)) {
+                        warning(full_loc, "array %I assumed to have one element", st.name);
+                        st.ty->hassize = true, st.ty->arrsize = 1;
+                    } else if (st.ty->isIncomplete()) {
+                        type_error("storage size of %I is not known", st.name);
                     }
+                } else {
+                    if (k == TYARRAY && (!st.ty->hassize))
+                        type_error(full_loc, "array size missing in %I", st.name);
                 }
             }
             if (l.tok.tok == TComma) {
@@ -3000,8 +3006,10 @@ ARGV_OK:;
         CType base;
         if (!(base = declaration_specifiers()) || l.tok.tok == TRbracket)
             return base;
+        current_declator_loc = getLoc();
         return declarator(base, Abstract).ty;
     }
+    // https://learn.microsoft.com/en-us/cpp/c-language/c-unary-operators?view=msvc-170
     Expr unary_expression() {
         location_t loc = getLoc();
         Token tok = l.tok.tok;
@@ -3062,7 +3070,7 @@ ARGV_OK:;
         case TBitAnd: {
             Expr e;
             consume();
-            if (!(e = expression()))
+            if (!(e = cast_expression()))
                 return nullptr;
             if (e->k == EConstantArray) {
                 assert(e->ty->getKind() == TYPOINTER);
@@ -3077,10 +3085,8 @@ ARGV_OK:;
             }
             if (e->k == EArrToAddress)
                 return e->ty = context.getPointerType(e->arr3->ty), e;
-            if (e->ty->getKind() == TYBITFIELD)
-                return type_error(loc, "cannot take address of bit-field"), e;
             if (e->ty->hasTag(TYREGISTER))
-                return type_error(loc, "take address of register variable"), e;
+                warning(loc, "taking address of register variable");
             if (e->k == EUnary && e->uop == AddressOf && e->ty->p->getKind() == TYFUNCTION) {
                 e->ty = context.clone(e->ty);
                 e->ty->clearTag(TYLVALUE);
@@ -3173,6 +3179,8 @@ ARGV_OK:;
                         return expectRB(getLoc()), nullptr;
                     location_t endLoc = getLoc();
                     consume();
+                    if (e->k == EArrToAddress && e->ty->p->isVLA())
+                        return ENEW(SizeofExpr) {.ty = context.getSize_t(), .theType = e->ty->p, .sizeof_loc_begin = loc, .sizeof_loc_end = endLoc};
                     return wrap(context.getSize_t(),
                                 ConstantInt::get(irgen.ctx, APInt(context.getSize_tBitWidth(), getsizeof(ty))), loc,
                                 endLoc);
@@ -3183,11 +3191,15 @@ ARGV_OK:;
                     return expectRB(getLoc()), nullptr;
                 location_t endLoc = getLoc();
                 consume();
+                if (e->k == EArrToAddress && e->ty->p->isVLA())
+                    return ENEW(SizeofExpr) {.ty = context.getSize_t(), .theType = e->ty->p, .sizeof_loc_begin = loc, .sizeof_loc_end = endLoc};
                 return wrap(context.getSize_t(),
                             ConstantInt::get(irgen.ctx, APInt(context.getSize_tBitWidth(), getsizeof(e))), loc, endLoc);
             }
             if (!(e = unary_expression()))
                 return nullptr;
+            if (e->k == EArrToAddress && e->ty->p->isVLA())
+                return ENEW(SizeofExpr) {.ty = context.getSize_t(), .theType = e->ty->p, .sizeof_loc_begin = loc, .sizeof_loc_end = e->getEndLoc()};
             return wrap(context.getSize_t(),
                         ConstantInt::get(irgen.ctx, APInt(context.getSize_tBitWidth(), getsizeof(e))), loc,
                         e->getEndLoc());
@@ -3207,7 +3219,7 @@ ARGV_OK:;
                               ConstantInt::get(irgen.ctx, APInt(context.getSize_tBitWidth(), getAlignof(ty))), loc,
                               getLoc());
             } else {
-                Expr e = constant_expression();
+                Expr e = unary_expression();
                 if (!e)
                     return nullptr;
                 result =
@@ -3596,6 +3608,11 @@ NEXT:
                     result = unary(ENEW(VarExpr){.ty = ty, .sval = idx, .varName = sym, .varLoc = loc}, AddressOf,
                                    context.getPointerType(ty));
                     break;
+                case TYVLA:
+                    result = ENEW(ArrToAddressExpr){
+                        .ty = context.getPointerType(ty->vla_arraytype),
+                        .arr3 = ENEW(VarExpr){.ty = ty, .sval = idx, .varName = sym, .varLoc = loc}};
+                    break;
                 case TYARRAY:
                     result = ENEW(ArrToAddressExpr){
                         .ty = context.getPointerType(ty->arrtype),
@@ -3912,10 +3929,8 @@ CONTINUE:;
     }
     void make_deref(Expr &e, location_t loc) {
         assert(e->ty->getKind() == TYPOINTER && "bad call to make_deref: expect a pointer");
-        if ((e->ty->p->getKind() == TYINCOMPLETE) || e->ty->p->isVoid()) {
-            type_error(loc, "dereference from incomplete/void type: %T", e->ty);
-            return;
-        }
+        if (e->ty->p->isIncomplete())
+            return (void)type_error(loc, "dereference from incomplete/void type: %T", e->ty);
         if (e->k == EConstantArraySubstript) {
             uint64_t i = e->cidx.getLimitedValue();
             llvm::Constant *C = e->carray->getInitializer();

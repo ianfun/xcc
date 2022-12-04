@@ -15,7 +15,9 @@ enum ExprKind: uint8_t {
   EStruct,
   EMemberAccess,
   EArrToAddress,
-  EPostFix
+  EPostFix,
+  ESizeof,
+  EBitCast
 };
 struct OpaqueExpr {
 OpaqueExpr()=delete;
@@ -114,6 +116,14 @@ union {
       enum PostFixOp pop;
       Expr poperand;
       location_t postFixEndLoc;
+    };
+    struct {
+      CType theType;
+      location_t sizeof_loc_begin;
+      location_t sizeof_loc_end;
+    };
+    struct {
+      Expr src;
     };
 };
 };
@@ -254,6 +264,22 @@ struct PostFixExpr {
     location_t postFixEndLoc;
   };
 };
+struct SizeofExpr {
+  enum ExprKind k=ESizeof;
+  CType ty;
+  struct {
+    CType theType;
+    location_t sizeof_loc_begin;
+    location_t sizeof_loc_end;
+  };
+};
+struct BitCastExpr {
+  enum ExprKind k=EBitCast;
+  CType ty;
+  struct {
+    Expr src;
+  };
+};
 static uint8_t expr_size_map[] = {
     sizeof(ConstantExpr),
     sizeof(BinExpr),
@@ -270,6 +296,8 @@ static uint8_t expr_size_map[] = {
     sizeof(StructExpr),
     sizeof(MemberAccessExpr),
     sizeof(ArrToAddressExpr),
-    sizeof(PostFixExpr)
+    sizeof(PostFixExpr),
+    sizeof(SizeofExpr),
+    sizeof(BitCastExpr)
 };
-static constexpr size_t expr_max_size = std::max({sizeof(ConstantExpr), sizeof(BinExpr), sizeof(UnaryExpr), sizeof(ConstantArrayExpr), sizeof(ConstantArraySubstriptExpr), sizeof(VoidExpr), sizeof(VarExpr), sizeof(ConditionExpr), sizeof(CastExpr), sizeof(CallExpr), sizeof(SubscriptExpr), sizeof(ArrayExpr), sizeof(StructExpr), sizeof(MemberAccessExpr), sizeof(ArrToAddressExpr), sizeof(PostFixExpr)});
+static constexpr size_t expr_max_size = std::max({sizeof(ConstantExpr), sizeof(BinExpr), sizeof(UnaryExpr), sizeof(ConstantArrayExpr), sizeof(ConstantArraySubstriptExpr), sizeof(VoidExpr), sizeof(VarExpr), sizeof(ConditionExpr), sizeof(CastExpr), sizeof(CallExpr), sizeof(SubscriptExpr), sizeof(ArrayExpr), sizeof(StructExpr), sizeof(MemberAccessExpr), sizeof(ArrToAddressExpr), sizeof(PostFixExpr), sizeof(SizeofExpr), sizeof(BitCastExpr)});

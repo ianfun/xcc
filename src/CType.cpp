@@ -89,7 +89,7 @@ struct OpaqueCType {
     bool isComplex() const { return tags & TYCOMPLEX; }
     bool isImaginary() const { return tags & TYIMAGINARY; }
     bool isBool() const { return getKind() == TYPRIM && isInteger() && getIntegerKind().isBool(); }
-    bool isVLA() const { return false; }
+    bool isVLA() const { return getKind() == TYVLA; }
     bool basic_equals(const_CType other) const {
         // two types are equal
         // the align are equal
@@ -267,4 +267,14 @@ struct OpaqueCType {
         if (isInteger())
             return OS << getIntegerKind().show(isSigned());
         return OS << getFloatKind().show();
+    }
+    bool isIncomplete() const {
+        const auto kind = getKind();
+        if (kind == TYINCOMPLETE)
+            return true;
+        if (isVoid())
+            return true;
+        if (kind == TYARRAY && hassize == false)
+            return true;
+        return false;
     }

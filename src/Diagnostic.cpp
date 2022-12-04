@@ -247,7 +247,7 @@ struct DiagnosticBuilder {
     DiagnosticsEngine &engine;
     bool Emited;
     DiagnosticBuilder(const DiagnosticBuilder &other) : engine{other.engine}, Emited{other.Emited} {};
-    inline DiagnosticBuilder(DiagnosticsEngine &engine) : engine{engine}, Emited{false} { }
+    DiagnosticBuilder(DiagnosticsEngine &engine) : engine{engine}, Emited{false} { }
     ~DiagnosticBuilder() {
         if (!Emited)
             engine.EmitCurrentDiagnostic();
@@ -271,21 +271,21 @@ struct DiagnosticHelper {
     unsigned getNumErrors() const { return engine.getNumErrors(); }
     unsigned getNumWarnings() const { return engine.getNumWarnings(); }
 #define DIAGNOSTIC_HANDLER(HANDLER, LEVEL)                                                                             \
-    template <typename... Args> DiagnosticBuilder HANDLER(const char *msg, const Args &...args) {                      \
+    template <typename... Args> [[maybe_unused]] DiagnosticBuilder HANDLER(const char *msg, const Args &...args) {                      \
         engine.CurrentDiagnostic.reset(msg, LEVEL);                                                                    \
         engine.CurrentDiagnostic.write(args...);                                                                       \
         return DiagnosticBuilder(engine);                                                                              \
     }                                                                                                                  \
-    DiagnosticBuilder HANDLER(const char *msg) {                                                                       \
+    [[maybe_unused]] DiagnosticBuilder HANDLER(const char *msg) {                                                                       \
         engine.CurrentDiagnostic.reset(msg, LEVEL);                                                                    \
         return DiagnosticBuilder(engine);                                                                              \
     }                                                                                                                  \
-    template <typename... Args> DiagnosticBuilder HANDLER(location_t loc, const char *msg, const Args &...args) {      \
+    template <typename... Args> [[maybe_unused]] DiagnosticBuilder HANDLER(location_t loc, const char *msg, const Args &...args) {      \
         engine.CurrentDiagnostic.reset(msg, LEVEL, loc);                                                               \
         engine.CurrentDiagnostic.write(args...);                                                                       \
         return DiagnosticBuilder(engine);                                                                              \
     }                                                                                                                  \
-    template <typename... Args> DiagnosticBuilder HANDLER(location_t loc, const char *msg) {                           \
+    template <typename... Args> [[maybe_unused]] DiagnosticBuilder HANDLER(location_t loc, const char *msg) {                           \
         engine.CurrentDiagnostic.reset(msg, LEVEL, loc);                                                               \
         return DiagnosticBuilder(engine);                                                                              \
     }
@@ -306,7 +306,7 @@ struct DiagnosticHelper {
 };
 struct EvalHelper : public DiagnosticHelper {
     EvalHelper(DiagnosticsEngine &engine) : DiagnosticHelper(engine) { }
-    uint64_t force_eval(Expr e) {
+    [[nodiscard]] uint64_t force_eval(Expr e) {
         if (e->k != EConstant) {
             type_error(e->getBeginLoc(), "not a constant expression: %E", e) << e->getSourceRange();
             return 0;
@@ -320,7 +320,7 @@ struct EvalHelper : public DiagnosticHelper {
         type_error(e->getBeginLoc(), "not a integer constant: %E", e) << e->getSourceRange();
         return 0;
     }
-    uint64_t try_eval(Expr e, bool &ok) {
+    [[nodiscard]] uint64_t try_eval(Expr e, bool &ok) {
         if (e->k == EConstant) {
             if (const auto CI = dyn_cast<ConstantInt>(e->C)) {
                 if (CI->getValue().getActiveBits() > 64)
@@ -334,7 +334,7 @@ struct EvalHelper : public DiagnosticHelper {
         ok = false;
         return 0;
     }
-    bool try_eval_as_bool(Expr e, bool &res) {
+    [[nodiscard]] bool try_eval_as_bool(Expr e, bool &res) {
         if (e->k == EConstant) {
             if (const auto CI = dyn_cast<ConstantInt>(e->C)) {
                 res = !CI->isZero();

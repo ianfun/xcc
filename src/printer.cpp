@@ -2,6 +2,8 @@ raw_ostream &operator<<(llvm::raw_ostream &, const_CType);
 
 raw_ostream &operator<<(llvm::raw_ostream &OS, const_Expr e) {
     switch (e->k) {
+    case EBitCast:
+        return OS << "(bit cast to " << e->ty << ")" << e->src;
     case EConstantArraySubstript: e->carray->getInitializer()->print(OS); return OS;
     case EConstantArray: e->array->print(OS); return OS;
     case EConstant:
@@ -15,9 +17,10 @@ raw_ostream &operator<<(llvm::raw_ostream &OS, const_Expr e) {
     case EBin: return OS << '(' << e->lhs << ' ' << show(e->bop) << ' ' << e->rhs << ')';
     case EUnary: return OS << show(e->bop) << e->uoperand;
     case EVoid: return OS << e->voidexpr;
-    case EVar: return OS << e->sval;
+    case EVar: return OS << e->varName->getKey();
     case ECondition: return OS << e->cond << " ? " << e->cleft << " : " << e->cright;
-    case ECast: return OS << '(' << e->ty << ", op = " << show(e->castop) << ')' << e->castval;
+    case ECast: return OS << '(' << e->ty << ')' << e->castval;
+    case ESizeof: return OS  << "sizeof(" << e->theType << ')';
     case ECall:
         OS << e->callfunc << '(';
         if (e->callargs.empty())

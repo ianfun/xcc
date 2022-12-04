@@ -383,7 +383,7 @@ static const char *show(enum BinOp op) {
     case LogicalAnd: return "&&";
     case LogicalOr: return "||";
     case Assign: return "=";
-    case SAddP: return "+";
+    case SAddP: return "+[pointer]";
     case PtrDiff: return "-";
     case Comma: return ",";
     case Complex_CMPLX: return " + j";
@@ -837,6 +837,8 @@ location_t OpaqueExpr::getBeginLoc() const {
     if (ty->hasTag(TYPAREN))
         return *getParenLLoc();
     switch (k) {
+    case EBitCast: return src->getBeginLoc();
+    case ESizeof: return sizeof_loc_begin;
     case EVar: return varLoc;
     case EBin: return lhs->getBeginLoc();
     case EUnary: return opLoc;
@@ -860,6 +862,8 @@ location_t OpaqueExpr::getEndLoc() const {
     if (ty->hasTag(TYPAREN))
         return *getParenRLoc();
     switch (k) {
+    case EBitCast: return src->getEndLoc();
+    case ESizeof: return sizeof_loc_end;
     case EConstant: return constantEndLoc ? constantLoc : constantEndLoc;
     case EBin: return rhs->getEndLoc();
     case EUnary: return uoperand->getEndLoc();

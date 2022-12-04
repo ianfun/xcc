@@ -212,6 +212,8 @@ exprs = {
 	"EMemberAccess": ("Expr obj", "unsigned idx", "location_t memberEndLoc",),
 	"EArrToAddress": ("Expr arr3",),
 	"EPostFix": ("enum PostFixOp pop", "Expr poperand", "location_t postFixEndLoc", ),
+	"ESizeof": ("CType theType", "location_t sizeof_loc_begin", "location_t sizeof_loc_end",),
+	"EBitCast": ("Expr src",)
 }
 ctypes = {
 	"TYPRIM": (),
