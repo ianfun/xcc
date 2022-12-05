@@ -88,6 +88,10 @@ $ make all -j
 
 ## Features
 
+Dump colored AST
+
+![](ast-dump-colored.png)
+
 cdecl syntax
 
 ![](cdecl.png)
