@@ -16,7 +16,7 @@ struct Lexer : public EvalHelper {
     bool ok = true;
     char c = ' ';
     DenseMap<IdentRef, PPMacroDef *> macros;
-    Parser &parser;
+    Parser *parser;
     SourceMgr &SM;
     std::deque<TokenV> tokenq;
     std::vector<PPMacroDef *> expansion_list;
@@ -25,7 +25,7 @@ struct Lexer : public EvalHelper {
     location_t loc = 0, endLoc = 0;
     xcc_context &context;
 
-    Lexer(SourceMgr &SM, Parser &parser, xcc_context &context, DiagnosticsEngine &Diag)
+    Lexer(SourceMgr &SM, Parser *parser, xcc_context &context, DiagnosticsEngine &Diag)
         : EvalHelper{Diag}, parser{parser}, SM{SM}, context{context} { }
     location_t getLoc() const { return loc; }
     location_t getEndLoc() const { return endLoc; }

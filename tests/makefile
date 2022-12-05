@@ -15,25 +15,21 @@ LDFLAGS='-L$(LLVM_OBJ_ROOT)' -lLLVM-15 -lz -ldl -lpthread -pthread -ltinfo
 
 # Flags to link with LLD libary
 # assume you build llvm-project/LLD and `make install` in /usr/local directory
-LLDFLAGS= \
+LLDFLAGS_STATIC= \
 -L$(LLD_ROOT) \
--llldCOFF \
--llldCommon \
--llldELF \
--llldMachO \
--llldMinGW \
--llldWasm
+-lz -ldl -lpthread -pthread -ltinfo \
+/usr/local/lib/*.a
 
 # debug on/off
 DEBUG=-g -Wextra -Wno-unused-parameter -Wno-c++20-extensions # -fsanitize=address
 
 # XCC driver with LLD disabled
 mainNoLLD:
-	$(CC) main.cpp $(CXXINCS) $(CXXFLAGS) -o xcc $(DEBUG) $(LDFLAGS) $(LLDFLAGS)
+	$(CC) main.cpp $(CXXINCS) $(CXXFLAGS) -o xcc $(DEBUG) $(LDFLAGS)
 
 # XCC driver with LLD enabled
 main:
-	$(CC) -DCC_HAS_LLD main.cpp $(CXXINCS) $(CXXFLAGS) $(DEBUG) -o xcc $(LLDFLAGS)
+	$(CC) -DCC_HAS_LLD main.cpp $(CXXINCS) $(CXXFLAGS) $(DEBUG) -o xcc $(LLDFLAGS_STATIC)
 
 # test code generation
 testCodeGen:

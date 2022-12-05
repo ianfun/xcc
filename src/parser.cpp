@@ -5064,7 +5064,7 @@ ONE_CASE:
   public:
     // constructor
     Parser(SourceMgr &SM, IRGen &irgen, DiagnosticsEngine &Diag, xcc_context &theContext)
-        : EvalHelper{Diag}, l(SM, *this, theContext, Diag), context{theContext}, irgen{irgen},
+        : EvalHelper{Diag}, l(SM, this, theContext, Diag), context{theContext}, irgen{irgen},
           intzero{wrap(context.getInt(), ConstantInt::get(irgen.ctx, APInt::getZero(context.getInt()->getBitWidth())),
                        0, 0)},
           intone{wrap(context.getInt(), ConstantInt::get(irgen.ctx, APInt(context.getInt()->getBitWidth(), 1)), 0, 0)},

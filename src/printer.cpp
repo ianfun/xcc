@@ -1,32 +1,160 @@
+// clang::StringLiteral::outputString
+void printCString(raw_ostream &OS, StringRef str) {
+    OS.changeColor(raw_ostream::CYAN);
+    if (str.empty()) {
+        OS << '"';
+        goto END;
+    }
+    if (str.back() == '\0')
+        str = str.drop_back();
+    OS << '"';
+    for (const char c: str) {
+        switch (c) {
+    case '\\': OS << "\\\\"; break;
+    case '"': OS << "\\\""; break;
+    case '\a': OS << "\\a"; break;
+    case '\b': OS << "\\b"; break;
+    case '\f': OS << "\\f"; break;
+    case '\n': OS << "\\n"; break;
+    case '\r': OS << "\\r"; break;
+    case '\t': OS << "\\t"; break;
+    case '\v': OS << "\\v"; break;
+    default: 
+        if (std::isprint(c))
+            OS << c;
+        else {
+            char buf[4] = 
+            {'\\',
+                static_cast<char>('0' + ((static_cast<unsigned>(c) >> 6) & 7)),
+                static_cast<char>('0' + ((static_cast<unsigned>(c) >> 3) & 7)),
+                static_cast<char>('0' + ((static_cast<unsigned>(c) >> 0) & 7))
+            };
+            OS << buf;
+        }
+    }
+}
+END:
+    OS.resetColor();
+    OS << '"';
+}
+
 raw_ostream &operator<<(llvm::raw_ostream &, const_CType);
+
+void printConstant(const llvm::Constant *C, llvm::raw_ostream &OS) {
+    if (const ConstantInt *CI = dyn_cast<ConstantInt>(C)) {
+        OS.changeColor(raw_ostream::GREEN);
+        CI->getValue().print(OS, true);
+        OS.resetColor();
+        return;
+    }
+    if (const ConstantFP *CFP = dyn_cast<ConstantFP>(C)) {
+        OS.changeColor(raw_ostream::GREEN);
+        return CFP->getValue().print(OS);
+        OS.resetColor();
+    }
+    if (isa<llvm::ConstantAggregateZero>(C)) {
+        OS << "{0}";
+        return;
+    }
+    if (const llvm::ConstantAggregate *CAG = dyn_cast<llvm::ConstantAggregate>(C)) {
+        unsigned max = CAG->getNumOperands();
+        OS << "{";
+        for (unsigned i = 0;i < max;++i) {
+            printConstant(CAG->getOperand(i), OS);
+            if (i != max) 
+                OS << ", ";
+        }
+        OS << "}";
+        return;
+    }
+    if (const llvm::ConstantDataArray *CDA = dyn_cast<llvm::ConstantDataArray>(C)) {
+        if (CDA->isString())
+            return printCString(OS, CDA->getAsString());
+        auto T = CDA->getElementType();
+        if (T->isIntegerTy()) {
+            unsigned max = CDA->getNumElements();
+            OS << "{";
+            for (unsigned i = 0;i < max;++i) {
+                OS << CDA->getElementAsInteger(i);
+                if (i != max)
+                    OS << ", ";
+            }
+            OS << "}";
+            return;
+        }
+        if (T->isDoubleTy()) {
+            unsigned max = CDA->getNumElements();
+            OS << "{";
+            for (unsigned i = 0;i < max;++i) {
+                OS << CDA->getElementAsDouble(i);
+                if (i != max)
+                    OS << ", ";
+            }
+            OS << "}";
+            return;
+        }
+        if (T->isFloatTy()) {
+            unsigned max = CDA->getNumElements();
+            OS << "{";
+            for (unsigned i = 0;i < max;++i) {
+                OS << CDA->getElementAsFloat(i);
+                if (i != max)
+                    OS << ", ";
+            }
+            OS << "}";
+            return;
+        }
+    }
+    if (isa<llvm::ConstantPointerNull>(C)) {
+        OS.changeColor(raw_ostream::RED);
+        OS << "nullptr"; // nullptr, NULL ?
+        OS.resetColor();
+        return;
+    }
+    if (const llvm::BlockAddress *BADR = dyn_cast<llvm::BlockAddress>(C)) {
+        const llvm::BasicBlock *BB = BADR->getBasicBlock();
+        OS << "label-address " << BB->getName();
+    }
+    if (const llvm::GlobalVariable *GV = dyn_cast<llvm::GlobalVariable>(C))
+        return printConstant(GV->getInitializer(), OS);
+    C->print(OS);
+}
 
 raw_ostream &operator<<(llvm::raw_ostream &OS, const_Expr e) {
     switch (e->k) {
     case EBitCast:
-        return OS << "(bit cast to " << e->ty << ")" << e->src;
-    case EConstantArraySubstript: e->carray->getInitializer()->print(OS); return OS;
-    case EConstantArray: e->array->print(OS); return OS;
+        return OS << "(" << raw_ostream::BLUE << e->ty << raw_ostream::RESET << ")" << e->src;
+    case EConstantArraySubstript: 
+        printConstant(e->carray->getInitializer(), OS);
+        return OS;
+    case EConstantArray:
+        printConstant(e->array, OS);
+        return OS;
     case EConstant:
-        if (auto CI = dyn_cast<ConstantInt>(e->C))
-            CI->getValue().print(OS, e->ty->isSigned());
-        else if (auto CFP = dyn_cast<ConstantFP>(e->C))
-            CFP->getValue().print(OS);
-        else
-            e->C->print(OS);
+        printConstant(e->C, OS);
         return OS;
     case EBin: return OS << '(' << e->lhs << ' ' << show(e->bop) << ' ' << e->rhs << ')';
-    case EUnary: return OS << show(e->bop) << e->uoperand;
+    case EUnary:
+        if (e->uop == AddressOf && e->ty->p->getKind() == TYFUNCTION && !e->ty->hasTag(TYLVALUE))
+            return OS << e->uoperand;
+        return OS << show(e->uop) << e->uoperand;
     case EVoid: return OS << e->voidexpr;
-    case EVar: return OS << e->varName->getKey();
+    case EVar: 
+        {
+            OS.changeColor(raw_ostream::MAGENTA);
+            OS << e->varName->getKey();
+            OS.resetColor();
+            return OS;
+        }
     case ECondition: return OS << e->cond << " ? " << e->cleft << " : " << e->cright;
-    case ECast: return OS << '(' << e->ty << ')' << e->castval;
-    case ESizeof: return OS  << "sizeof(" << e->theType << ')';
+    case ECast: return OS << '(' << raw_ostream::BLUE << e->ty << raw_ostream::RESET << ')' << e->castval;
+    case ESizeof: return OS << "sizeof(" << raw_ostream::BLUE << e->theType << raw_ostream::RESET << ')';
     case ECall:
         OS << e->callfunc << '(';
         if (e->callargs.empty())
             return OS << ')';
         for (size_t i = 0; i < e->callargs.size() - 1; ++i)
-            OS << e->callargs[i] << ',';
+            OS << e->callargs[i] << ", ";
         return OS << e->callargs.back() << ')';
     case ESubscript: return OS << e->left << '[' << e->right << ']';
     case EArray:
@@ -64,7 +192,7 @@ raw_ostream &operator<<(llvm::raw_ostream &OS, const_CType ty) {
         bool isArrType = ty->p->getKind() == TYARRAY;
         if (isArrType)
             OS << '(';
-        OS << ty->p << " *";
+        OS << ty->p << "*";
         if (!str.empty())
             OS << str << ' ';
         if (isArrType)
@@ -89,14 +217,14 @@ raw_ostream &operator<<(llvm::raw_ostream &OS, const_CType ty) {
     }
     case TYFUNCTION: {
         auto str = ty->get_storage_str();
-        OS << '(' << ty->ret;
+        OS << '(' << ty->ret << ' ';
         if (ty->hasTag(TYINLINE))
-            OS << "inline" << ' ';
+            OS << "inline ";
         if (ty->hasTag(TYNORETURN))
-            OS << "_Noreturn" << ' ';
+            OS << "_Noreturn ";
         if (str.size())
             OS << str << ' ';
-        OS << " (*)(";
+        OS << "(*)(";
         if (!ty->params.empty()) {
             for (const auto &e : ty->params) {
                 OS << e.ty;
@@ -265,4 +393,162 @@ void print_cdecl(StringRef name, const_CType ty, raw_ostream &OS = llvm::errs(),
     print_cdecl(ty, OS);
     if (addNewLine)
         OS << '\n';
+}
+
+enum AST_Dump_Format {
+    AST_Default, AST_JSON
+};
+struct AstDumper {
+    llvm::raw_ostream &OS;
+    StringRef NL;
+    StringRef tab;
+    unsigned IndentLevel;
+    unsigned Indentation;
+    AstDumper(llvm::raw_ostream &OS, StringRef NL = "\n", StringRef tab = "    ", unsigned IndentLevel = 0, unsigned Indentation = 2) : OS{OS}, NL{NL}, tab{tab}, IndentLevel{IndentLevel}, Indentation{Indentation} {}
+    void printExpr(Expr e) {
+        if (e->k == EBin)
+            OS << e->lhs << ' ' << show(e->bop) << ' ' << e->rhs;
+        else
+            OS << e;
+    }
+    void Indent() {
+        for (unsigned i = 0; i < IndentLevel; ++i)
+            OS << ' ';
+    }
+    void printCType(CType ty) {
+        OS.changeColor(raw_ostream::BLUE);
+        OS << ty;
+        OS.resetColor();
+    }
+    void PrintStmt(Stmt s) {
+        IndentLevel += Indentation;
+        Indent();
+        dump(s);
+        IndentLevel -= Indentation;
+    }
+    void dump(Stmt s) {
+        switch (s->k) {
+            case SHead:
+                for (Stmt ptr = s->next; ptr; ptr = ptr->next)
+                    dump(ptr);
+                return;
+            case SCompound:
+                OS << "{" << NL;
+                IndentLevel += Indentation;
+                for (Stmt ptr = s->inner; ptr; ptr = ptr->next)
+                    PrintStmt(ptr);
+                IndentLevel -= Indentation;
+                Indent();
+                OS << "}" << NL;
+                return;
+            case SLabel:
+                OS << "%" << s->label << ':';
+                if (s->labelName)
+                    OS << " (" << s->labelName->getKey() << ")";
+                OS << NL;
+                return;
+            case SGoto:
+                OS.changeColor(raw_ostream::RED);
+                OS << "goto";
+                OS.resetColor();
+                OS << " %" << s->location << ';' << NL;
+                return;
+            case SCondJump:
+                OS.changeColor(raw_ostream::RED);
+                OS << "branch ";
+                OS.resetColor();
+                printExpr(s->test);
+                OS << " %" << s->T << ", %" << s->F << ';' << NL;
+                return;
+            case SSwitch:
+            {
+                bool isSigned = s->itest->ty->isSigned();
+                OS.changeColor(raw_ostream::RED);
+                OS << "switch";
+                OS.resetColor();
+                OS << s->itest << NL;
+                for (const SwitchCase &it: s->switchs) {
+                    OS << raw_ostream::RED << "  case " << raw_ostream::RESET;
+                    it.CaseStart->print(OS, isSigned);
+                    OS << " => %" << it.label;
+                }
+                for (const GNUSwitchCase &it: s->gnu_switchs) {
+                    OS << raw_ostream::RED << "  case " << raw_ostream::RESET;
+                    it.CaseStart->print(OS, isSigned);
+                    OS << " ... ";
+                    (*it.CaseStart + it.range).print(OS, isSigned);
+                    OS << " => %" << it.label;
+                }
+                OS << raw_ostream::RED << "  default" << raw_ostream::RESET << " =>" << s->sw_default << NL;
+            } return;
+            case SReturn:
+                OS.changeColor(raw_ostream::RED);
+                OS << "return";
+                OS.resetColor();
+                if (s->ret) {
+                    OS << ' ';
+                    printExpr(s->ret);
+                }
+                OS << ';' << NL;
+                return;
+            case SExpr:
+                printExpr(s->exprbody);
+                OS << ';' << NL;
+                return;
+            case SNoReturnCall:
+                OS << "(noreturn call) ";
+                printExpr(s->call_expr);
+                OS << ';' << NL;
+                return;
+            case SAsm:
+                OS.changeColor(raw_ostream::RED);
+                OS << "__asm__";
+                OS.resetColor();
+                OS << "(";
+                printCString(OS, s->asms.str().drop_back());
+                OS << ')' << NL;
+                return;
+            case SVarDecl:
+            {
+                size_t end = s->vars.size();
+                for (size_t i = 0;i < end;++i) {
+                    const VarDecl &it = s->vars[i];
+                    printCType(it.ty);
+                    OS << " " << raw_ostream::MAGENTA << it.name->getKey() << raw_ostream::RESET;
+                    if (it.init) {
+                        OS << " = ";
+                        printExpr(it.init);
+                    }
+                    if (i == end)
+                        OS << ";" << NL;
+                    else 
+                        (void)(OS << ',' << NL), Indent();
+                }
+            }
+            return;
+            case SFunction:
+                OS << "Function ";
+                OS.changeColor(raw_ostream::MAGENTA);
+                OS << s->funcname->getKey();
+                OS.resetColor();
+                OS << ": ";
+                printCType(s->functy);
+                OS << " (";
+                for (size_t i = 0;i < s->args.size();++i) {
+                    OS << s->args[i];
+                    if (i != s->args.size())
+                        OS << ", ";
+                }
+                OS << ")" << NL << "{" << NL;
+                PrintStmt(s->funcbody);
+                OS << NL << "}" << NL;
+                return;
+            default: break;
+        }
+    }
+};
+void dumpAst(Stmt s, enum AST_Dump_Format format = AST_Default, llvm::raw_ostream &OS = llvm::errs()) {
+    if (format == AST_Default)
+        return AstDumper(OS).dump(s);
+    llvm_unreachable("json not supported now!");
 }

@@ -668,8 +668,6 @@ typedef unsigned column_t;
 typedef unsigned fileid_t;
 typedef uint32_t location_t;
 
-static bool location_is_stdin(location_t loc) { return loc & 0xf0000000; }
-static location_t location_as_index(location_t loc) { return loc & 0x7fffffff; }
 
 static const char hexs[] = "0123456789ABCDEF";
 static char hexed(unsigned a) { return hexs[a & 0b1111]; }
@@ -678,6 +676,7 @@ struct SourceRange {
     SourceRange() : start{0}, end{0} {};
     SourceRange(location_t loc) : start{loc}, end{loc} { assert(end <= start && "attempt to construct an invalid SourceRange"); }
     SourceRange(location_t L, location_t R) : start{L}, end{R} { }
+    SourceRange(location_t start, IdentRef Name): start{start}, end{start + static_cast<location_t>(Name->getKey().size())} {}
     location_t getStart() const { return start; }
     location_t getEnd() const { return end; }
     bool contains(location_t loc) const { return loc >= start && loc <= end; }
@@ -845,9 +844,10 @@ struct GNUSwitchCase : public SwitchCase {
 };
 #include "ctypes.inc"
 #include "expressions.inc"
-#include "printer.cpp"
 #include "statements.inc"
 #include "utf8.cpp"
+#include "printer.cpp"
+
 struct ReplacedExprParen {
     enum ExprKind k = EConstant;
     CType ty;

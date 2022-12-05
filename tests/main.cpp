@@ -8,6 +8,8 @@
     #include <lld/Common/Driver.h>
 #endif
 
+using namespace xcc::driver::options;
+
 std::string xcc_getLinkerPath() {
 #if WINDOWS
     auto gcc = llvm::sys::findProgramByName("gcc");
@@ -138,13 +140,15 @@ int main(int argc_, const char **argv_)
     if (theDriver.BuildCompilation(argv, options, SM, ret))
         return ret;
 
-    auto tos = std::make_shared<xcc::TargetOptions>();
+    const auto &Args = theDriver.getArgs();
 
-    tos->Triple = options.triple.str();
+    //auto tos = std::make_shared<xcc::TargetOptions>();
 
-    auto theTarget = xcc::TargetInfo::CreateTargetInfo(tos);
+    //tos->Triple = options.triple.str();
 
-    printf("theTarget = %p\n", theTarget);
+    //auto theTarget = xcc::TargetInfo::CreateTargetInfo(tos);
+
+    //printf("theTarget = %p\n", theTarget);
     //auto target_builtins = theTarget->getTargetBuiltins();
     //for (const auto &it : target_builtins) {
     //    printf("%s(%s)\n", it.Name, it.Type);
@@ -163,12 +167,34 @@ int main(int argc_, const char **argv_)
     llvmcontext->setOpaquePointers(true);
     // set our DiagnosticHandler
     llvmcontext->setDiagnosticHandler(std::make_unique<xcc::XCCDiagnosticHandler>()); 
+    
+    if (Args.hasArg(OPT_dump_raw_tokens)) {
+        auto &OS = llvm::errs();
+        xcc::Lexer lexer(SM, nullptr, ctx, engine);
+        xcc::TokenV tok;
+        do {
+            tok = lexer.lex();
+            tok.dump(OS);
+            OS << '\n';
+        } while (tok.tok != xcc::TEOF);
+        return CC_EXIT_SUCCESS;
+    }
 
     // preparing target information and ready for code generation to LLVM IR
     xcc::IRGen ig(ctx, engine, SM, *llvmcontext, options);
 
     // create parser
     xcc::Parser parser(SM, ig, engine, ctx);
+
+    if (Args.hasArg(OPT_dump_tokens)) {
+        auto &OS = llvm::errs();
+        do {
+            parser.l.cpp();
+            parser.l.tok.dump(OS);
+            OS << '\n';
+        } while (parser.l.tok.tok != xcc::TEOF);
+        return CC_EXIT_SUCCESS;
+    }
 
     // now, parsing source files ...
     size_t num_typedefs = 0, num_tags = 0;
@@ -177,33 +203,61 @@ int main(int argc_, const char **argv_)
     if (engine.getNumErrors())
         return CC_EXIT_FAILURE;
 
-    if (theDriver.getArgs().hasArg(xcc::driver::options::OPT_fsyntax_only))
+    if (const auto *A = Args.getLastArg(OPT_ast_dump_EQ)) {
+        llvm::StringRef dump = A->getValue();
+        if (dump == "default") {
+            xcc::dumpAst(ast, xcc::AST_Default);
+        } else if (dump == "json") {
+            xcc::dumpAst(ast, xcc::AST_JSON);
+        } else {
+            theDriver.error("invalid value %R in '-dump-ast'", dump);
+        }
+    }
+    if (const auto *A = Args.getLastArg(OPT_ast_dump_all_EQ)) {
+        llvm::StringRef dump = A->getValue();
+        if (dump == "default") {
+            xcc::dumpAst(ast, xcc::AST_Default);
+        } else if (dump == "json") {
+            xcc::dumpAst(ast, xcc::AST_JSON);
+        } else {
+            theDriver.error("invalid value %R in '-dump-ast-all'", dump);
+        }
+    }
+
+    if (Args.hasArg(OPT_ast_dump) || Args.hasArg(OPT_ast_dump_all)) {
+        xcc::dumpAst(ast, xcc::AST_Default);
+    }
+
+    if (Args.hasArg(OPT_fsyntax_only))
         return CC_EXIT_SUCCESS;
 
     ig.run(ast, num_typedefs, num_tags);
 
+    if (Args.hasArg(OPT_emit_codegen_only)) 
+        return CC_EXIT_SUCCESS;
+
     // Build ASTs and convert to LLVM, discarding output
-    if (theDriver.getArgs().hasArg(xcc::driver::options::OPT_emit_llvm_only))
+    if (Args.hasArg(OPT_emit_llvm_only))
         return CC_EXIT_SUCCESS;
     
     std::error_code EC;
 
     // Build ASTs then convert to LLVM, emit .bc file
-    if (theDriver.getArgs().hasArg(xcc::driver::options::OPT_emit_llvm_bc)) {
-        std::string outputFileName = options.mainFileName;
+    if (Args.hasArg(OPT_emit_llvm_bc)) {
+        std::string outputFileName = options.mainFileName.str();
         outputFileName += ".bc";
         llvm::raw_fd_ostream OS(outputFileName, EC, llvm::sys::fs::CD_CreateAlways, llvm::sys::fs::FA_Write, llvm::sys::fs::OF_None);
         if (EC)
             goto CC_ERROR;
-        dbgprint("bitcode writting to %s\n", outputFileName.data());
+        dbgprint("bitcode writting to %s\n", outputFileName.c_str());
         llvm::WriteBitcodeToFile(*ig.module, OS);
         OS.close();
         return CC_EXIT_SUCCESS;
     }
 
     // Use the LLVM representation for assembler and object files
-    if (theDriver.getArgs().hasArg(xcc::driver::options::OPT_emit_llvm)) {
-        std::string outputFileName = options.mainFileName;
+    if (Args.hasArg(OPT_emit_llvm)) {
+        std::string outputFileName = options.mainFileName.str();
         outputFileName += ".ll";
         llvm::raw_fd_ostream OS(outputFileName, EC, llvm::sys::fs::CD_CreateAlways, llvm::sys::fs::FA_Write, llvm::sys::fs::OF_None);
         if (EC)
@@ -215,9 +269,9 @@ int main(int argc_, const char **argv_)
     }
 
     {   // default - emit object file and linkning, or emit assembly
-        xcc::driver::ToolChain TC(theDriver, options.triple, theDriver.getArgs());
-        bool assembly = theDriver.getArgs().hasArg(xcc::driver::options::OPT_S);
-        std::string outputFileName = options.mainFileName;
+        xcc::driver::ToolChain TC(theDriver, options.triple, Args);
+        bool assembly = Args.hasArg(OPT_S);
+        std::string outputFileName = options.mainFileName.str();
         outputFileName += assembly ?  ".s" : ".o";
         llvm::raw_fd_ostream OS(outputFileName, EC, llvm::sys::fs::CD_CreateAlways, llvm::sys::fs::FA_Write, llvm::sys::fs::OF_None);
         dbgprint("creating object file: %s\n", outputFileName.data());
@@ -234,7 +288,7 @@ int main(int argc_, const char **argv_)
             return CC_EXIT_SUCCESS;
 
         // Only run preprocess, compile, and assemble steps
-        if (theDriver.getArgs().hasArg(xcc::driver::options::OPT_C))
+        if (Args.hasArg(OPT_C))
             return CC_EXIT_SUCCESS;
 
         // the final phase - linking

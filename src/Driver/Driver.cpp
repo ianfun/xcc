@@ -24,7 +24,7 @@ static void PrintVersion(llvm::raw_ostream &OS) {
 }
 static void PrintHelp(bool ShowHidden) {
   unsigned IncludedFlagsBitmask = 0;
-  unsigned ExcludedFlagsBitmask = options::FlangOnlyOption | options::NoDriverOption;
+  unsigned ExcludedFlagsBitmask = options::FlangOnlyOption;
   if (!ShowHidden)
     ExcludedFlagsBitmask |= HelpHidden;
   getOpts().printHelp(llvm::outs(), "xcc [options] file...", "XCC C compiler",
@@ -275,7 +275,10 @@ bool HandleImmediateArgs() {
     llvm::outs() << "programs: =\nlibraries: =\n";
     return false;
   }
-
+  if (getArgs().hasArg(options::OPT_ast_print)) {
+    llvm::errs() << "ast-print is not supported in XCC!\nUse clang or clang-format instead.";
+    return false;
+  }
   if (getArgs().hasArg(options::OPT_print_target_triple)) {
     llvm::outs() << TargetTriple << "\n";
     return false;
@@ -433,8 +436,8 @@ bool BuildCompilation(ArrayRef<const char *> Args, Options &opts, SourceMgr &SM,
 void ParseArgStrings(llvm::ArrayRef<const char *> ArgStrings, bool &ContainsError) {
   // clang/include/clang/Basic/DiagnosticDriverKinds.td
   ContainsError = false;
-  unsigned IncludedFlagsBitmask = 0 /*options::CLOption | options::CoreOption*/;
-  unsigned ExcludedFlagsBitmask = options::NoDriverOption;
+  unsigned IncludedFlagsBitmask = 0;
+  unsigned ExcludedFlagsBitmask = 0;
   unsigned MissingArgIndex, MissingArgCount;
   inputArgs = std::make_unique<InputArgList>(getOpts().ParseArgs(ArgStrings, MissingArgIndex, MissingArgCount, IncludedFlagsBitmask, ExcludedFlagsBitmask));
   if (MissingArgCount) {
