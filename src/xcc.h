@@ -236,6 +236,20 @@ enum TagType : uint8_t {
     TagType_Struct,
     TagType_Union
 };
+template <typename T>
+struct WithAlloc {
+    T *data;
+    size_t Size;
+    WithAlloc(size_t Size): Size{Size} { data = new T[Size]; }
+    template <typename T2>
+    WithAlloc(const WithAlloc<T2> &) = delete; 
+    ~WithAlloc() { delete [] data; }
+    T *begin() { return data; }
+    T *end() { return data + Size; }
+    size_t size() const { return Size; }
+    T &operator [](size_t i) { return data[i]; }
+    T *operator->() { return data; }
+};
 enum StringPrefix : uint8_t {
     Prefix_none, // An integer character constant has type int.
     Prefix_u8,   // A UTF-8 character constant has type char8_t. (unsigned)
@@ -676,13 +690,16 @@ struct SourceRange {
     SourceRange() : start{0}, end{0} {};
     SourceRange(location_t loc) : start{loc}, end{loc} { assert(end <= start && "attempt to construct an invalid SourceRange"); }
     SourceRange(location_t L, location_t R) : start{L}, end{R} { }
-    SourceRange(location_t start, IdentRef Name): start{start}, end{start + static_cast<location_t>(Name->getKey().size())} {}
+    SourceRange(location_t start, IdentRef Name): start{start}, end{start + static_cast<location_t>(Name->getKeyLength())} {}
     location_t getStart() const { return start; }
     location_t getEnd() const { return end; }
+    location_t getStartLoc() const { return start; }
+    location_t getEndLoc() const { return end; }
     bool contains(location_t loc) const { return loc >= start && loc <= end; }
     bool isValid() const { return start != 0 && end != 0; }
     bool isInValid() const { return start == 0 || end == 0; }
     bool isSignle() const { return start == end; }
+    bool Chars() const { return start - end + 1; }
     bool operator==(const SourceRange &other) { return start == other.start && end == other.end; }
     void dump() const { llvm::errs() << "SourceRange(" << start << ", " << end << ")"; }
 };
@@ -815,7 +832,7 @@ struct VarDecl {
     IdentRef name;
     CType ty;
     Expr init; // maybe null
-    size_t idx;
+    unsigned idx;
 };
 struct SwitchCase {
     location_t loc;
@@ -853,7 +870,7 @@ struct ReplacedExprParen {
     CType ty;
     struct {
         llvm::Constant *C;
-        size_t id;
+        unsigned id;
         IdentRef varName;
         location_t ReplacedLoc;
         location_t paren_loc[2];
@@ -864,7 +881,7 @@ struct ReplacedExpr {
     CType ty;
     struct {
         llvm::Constant *C;
-        size_t id;
+        unsigned id;
         IdentRef varName;
         location_t ReplacedLoc;
     };
@@ -929,6 +946,9 @@ location_t OpaqueExpr::getEndLoc() const {
     }
     llvm_unreachable("invalid Expr");
 }
+bool OpaqueExpr::hasSideEffects() const {
+    return !isSimple();
+}
 static constexpr uint64_t build_integer(IntegerKind kind, bool Signed) {
     const uint64_t log2size = kind.asLog2();
     return (log2size << 47) | (Signed ? OpaqueCType::sign_bit : 0ULL);
@@ -969,7 +989,12 @@ static const char *show2(enum TagType k) {
     default: llvm_unreachable("invalid argument to show_transform()");
     }
 }
-
+static void scope_index_set_unnamed_alloca(unsigned &i) {
+    i |= 1U << 31;
+}
+static bool scope_index_is_unnamed_alloca(unsigned i) {
+    return i & 1U << 31;
+}
 static bool is_declaration_specifier(Token a) { return a >= Kextern && a <= Kvolatile; }
 
 static bool type_equal(CType a, CType b) {

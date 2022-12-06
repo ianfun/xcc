@@ -770,11 +770,11 @@ void RunOptimizationPipeline() {
         case SFunction: {
             assert(this->labels.empty());
             auto ty = cast<llvm::FunctionType>(wrap(s->functy));
-            currentfunction = newFunction(ty, s->funcname, s->functy->ret->getTags(), s->func_idx, true);
+            currentfunction = newFunction(ty, s->funcname, s->functy->getFunctionAttrTy()->getTags(), s->func_idx, true);
             llvm::DISubprogram *sp = nullptr;
             /*if (options.g) {
                 sp =
-                    di->createFunction(getLexScope(), s->funcname->getKey(), getLinkageName(s->functy->ret->getTags()),
+                    di->createFunction(getLexScope(), s->funcname->getKey(), getLinkageName(s->functy->getFunctionAttrTy()->getTags()),
                                        getFile(s->loc.id), s->loc.line, createDebugFuctionType(s->functy), s->loc.line);
                 currentfunction->setSubprogram(sp);
                 lexBlocks.push_back(sp);
@@ -866,7 +866,7 @@ void RunOptimizationPipeline() {
                 if (varty->hasTag(TYTYPEDEF)) {
                     /* nothing */
                 } else if (varty->getKind() == TYFUNCTION) {
-                    newFunction(cast<llvm::FunctionType>(wrap(varty)), name, varty->ret->getTags(), idx);
+                    newFunction(cast<llvm::FunctionType>(wrap(varty)), name, varty->getFunctionAttrTy()->getTags(), idx);
                 } else if (!currentfunction || varty->isGlobalStorage()) {
                     auto GV = module->getGlobalVariable(name->getKey(), true);
                     if (GV) {
@@ -911,6 +911,11 @@ void RunOptimizationPipeline() {
                                             GV->addDebugInfo(gve);
                                         }*/
                 } else {
+                    if (LLVM_UNLIKELY(scope_index_is_unnamed_alloca(idx))) {
+                        assert(init);
+                        gen(init);
+                        break;
+                    }
                     bool isVLA = false;
                     llvm::Value *alloca_size;
                     llvm::Type *ty;

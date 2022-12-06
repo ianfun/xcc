@@ -130,3 +130,18 @@ ianfun
 ## References
 
 * C23: https://open-std.org/JTC1/SC22/WG14/www/docs/n3054.pdf
+
+## Optmizations
+
+* remove unused variables
+
+  remove
+  - global variables/functions which not used and have static linkage
+  - local variables not used, if has initializer and the initializer has side-effects, replace with the initializer
+
+![remove unused variables](tests/unused-variable.png)
+
+* constant folding
+
+  constant folding using LLVM's APInt, APFloat and `llvm::Constant` ...
+

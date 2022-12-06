@@ -36,6 +36,21 @@ template <typename T> struct xvector {
     size_t capacity() const { return p->_capacity; }
     const T *data() const { return p->_data; }
     T *data() { return p->_data; }
+    void erase(const T *it) {
+        assert(it >= begin() && it < end() && "Iterator to erase is out of bounds.");
+        std::move(const_cast<T*>(it)+1, this->end(), const_cast<T*>(it));
+        pop_back();
+    }
+    const T* find(const T &elem) const {
+        for (const T &it = begin();it != end();++it) {
+            if (*it == elem) return &it;
+        }
+        return nullptr;
+    }
+    T* find(const T &elem) 
+    {
+        return const_cast<const xvector<T>>(*this)->find(elem);
+    }
     T operator[](size_t Index) const {
         assert(Index < p->_length && "Index too large!");
         return p->_data[Index];

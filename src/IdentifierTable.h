@@ -17,7 +17,7 @@ struct IdentifierInfo {
     IdentifierInfo(unsigned tok) : tok{tok} { }
     IdentifierInfo(Token tok) : tok{tok} { }
     Token getToken() { return static_cast<Token>(tok); }
-    void setToken(Token tok) { this->tok = static_cast<Token>(tok); }
+    void setToken(Token tok) { this->tok = tok; }
     unsigned getBuiltinID() { return tok - static_cast<Token>(tok_high); }
     void setBuiltiID(unsigned ID) { tok = static_cast<Token>(tok_high) + ID; }
     bool isBuiltinMacro() { return tok >= PP__LINE__ && tok <= PP_Pragma; }

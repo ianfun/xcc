@@ -218,8 +218,8 @@ private:
             ref.flags = LBL_OK;
             break;
         case LBL_DECLARED: // declared => declared twice!
-            type_error(loc, "duplicate label: %I", Name) << SourceRange(loc, loc + Name->getKey().size() - 1);
-            note(ref.loc, "previous declaration of label %I is here", Name) << SourceRange(ref.loc, ref.loc + Name->getKey().size() - 1);
+            type_error(loc, "duplicate label: %I", Name) << SourceRange(loc, Name);
+            note(ref.loc, "previous declaration of label %I is here", Name) << SourceRange(ref.loc, Name);
             break;
         default: llvm_unreachable("");
         }
@@ -228,11 +228,11 @@ private:
     CType gettagByName(IdentRef Name, enum CTypeKind expected, location_t full_loc) {
         assert(Name && "gettagByName: Name is nullptr");
         CType result;
-        size_t idx;
+        unsigned idx;
         auto r = sema.tags.getSym(Name, idx);
         if (r) {
             if (r->ty->getKind() != expected)
-                type_error(full_loc, "%s %I is not a %s", show2(r->ty->getKind()), Name, show2(expected)) << SourceRange(full_loc, full_loc + Name->getKey().size());
+                type_error(full_loc, "%s %I is not a %s", show2(r->ty->getKind()), Name, show2(expected)) << SourceRange(full_loc,  Name);
             result = r->ty;
         } else {
             result = TNEW(IncompleteType){.tag = transform(expected), .name = Name};
@@ -246,11 +246,11 @@ private:
         assert(ty && "no type provided");
         bool found = false;
         if (Name) {
-            size_t prev;
+            unsigned prev;
             auto old = sema.tags.getSymInCurrentScope(Name, prev);
             if (old) {
-                const SourceRange range(loc, loc + Name->getKey().size());
-                const SourceRange prev_range(old->loc, old->loc + Name->getKey().size());
+                const SourceRange range(loc, Name);
+                const SourceRange prev_range(old->loc, Name);
                 if (old->ty->getKind() != TYINCOMPLETE) {
                     type_error(loc, "%s %I redefined", show2(k), Name) << range;
                     note(old->loc, "previous declaration is here") << prev_range;
@@ -268,7 +268,7 @@ private:
                 found = true;
             }
         }
-        size_t Idx = sema.tags.putSym(Name ? Name : reinterpret_cast<IdentRef>(ty), Type_info{.ty = ty, .loc = loc});
+        unsigned Idx = sema.tags.putSym(Name ? Name : reinterpret_cast<IdentRef>(ty), Type_info{.ty = ty, .loc = loc});
         if (!found) {
             insertStmt(SNEW(DeclStmt){.decl_idx = Idx, .decl_ty = ty});
         }
@@ -278,8 +278,8 @@ private:
         assert(Name && "enum has no Name");
         auto old = sema.typedefs.getSymInCurrentScope(Name);
         if (old) {
-            type_error(full_loc, "enumerator %I redefined", Name) << SourceRange(full_loc, full_loc + Name->getKey().size());
-            note(old->loc, "previous declaration is here") << SourceRange(old->loc, old->loc + Name->getKey().size());
+            type_error(full_loc, "enumerator %I redefined", Name) << SourceRange(full_loc, Name);
+            note(old->loc, "previous declaration is here") << SourceRange(old->loc, Name);
         }
         sema.typedefs.putSym(Name, Variable_Info{
                                        .ty = context.getConstInt(),
@@ -288,9 +288,9 @@ private:
                                    });
     }
     // function
-    size_t putsymtype2(IdentRef Name, CType yt, location_t full_loc, bool isDefinition) {
-        CType base = yt->ret;
-        const SourceRange range(full_loc, full_loc + Name->getKey().size() - 1);
+    unsigned putsymtype2(IdentRef Name, CType yt, location_t full_loc, bool isDefinition) {
+        CType base = yt->getFunctionAttrTy();
+        const SourceRange range(full_loc, Name);
         if (base->getKind() == TYARRAY)
             type_error(full_loc, "function cannot return array") << range;
         if (base->hasTag(TYREGISTER))
@@ -299,20 +299,20 @@ private:
             warning(full_loc, "'_Thread_local' in function return type") << range;
         if (base->hasTag((TYCONST | TYRESTRICT | TYVOLATILE | TYATOMIC)))
             warning(full_loc, "type qualifiers ignored in function") << range;
-        size_t idx;
+        unsigned idx;
         auto it = sema.typedefs.getSymInCurrentScope(Name, idx);
         if (it) {
             if ((it->tags & ASSIGNED) && isDefinition) {
                 type_error(full_loc, "redefinition of function %I", Name) << range;
-                note(it->loc, "previous declaration of %I was here", Name) << SourceRange(it->loc, it->loc + Name->getKey().size());
+                note(it->loc, "previous declaration of %I was here", Name) << SourceRange(it->loc, Name);
             }
             if (!compatible(yt, it->ty)) {
                 type_error(full_loc, "conflicting types for function declaration %I", Name) << range;
-            } else if (!it->ty->ret->hasTag(TYSTATIC) && base->hasTag(TYSTATIC)) {
+            } else if (!it->ty->getFunctionAttrTy()->hasTag(TYSTATIC) && base->hasTag(TYSTATIC)) {
                 type_error(full_loc, "static declaration of %I follows non-static declaration", Name) << range;
-                note(it->loc, "previous declaration of %I was here", Name) << SourceRange(it->loc, it->loc + Name->getKey().size());
+                note(it->loc, "previous declaration of %I was here", Name) << SourceRange(it->loc, Name);
             } else {
-                it->ty->addTag(it->ty->ret->getTags() & (TYSTATIC));
+                it->ty->addTag(it->ty->getFunctionAttrTy()->getTags() & (TYSTATIC));
             }
         } else {
             idx = sema.typedefs.putSym(
@@ -321,18 +321,18 @@ private:
         return idx;
     }
     // typedef, variable
-    size_t putsymtype(IdentRef Name, CType yt, location_t full_loc) {
+    unsigned putsymtype(IdentRef Name, CType yt, location_t full_loc) {
         assert(Name && "missing a Name to put");
         assert(yt && "missing a type to put");
         if (yt->getKind() == TYFUNCTION)
             return putsymtype2(Name, yt, full_loc, false);
-        size_t idx;
+        unsigned idx;
         auto it = sema.typedefs.getSymInCurrentScope(Name, idx);
         if (it) {
             if (yt->hasTag(TYTYPEDEF)) {
                 if (!compatible(it->ty, yt)) {
-                    type_error(full_loc, "%I redeclared as different kind of symbol", Name) << SourceRange(full_loc, full_loc + Name->getKey().size() - 1);
-                    note(it->loc, "previous declaration of %I is here", Name) << SourceRange(it->loc, Name->getKey().size() - 1);
+                    type_error(full_loc, "%I redeclared as different kind of symbol", Name) << SourceRange(full_loc, Name);
+                    note(it->loc, "previous declaration of %I is here", Name) << SourceRange(it->loc, Name);
                 }
                 goto PUT;
             }
@@ -342,15 +342,15 @@ private:
                 bool err = true;
                 type_tag_t t1 = yt->getTagsQualifiersAndStoragesOnly(), t2 = old->getTagsQualifiersAndStoragesOnly();
                 if ((t1 & M) != (t2 & M))
-                    type_error(full_loc, "conflicting type qualifiers for %I", Name) << SourceRange(full_loc, full_loc + Name->getKey().size() - 1);
+                    type_error(full_loc, "conflicting type qualifiers for %I", Name) << SourceRange(full_loc, Name);
                 else if (!compatible(old, yt))
-                    type_error(full_loc, "conflicting types for %I: (%T v.s. %T)", Name, yt, old) << SourceRange(full_loc, full_loc + Name->getKey().size() - 1);
+                    type_error(full_loc, "conflicting types for %I: (%T v.s. %T)", Name, yt, old) << SourceRange(full_loc, Name);
                 else
                     err = false;
                 if (err)
-                    note(it->loc, "previous declaration is here", Name) << SourceRange(it->loc, it->loc + Name->getKey().size() - 1);
+                    note(it->loc, "previous declaration is here", Name) << SourceRange(it->loc, Name);
             } else {
-                type_error(full_loc, "%I redeclared", Name) << SourceRange(full_loc, full_loc + Name->getKey().size() - 1);
+                type_error(full_loc, "%I redeclared", Name) << SourceRange(full_loc, Name);
             }
 PUT:
             it->ty = yt;
@@ -742,46 +742,139 @@ PTR_CAST:
         sema.typedefs.push();
         sema.tags.push();
     }
-    void leaveBlock() {
+    [[maybe_unused]] unsigned leaveBlock(bool force = true) {
+        unsigned result = 0;
         const auto &T = sema.typedefs;
         if (!getNumErrors()) { // if we have parse errors, we may emit bad warnings about ununsed variables
-            for (auto it = T.current_block(); it != T.end(); ++it) {
+            for (auto *it = T.current_block(); it != T.end(); ++it) {
                 if (!(it->info.tags & USED) && !(it->info.ty->hasTag(TYTYPEDEF))) {
                     const location_t loc = it->info.loc;
-                    const location_t endLoc = loc + it->sym->getKey().size() - 1;
-                    const SourceRange range(loc, endLoc);
+                    const SourceRange range(loc, it->sym);
                     if (it->info.tags & ASSIGNED) {
-                        if (it->info.tags & PARAM)
+                        if (it->info.tags & PARAM) {
                             warning(loc, "unused parameter %I", it->sym) << range;
-                        else
+                        }
+                        else {
+                            ++result;
                             warning(loc, "variable %I is unused after assignment", it->sym) << range;
+                        }
                     } else {
+                        ++result;
                         warning(loc, "unused variable %I", it->sym) << range;
                     }
                 }
             }
         }
+        if (force) {
+            sema.typedefs.pop();
+            sema.tags.pop();
+        }
+        return result;
+    }
+    // return true if begin needed to be erased
+    void removeUnusedVariables(const Stmt oldPtr, const Stmt begin, const Stmt end, const unsigned result) {
+        if (result) {
+            WithAlloc<unsigned> set(result);
+            unsigned *set_end = set.end();
+            auto *start = sema.typedefs.begin();
+            unsigned idx = 0;
+            for (auto *it = sema.typedefs.current_block(); it != sema.typedefs.end(); ++it) {
+                if (!(it->info.tags & USED) && !(it->info.ty->hasTag(TYTYPEDEF))) {
+                    if (it->info.tags & ASSIGNED) {
+                        if (!(it->info.tags & PARAM)) {
+                            set[idx++] = it - start;
+                        }
+                    }
+                    else {
+                        set[idx++] = it - start;
+                    }
+                }
+            }
+            assert(idx == result);
+            std::sort(set.begin(), set_end/*, std::less<unsigned>()*/);
+            for (Stmt ptr = begin, old_ptr = oldPtr;ptr != end;ptr = ptr->next) {
+                if (ptr->k == SVarDecl) {
+                    auto start = ptr->vars.begin();
+                    size_t length = ptr->vars.size();
+                    while (length--) {
+                        VarDecl &it = *start;
+                        if (std::binary_search(set.begin(), set_end, it.idx)) {
+                            if (it.init && it.init->hasSideEffects()) {
+                                scope_index_set_unnamed_alloca(it.idx);
+                                goto SIDE_EFFECT;
+                            }
+                            ptr->vars.erase(&it);
+                            continue;
+                        }
+                        SIDE_EFFECT:
+                        start++;
+                    }
+                    if (ptr->vars.empty()) {
+                        old_ptr->next = ptr->next;
+                        continue;
+                    }
+                }
+                old_ptr = ptr;
+            }
+        }
         sema.typedefs.pop();
         sema.tags.pop();
     }
-    void leaveBlock2() {
+    // return the result head of the translation unit ast
+    Stmt leaveTopLevelBlock(Stmt begin) {
+        assert(begin->k == SHead && "expect translation-unit ast");
+        Stmt result = begin;
+        SmallVector<unsigned, 0> unused_gvs;
         if (!getNumErrors()) {
+            auto *start = sema.typedefs.begin();
             for (const auto &it : sema.typedefs) {
-                if (it.info.ty->hasTag(TYTYPEDEF))
+                if ((it.info.tags & USED) || it.info.ty->hasTag(TYTYPEDEF))
                     continue;
                 const location_t loc = it.info.loc;
-                const location_t endLoc = loc + it.sym->getKey().size() - 1;
-                const SourceRange range(loc, endLoc);
+                const SourceRange range(loc, it.sym);
                 if (it.info.ty->getKind() == TYFUNCTION) {
-                    if (it.info.ty->ret->hasTag(TYSTATIC))
+                    if (it.info.ty->getFunctionAttrTy()->hasTag(TYSTATIC)) {
                         warning(loc, "static function %I declared but not used", it.sym) << range;
+                        unused_gvs.push_back(&it - start);
+                    }
                 } else if (it.info.ty->hasTag(TYSTATIC)) {
                     warning(loc, "static variable %I declared but not used", it.sym) << range;
+                    unused_gvs.push_back(&it - start);
                 }
+            }
+        }
+        if (!unused_gvs.empty()) {
+            const auto m_begin = unused_gvs.begin();
+            const auto m_end = unused_gvs.end();
+            std::sort(m_begin, m_end/*, std::less<unsigned>()*/);
+            Stmt old_ptr = begin;
+            for (Stmt ptr = begin->next;ptr;ptr = ptr->next) {
+                if (ptr->k == SVarDecl) {
+                    auto start = ptr->vars.begin();
+                    size_t length = ptr->vars.size();
+                    while (length--) {
+                        const VarDecl &it = *start;
+                        if (std::binary_search(m_begin, m_end, it.idx))
+                            ptr->vars.erase(&it);
+                        else
+                            start++;
+                    }
+                    if (ptr->vars.empty()) {
+                        old_ptr->next = ptr->next;
+                        continue;
+                    }
+                } else if (ptr->k == SFunction) {
+                    if (std::binary_search(m_begin, m_end, ptr->func_idx)) {
+                        old_ptr->next = ptr->next;
+                        continue;
+                    }
+                }
+                old_ptr = ptr;
             }
         }
         sema.typedefs.finalizeGlobalScope();
         sema.tags.finalizeGlobalScope();
+        return result;
     }
     void integer_promotions(Expr &e) {
         // XXX: should _BitInt be converted?
@@ -2850,6 +2943,7 @@ BREAK:
             Declator st = declarator(base, Direct);
             if (!st.ty)
                 return;
+            st.ty->noralize();
             if (l.tok.tok == TLcurlyBracket) {
                 if (st.ty->getKind() != TYFUNCTION)
                     return (void)type_error(current_declator_loc, "unexpected function definition");
@@ -2883,13 +2977,13 @@ ARGV_OK:;
                         }
                     }
                 }
-                size_t idx = putsymtype2(st.name, st.ty, current_declator_loc, true);
+                unsigned idx = putsymtype2(st.name, st.ty, current_declator_loc, true);
                 if (!isTopLevel())
                     return (void)parse_error(current_declator_loc, "function definition is not allowed here");
                 Stmt res = SNEW(FunctionStmt){.func_idx = idx,
                                               .funcname = st.name,
                                               .functy = st.ty,
-                                              .args = xvector<size_t>::get_with_length(st.ty->params.size())};
+                                              .args = xvector<unsigned>::get_with_length(st.ty->params.size())};
                 sema.currentfunction = st.ty;
                 sema.pfunc = st.name;
                 res->funcbody = function_body(st.ty->params, res->args, loc);
@@ -2903,11 +2997,10 @@ ARGV_OK:;
                         it->info.val = nullptr;
                 return insertStmt(res);
             }
-            st.ty->noralize();
 #if CC_PRINT_CDECL
             print_cdecl(st.name->getKey(), st.ty, llvm::errs(), true);
 #endif
-            size_t idx = putsymtype(st.name, st.ty, current_declator_loc);
+            unsigned idx = putsymtype(st.name, st.ty, current_declator_loc);
 
             result->vars.push_back(VarDecl{.name = st.name, .ty = st.ty, .init = nullptr, .idx = idx});
             if (st.ty->hasTag(TYINLINE))
@@ -3517,10 +3610,10 @@ NEXT:
     }
     struct best_match {
         best_match(IdentRef goal): m_goal{goal->getKey()} {}
-        size_t m_best = 0;
+        unsigned m_best = 0;
         bool m_hasBest = false;
         StringRef m_goal;
-        void consider(IdentRef candidate, size_t idx) {
+        void consider(IdentRef candidate, unsigned idx) {
             StringRef key = candidate->getKey();
 
             unsigned MinED = abs((int)key.size() - (int)m_goal.size());
@@ -3535,11 +3628,11 @@ NEXT:
             if (ED > m_best)
                 return select(idx);
         }
-        void select(size_t idx) {
+        void select(unsigned idx) {
             m_hasBest = true;
             m_best = idx;
         }
-        size_t best() const { return m_best; }
+        unsigned best() const { return m_best; }
         bool hasBest() const { return m_hasBest; }
     };
     // clang::TypoCorrectionConsumer::addName
@@ -3549,11 +3642,11 @@ NEXT:
     IdentRef try_suggest_identfier(IdentRef ID, SourceRange &declRange) {
         best_match result(ID);
         const auto &data = sema.typedefs.data;
-        for (size_t i = data.size();i--;) 
+        for (unsigned i = data.size();i--;) 
             result.consider(data[i].sym, i);
         if (result.hasBest()) {
             auto &it = data[result.best()];
-            declRange = SourceRange(it.info.loc, it.info.loc + it.sym->getKey().size() - 1);
+            declRange = SourceRange(it.info.loc, it.sym);
             return it.sym;
         }
         return nullptr;
@@ -3625,7 +3718,7 @@ NEXT:
                 result = getIntZero();
             else {
                 IdentRef sym = l.tok.s;
-                size_t idx;
+                unsigned idx;
                 Variable_Info *it = sema.typedefs.getSym(sym, idx);
                 location_t endLoc = getEndLoc();
                 consume();
@@ -4445,13 +4538,16 @@ ONE_CASE:
         }
         case Kfor: {
             Expr cond = nullptr, forincl = nullptr;
+            Stmt decl_begin = nullptr, decl_end = nullptr;
             consume();
             enterBlock();
             if (l.tok.tok != TLbracket)
                 return expectLB(getLoc());
             consume();
             if (istype()) {
+                decl_begin = getInsertPoint();
                 declaration();
+                decl_end = getInsertPoint();
             } else {
                 if (l.tok.tok != TSemicolon) {
                     Expr ex = expression();
@@ -4502,7 +4598,9 @@ ONE_CASE:
             statement();
             insertBr(CMP);
             insertLabel(LEAVE);
-            leaveBlock();
+            auto num = leaveBlock(false);
+            if (decl_begin)
+                removeUnusedVariables(decl_begin, decl_begin->next, decl_end, num);
             return;
         }
         case Kdo: {
@@ -4575,7 +4673,7 @@ ONE_CASE:
             return;
         }
         if (e->k == ECall) {
-            if (LLVM_UNLIKELY(e->callfunc->ty->ret->hasTag(TYNORETURN))) {
+            if (LLVM_UNLIKELY(e->callfunc->ty->getFunctionAttrTy()->hasTag(TYNORETURN))) {
                 insertStmt(SNEW(NoReturnCallStmt){.call_expr = e});
                 return setUnreachable(loc, UR_noreturn);
             }
@@ -4988,7 +5086,7 @@ ONE_CASE:
     void compound_statement() {
         consume();
         enterBlock();
-        NullStmt nullstmt{.k = SHead}; // make a dummy statement in stack, remove it when scope leaves
+        NullStmt nullstmt{.k = SHead};
         Stmt head = SNEW(CompoundStmt){.inner = reinterpret_cast<Stmt>(&nullstmt)};
         {
             llvm::SaveAndRestore<Stmt> saved_ip(InsertPt, head->inner);
@@ -4997,8 +5095,13 @@ ONE_CASE:
             insertStmtEnd();
             sreachable = old;
         }
-        head->inner = head->inner->next;
-        leaveBlock();
+        auto num = leaveBlock(false);
+        Stmt real_head = head->inner->next;
+        removeUnusedVariables(head->inner, head->inner->next, nullptr, num);
+        if (!head->inner->next)
+            head->inner = real_head ? real_head->next : nullptr;
+        else
+            head->inner = real_head;
         consume();
         insertStmt(head);
     }
@@ -5012,7 +5115,7 @@ ONE_CASE:
                 break;
         }
     }
-    Stmt function_body(const xvector<Param> params, xvector<size_t> &args, location_t loc) {
+    Stmt function_body(const xvector<Param> params, xvector<unsigned> &args, location_t loc) {
         consume();
         Stmt head = SNEW(HeadStmt){};
         sema.typedefs.push_function();
@@ -5053,7 +5156,11 @@ ONE_CASE:
             default: llvm_unreachable("");
             }
         }
-        leaveBlock();
+        auto num = leaveBlock(false);
+        Stmt old_next = head->next;
+        removeUnusedVariables(head, head->next, nullptr, num);
+        if (!head->next)
+            head->next = old_next ? old_next->next : nullptr;
         sema.typedefs.pop_function();
         consume();
         return head;
@@ -5080,10 +5187,10 @@ ONE_CASE:
         consume();
         enterBlock(); // the global scope!
         ast = translation_unit();
-        leaveBlock2();
+        ast = leaveTopLevelBlock(ast);
         statics("Parse scope statics\n");
-        statics("  Max typedef scope size: %zu\n", sema.typedefs.maxSyms);
-        statics("  Max tags scope size: %zu\n", sema.tags.maxSyms);
+        statics("  Max typedef scope size: %u\n", sema.typedefs.maxSyms);
+        statics("  Max tags scope size: %u\n", sema.tags.maxSyms);
         endStatics();
         num_typedefs = sema.typedefs.maxSyms;
         num_tags = sema.tags.maxSyms;

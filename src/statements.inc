@@ -18,11 +18,11 @@ enum StmtKind: uint8_t {
 };
 struct NullStmt {
   enum StmtKind k;
-  Stmt next;
+  Stmt next = nullptr;
 };
 struct OpaqueStmt {
 StmtKind k;
-Stmt next;
+Stmt next = nullptr;
 bool isTerminator() const {
     switch (k) {
         case SGoto:
@@ -76,38 +76,38 @@ union {
       xvector<VarDecl> vars;
   };
   struct {
-      size_t decl_idx;
+      unsigned decl_idx;
     CType decl_ty;
   };
   struct {
-      size_t prev_idx;
+      unsigned prev_idx;
     CType prev;
     CType now;
   };
   struct {
-      size_t func_idx;
+      unsigned func_idx;
     IdentRef funcname;
     CType functy;
     Stmt funcbody;
     unsigned numLabels;
-    xvector<size_t> args;
+    xvector<unsigned> args;
   };
 };};
 struct HeadStmt {
   enum StmtKind k=SHead;
-  Stmt next;
+  Stmt next = nullptr;
  /* empty! */ 
 };
 struct CompoundStmt {
   enum StmtKind k=SCompound;
-  Stmt next;
+  Stmt next = nullptr;
   struct {
     Stmt inner;
   };
 };
 struct LabelStmt {
   enum StmtKind k=SLabel;
-  Stmt next;
+  Stmt next = nullptr;
   struct {
     label_t label;
     IdentRef labelName;
@@ -115,14 +115,14 @@ struct LabelStmt {
 };
 struct GotoStmt {
   enum StmtKind k=SGoto;
-  Stmt next;
+  Stmt next = nullptr;
   struct {
     label_t location;
   };
 };
 struct CondJumpStmt {
   enum StmtKind k=SCondJump;
-  Stmt next;
+  Stmt next = nullptr;
   struct {
     Expr test;
     label_t T;
@@ -131,7 +131,7 @@ struct CondJumpStmt {
 };
 struct SwitchStmt {
   enum StmtKind k=SSwitch;
-  Stmt next;
+  Stmt next = nullptr;
   struct {
     Expr itest;
     xvector<SwitchCase> switchs;
@@ -142,73 +142,73 @@ struct SwitchStmt {
 };
 struct DeclOnlyStmt {
   enum StmtKind k=SDeclOnly;
-  Stmt next;
+  Stmt next = nullptr;
   struct {
     CType decl;
   };
 };
 struct ReturnStmt {
   enum StmtKind k=SReturn;
-  Stmt next;
+  Stmt next = nullptr;
   struct {
     Expr ret;
   };
 };
 struct ExprStmt {
   enum StmtKind k=SExpr;
-  Stmt next;
+  Stmt next = nullptr;
   struct {
     Expr exprbody;
   };
 };
 struct NoReturnCallStmt {
   enum StmtKind k=SNoReturnCall;
-  Stmt next;
+  Stmt next = nullptr;
   struct {
     Expr call_expr;
   };
 };
 struct AsmStmt {
   enum StmtKind k=SAsm;
-  Stmt next;
+  Stmt next = nullptr;
   struct {
     xstring asms;
   };
 };
 struct VarDeclStmt {
   enum StmtKind k=SVarDecl;
-  Stmt next;
+  Stmt next = nullptr;
   struct {
     xvector<VarDecl> vars;
   };
 };
 struct DeclStmt {
   enum StmtKind k=SDecl;
-  Stmt next;
+  Stmt next = nullptr;
   struct {
-    size_t decl_idx;
+    unsigned decl_idx;
     CType decl_ty;
   };
 };
 struct UpdateForwardDeclStmt {
   enum StmtKind k=SUpdateForwardDecl;
-  Stmt next;
+  Stmt next = nullptr;
   struct {
-    size_t prev_idx;
+    unsigned prev_idx;
     CType prev;
     CType now;
   };
 };
 struct FunctionStmt {
   enum StmtKind k=SFunction;
-  Stmt next;
+  Stmt next = nullptr;
   struct {
-    size_t func_idx;
+    unsigned func_idx;
     IdentRef funcname;
     CType functy;
     Stmt funcbody;
     unsigned numLabels;
-    xvector<size_t> args;
+    xvector<unsigned> args;
   };
 };
 static uint8_t stmt_size_map[] = {

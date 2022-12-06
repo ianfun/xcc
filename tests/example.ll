@@ -3,10 +3,28 @@ source_filename = "main"
 target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128"
 target triple = "x86_64-pc-linux-gnu"
 
+@start = common dso_local global i32 0, align 4
+@x = common dso_local global i32 0, align 4
+@y = common dso_local global i32 0, align 4
+@z = common dso_local global i32 0, align 4
+
 ; Function Attrs: noinline nounwind optnone
-define dso_local ptr @xxx(...) #0 {
-  ret ptr inttoptr (i32 1234 to ptr)
+define dso_local void @xx(...) #0 {
+  ret void
 }
+
+; Function Attrs: noinline nounwind optnone
+define dso_local void @yy(...) #0 {
+  ret void
+}
+
+; Function Attrs: noinline nounwind optnone
+define dso_local void @zz(...) #0 {
+  ret void
+}
+
+; Function Attrs: noinline nounwind optnone
+declare dso_local void @end(...) #0
 
 attributes #0 = { noinline nounwind optnone }
 

@@ -34,6 +34,7 @@ bool isSimple() const {
       return false;
   }
 }
+bool hasSideEffects() const;
 const location_t *getParenLLoc() const;
 const location_t *getParenRLoc() const;
 location_t *getParenLLoc();
@@ -75,7 +76,7 @@ union {
       location_t voidStartLoc;
     };
     struct {
-      size_t sval;
+      unsigned sval;
       IdentRef varName;
       location_t varLoc;
     };
@@ -185,7 +186,7 @@ struct VarExpr {
   enum ExprKind k=EVar;
   CType ty;
   struct {
-    size_t sval;
+    unsigned sval;
     IdentRef varName;
     location_t varLoc;
   };

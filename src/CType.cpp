@@ -211,6 +211,12 @@ struct OpaqueCType {
     void clearTags(const type_tag_t tags_to_clear) { tags &= ~tags_to_clear; }
     void clearTag(const type_tag_t tag_to_clear) { tags &= ~tag_to_clear; }
     type_tag_t andTags(const type_tag_t tag_to_clear) const { return tags & tag_to_clear; }
+    const_CType getFunctionAttrTy() const {
+        return this;
+    }
+    CType getFunctionAttrTy() {
+        return this;
+    }
     void noralize() {
         switch (getKind()) {
         case TYFUNCTION: {

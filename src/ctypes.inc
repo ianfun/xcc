@@ -18,17 +18,17 @@ enum CTypeKind: uint8_t {
       CType p;
   };
   struct {
-      size_t sidx;
+      unsigned sidx;
       IdentRef sname;
       xvector<Declator> selems;
   };
   struct {
-      size_t uidx;
+      unsigned uidx;
       IdentRef uname;
       xvector<Declator> uelems;
   };
   struct {
-      size_t eidx;
+      unsigned eidx;
       IdentRef ename;
       xvector<EnumPair> eelems;
   };
@@ -49,7 +49,7 @@ enum CTypeKind: uint8_t {
   struct {
       enum TagType tag;
       IdentRef name;
-      size_t iidx;
+      unsigned iidx;
   };
   struct {
       CType vla_arraytype;
@@ -69,7 +69,7 @@ struct PointerType{
 struct StructType{
   uint64_t tags;
   struct {
-    size_t sidx;
+    unsigned sidx;
     IdentRef sname;
     xvector<Declator> selems;
   };
@@ -77,7 +77,7 @@ struct StructType{
 struct UnionType{
   uint64_t tags;
   struct {
-    size_t uidx;
+    unsigned uidx;
     IdentRef uname;
     xvector<Declator> uelems;
   };
@@ -85,7 +85,7 @@ struct UnionType{
 struct EnumType{
   uint64_t tags;
   struct {
-    size_t eidx;
+    unsigned eidx;
     IdentRef ename;
     xvector<EnumPair> eelems;
   };
@@ -118,7 +118,7 @@ struct IncompleteType{
   struct {
     enum TagType tag;
     IdentRef name;
-    size_t iidx;
+    unsigned iidx;
   };
 };
 struct VlaType{

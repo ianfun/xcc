@@ -184,15 +184,15 @@ stmts = {
 	"SNoReturnCall": ("Expr call_expr",),
 	"SAsm": ("xstring asms",),
 	"SVarDecl": ("xvector<VarDecl> vars",),
-	"SDecl": ("size_t decl_idx", "CType decl_ty",),
-	"SUpdateForwardDecl": ("size_t prev_idx", "CType prev", "CType now",),
+	"SDecl": ("unsigned decl_idx", "CType decl_ty",),
+	"SUpdateForwardDecl": ("unsigned prev_idx", "CType prev", "CType now",),
 	"SFunction": (
-		"size_t func_idx", 
+		"unsigned func_idx", 
 		"IdentRef funcname", 
 		"CType functy", 
 		"Stmt funcbody", 
 		"unsigned numLabels", 
-		"xvector<size_t> args"
+		"xvector<unsigned> args"
 	),
 }
 exprs = {
@@ -202,7 +202,7 @@ exprs = {
 	"EConstantArray": ("llvm::GlobalVariable *array", "location_t constantArrayLoc", "location_t constantArrayLocEnd",),
 	"EConstantArraySubstript": ("llvm::GlobalVariable *carray", "APInt cidx", "location_t constantArraySubscriptLoc", "location_t constantArraySubscriptLocEnd",),
 	"EVoid": ("Expr voidexpr", "location_t voidStartLoc"),
-	"EVar": ("size_t sval", "IdentRef varName", "location_t varLoc",),
+	"EVar": ("unsigned sval", "IdentRef varName", "location_t varLoc",),
 	"ECondition": ("Expr cond, cleft, cright",),
 	"ECast": ("enum CastOp castop", "Expr castval",),
 	"ECall": ("Expr callfunc", "xvector<Expr> callargs", "location_t callEnd", ),
@@ -218,13 +218,13 @@ exprs = {
 ctypes = {
 	"TYPRIM": (),
 	"TYPOINTER": ("CType p",),
-	"TYSTRUCT": ("size_t sidx", "IdentRef sname", "xvector<Declator> selems",),
-	"TYUNION":  ("size_t uidx", "IdentRef uname", "xvector<Declator> uelems",),
-	"TYENUM":   ("size_t eidx", "IdentRef ename", "xvector<EnumPair> eelems",),
+	"TYSTRUCT": ("unsigned sidx", "IdentRef sname", "xvector<Declator> selems",),
+	"TYUNION":  ("unsigned uidx", "IdentRef uname", "xvector<Declator> uelems",),
+	"TYENUM":   ("unsigned eidx", "IdentRef ename", "xvector<EnumPair> eelems",),
 	"TYBITFIELD": ("CType bittype", "unsigned bitsize",),
 	"TYARRAY": ("CType arrtype", "bool hassize", "unsigned arrsize",),
 	"TYFUNCTION": ("CType ret", "xvector<Param> params", "bool isVarArg",),
-	"TYINCOMPLETE": ("enum TagType tag", "IdentRef name", "size_t iidx",),
+	"TYINCOMPLETE": ("enum TagType tag", "IdentRef name", "unsigned iidx",),
 	"TYVLA": ("CType vla_arraytype", "Expr vla_expr"),
 }
 
@@ -360,7 +360,7 @@ def gen_tokens():
 	T("PPMacroPop", "<macro-pop>")
 	T("PPMacroTraceLoc", "<macro-trace-loc>")
 	T("TEOF", "<EOF>")
-	
+
 	P("TIdentifier", "<TIdentifier>") # name(identifier), after macro processing
 	P("PPIdent", "<PPIdent>") # identifier, may be a macro
 	P("PP_main", "main", True)
@@ -453,6 +453,7 @@ bool isSimple() const {
       return false;
   }
 }
+bool hasSideEffects() const;
 const location_t *getParenLLoc() const;
 const location_t *getParenRLoc() const;
 location_t *getParenLLoc();
@@ -494,11 +495,11 @@ def gen_stmt():
 	f.write("""\
 struct NullStmt {
   enum StmtKind k;
-  Stmt next;
+  Stmt next = nullptr;
 };
 struct OpaqueStmt {
 StmtKind k;
-Stmt next;
+Stmt next = nullptr;
 bool isTerminator() const {
     switch (k) {
         case SGoto:
@@ -521,11 +522,11 @@ union {
 		realname = name[1::] + "Stmt"
 		l.append(realname)
 		if decls:
-			f.write("struct " + realname + " {\n  enum StmtKind k=" + name + ";\n  Stmt next;\n  struct {\n  ")
+			f.write("struct " + realname + " {\n  enum StmtKind k=" + name + ";\n  Stmt next = nullptr;\n  struct {\n  ")
 			f.write('  ' + ';\n    '.join(decls) + ';')
 			f.write("\n  };\n};\n")
 		else:
-			f.write("struct " + realname + " {\n  enum StmtKind k=" + name + ";\n  Stmt next;\n /* empty! */ \n};\n")
+			f.write("struct " + realname + " {\n  enum StmtKind k=" + name + ";\n  Stmt next = nullptr;\n /* empty! */ \n};\n")
 
 	f.write("static uint8_t stmt_size_map[] = {\n    " + 
 		',\n    '.join(sizeof(l)) + 
