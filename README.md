@@ -145,3 +145,28 @@ ianfun
 
   constant folding using LLVM's APInt, APFloat and `llvm::Constant` ...
 
+## Alignment
+
+Alignment affects size of objects.
+
+```C++
+root [0] struct alignas(void*) bar {};
+root [1] alignof(bar)
+(unsigned long) 8
+root [2] struct foo {};
+root [3] alignof(foo)
+(unsigned long) 1
+root [4] sizeof(foo)
+(unsigned long) 1
+root [5] sizeof(bar)
+(unsigned long) 8
+
+```
+
+Alignments must be power of 2 and must less or equal than the object's size.
+
+```C++
+root [1] struct alignas(2) bar { int a; };
+ROOT_prompt_1:1:8: error: requested alignment is less than minimum alignment of 4 for type 'bar'
+struct alignas(2) bar { int a; };
+```

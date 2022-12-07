@@ -42,6 +42,9 @@ struct IRGen : public DiagnosticHelper {
     uint64_t getsizeof(llvm::Type *ty) { return layout->getTypeStoreSize(ty); }
     uint64_t getsizeof(CType ty) { 
         assert((!ty->isVLA()) && "VLA should handled in other case");
+        type_tag_t Align = ty->getAlignLog2Value();
+        if (Align)
+            return uint64_t(1) << Align;
         const auto k = ty->getKind();
         if (ty->isVoid() || k == TYFUNCTION)
             return 1;
@@ -49,7 +52,12 @@ struct IRGen : public DiagnosticHelper {
     }
     uint64_t getsizeof(Expr e) { return getsizeof(e->ty); }
     uint64_t getAlignof(llvm::Type *ty) { return layout->getPrefTypeAlign(ty).value(); }
-    uint64_t getAlignof(CType ty) { return getAlignof(wrap2(ty)); }
+    uint64_t getAlignof(CType ty) { 
+        type_tag_t Align = ty->getAlignLog2Value();
+        if (Align)
+            return uint64_t(1) << Align;
+        return getAlignof(wrap2(ty)); 
+    }
     uint64_t getAlignof(Expr e) { return getAlignof(e->ty); }
     llvm::Type *wrapNoComplexScalar(CType ty) {
         assert(ty->getKind() == TYPRIM);
