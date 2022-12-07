@@ -638,12 +638,6 @@ RUN:
                 case PPinclude: {
                     while (c == ' ')
                         eat();
-                    if (SM.includeStack.empty()) {
-                        pp_error(loc, "unexpected EOF");
-                        goto BAD_RET;
-                    }
-                    auto theFD = SM.includeStack.back();
-                    Stream &f = *SM.streams[theFD];
                     char is_std = '\"';
                     xstring path = xstring::get();
 
@@ -654,7 +648,7 @@ STD_INCLUDE:
                             eat();
                             if (c == is_std) {
                                 for (;;) {
-                                    char c = SM.raw_read(f);
+                                    eat();
                                     if (c == '\0') {
                                         break;
                                     }
@@ -666,10 +660,8 @@ STD_INCLUDE:
                                     path.free();
                                 } else {
                                     path.make_eos();
-                                    if (SM.addIncludeFile(path, is_std == '>', loc))
-                                        SM.beginInclude(context, theFD);
-                                    else
-                                        path.free();
+                                    SM.addIncludeFile(path, is_std == '>', loc);
+                                    path.free();
                                 }
                                 break;
                             }

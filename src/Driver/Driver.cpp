@@ -304,7 +304,7 @@ bool BuildInputs(SourceMgr &SM, Options &opts) {
   }
   if (SM.empty())
     return fatal("no input files"), true;
-  opts.mainFileName = SM.streams.front()->getFileNameFromMemoryBuffer();
+  opts.mainFileName = SM.getMainFileName();
   return false;
 }
 

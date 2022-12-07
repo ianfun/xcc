@@ -777,43 +777,24 @@ struct SourceLine {
 };
 
 struct source_location {
-    line_t line = 0;
-    column_t col = 0;
-    fileid_t fd = 0;
+    unsigned line = 0;
+    unsigned col = 0;
     struct LocTree *tree = nullptr;
     SourceLine source_line;
     bool isValid() const { return line != 0; }
-    source_location(line_t line = 0, column_t col = 0, fileid_t fd = 0) : line{line}, col{col}, fd{fd} { }
     bool operator>(const source_location &rhs) { return line > rhs.line && col > rhs.col; }
     bool operator<(const source_location &rhs) { return line < rhs.line && col < rhs.col; }
     bool operator>=(const source_location &rhs) { return line >= rhs.line && col >= rhs.col; }
     bool operator<=(const source_location &rhs) { return line <= rhs.line && col <= rhs.col; }
 };
-struct Include_Info {
-    line_t line; // the line where #include occurs
-    fileid_t fd; // the file ID in SourceMgr's streams
-};
 struct LocTree {
     struct LocTree *parent;
-    union {
-        Include_Info *include;
-        struct PPMacroDef *macro;
-    };
-    bool isAInclude;
-    LocTree(struct LocTree *parent, Include_Info *include = nullptr) : parent{parent}, isAInclude{true} {
-        this->include = include;
-    }
-    LocTree(struct LocTree *parent, struct PPMacroDef *def = nullptr) : parent{parent}, isAInclude{false} {
+    struct PPMacroDef *macro;
+    LocTree(struct LocTree *parent, struct PPMacroDef *def = nullptr) : parent{parent} {
         this->macro = def;
     }
     void setParent(LocTree *theParent) { this->parent = theParent; }
     LocTree *getParent() const { return parent; }
-    unsigned getLastIncludeLine() const {
-        const struct LocTree *ptr = this;
-        while (!ptr->isAInclude)
-            ptr = ptr->parent;
-        return ptr ? ptr->include->line : 1;
-    }
 };
 struct Declator {
     IdentRef name;

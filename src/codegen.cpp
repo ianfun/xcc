@@ -223,8 +223,10 @@ private:
         llvm::Value *v = llvm::ConstantInt::get(integer_types[context.getIntLog2()], num);
         return llvm::ValueAsMetadata::get(v);
     }
+    StringRef getFileStr(unsigned ) {
+        return "";
+    }
     llvm::DIScope *getLexScope() { return lexBlocks.back(); }
-    StringRef getFileStr(unsigned ID) { return SM.getFileName(ID); }
     llvm::DIFile *getFile(unsigned ID) {
         if (lastFileID != ID)
             return lastFileID = ID,

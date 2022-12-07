@@ -218,7 +218,7 @@ struct TextDiagnosticPrinter : public DiagnosticConsumer {
         }
     }
     void printSource(source_location &loc, const ArrayRef<FixItHint> FixItHints);
-    void write_loc(const source_location &loc);
+    void write_loc(const source_location &loc, const struct IncludeFile *file);
 };
 struct DiagnosticsEngine {
     unsigned ErrorLimit = 0;

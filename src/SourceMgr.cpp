@@ -10,92 +10,146 @@
 // https://doc.rust-lang.org/beta/nightly-rustc/rustc_span/index.html
 // https://clang.llvm.org/doxygen/classclang_1_1FileManager.html
 
+// llvm::SourceMgr
+// https://llvm.org/doxygen/classllvm_1_1SourceMgr.html
+
 // gcc line map
 // https://github.com/gcc-mirror/gcc/blob/master/libcpp/include/line-map.h
 
 // https://doc.rust-lang.org/beta/nightly-rustc/rustc_span/struct.SourceFile.html
 // https://clang.llvm.org/doxygen/classclang_1_1SrcMgr_1_1ContentCache.html
-struct Stream {
-    Stream(llvm::MemoryBuffer *MemBuffer, location_t startLoc, const char *Name): MemBuffer{MemBuffer}, startLoc{startLoc}, loc{0}, endLoc{static_cast<location_t>(startLoc + MemBuffer->getBufferSize())}, Name{Name}, BufferStart{MemBuffer->getBufferStart()} {}
-    Stream(const Stream &) = delete;
-    ~Stream() { delete MemBuffer; }
-    llvm::MemoryBuffer *MemBuffer;
-    location_t startLoc, loc, endLoc;
-    const char *Name;
-    bool hasLineOffsetMapping = false;
-    SmallVector<uint32_t> lineOffsetMapping;
-    const char *BufferStart;
-    const char *getBufferStart() const { return BufferStart; }
-    size_t getFileSize() const { return MemBuffer->getBufferSize(); }
-    auto getBufferEnd() const { return MemBuffer->getBufferEnd(); }
-    const SmallVectorImpl<unsigned> &getLineOffsetMapping() const {
-        assert(hasLineOffsetMapping);
-        return lineOffsetMapping;
+
+struct ContentCache {
+    llvm::MemoryBuffer *Buffer = nullptr; // owns the buffer, never null
+    void *lineOffsetMapping = nullptr;
+    StringRef Name;
+    ContentCache() = delete;
+    ContentCache(llvm::MemoryBuffer *Buffer, const StringRef &Name = StringRef()): Buffer{Buffer}, lineOffsetMapping{}, Name{Name} { 
+        dbgprint("ContentCache(Name: %s)\n", Name.data());
     }
-    SmallVectorImpl<unsigned> &getLineOffsetMappingSafe() {
-        if (!hasLineOffsetMapping)
-            createLineOffsetMapping();
-        return lineOffsetMapping;
+    ContentCache(const ContentCache &) = delete;
+    void setName(StringRef Name) { this->Name = Name; }
+    const StringRef& getName() const { return Name; }
+    size_t getFileSize() { return Buffer->getBufferSize(); }
+    template <typename T>
+    unsigned getLineNumberFor(location_t offset) const {
+        const xvector<T> vec = xvector<T>::from_opache_pointer(lineOffsetMapping);
+        const T *start = &vec.front();
+        const T *end =   &vec.back();
+        return static_cast<unsigned>(std::lower_bound(start, end, static_cast<T>(offset)) - start) + 1;
     }
+    unsigned getLineNumber(location_t offset) {
+        if (!lineOffsetMapping) {
+            size_t Size = getFileSize();
+            if (Size < size_t(0xFF))
+                return createLineOffsetMapping<uint8_t>(), getLineNumberFor<uint8_t>(offset);
+            else if (Size <= size_t(0xFFFF))
+                return createLineOffsetMapping<uint16_t>(), getLineNumberFor<uint16_t>(offset);
+            return createLineOffsetMapping<uint32_t>(), getLineNumberFor<uint32_t>(offset);
+        }
+        size_t Size = getFileSize();
+        if (Size < size_t(0xFF))
+            return getLineNumberFor<uint8_t>(offset);
+        else if (Size <= size_t(0xFFFF))
+            return getLineNumberFor<uint16_t>(offset);
+        return getLineNumberFor<uint32_t>(offset);
+    }
+    llvm::MemoryBuffer *getBuffer() { return Buffer; }
+    const llvm::MemoryBuffer *getBuffer() const { return Buffer; }
+    const char *getBufferStart() const { return Buffer->getBufferStart(); }
+    template <typename T>
     void createLineOffsetMapping() {
-        assert(!hasLineOffsetMapping && lineOffsetMapping.empty());
-        uint32_t I = 0;
-        size_t max = MemBuffer->getBufferSize();
-        const char *s = BufferStart;
-        lineOffsetMapping.push_back(0);
+        xvector<T> vec = xvector<T>::get();
+        lineOffsetMapping = vec.p;
+        T I = 0;
+        size_t max = Buffer->getBufferSize();
+        const char *s = Buffer->getBufferStart();
+        vec.push_back(0);
         for (size_t i = 0; i < max; ++i) {
             char c = s[i];
             if (c == '\n') {
-                lineOffsetMapping.push_back(I + 1);
+                vec.push_back(I + 1);
             } else if (c == '\r') {
                 if (i + 1 < max && s[i + 1] == '\n')
                     ++I;
-                lineOffsetMapping.push_back(I + 1);
+                vec.push_back(I + 1);
             }
             ++I;
         }
     }
-    char readChar() {
-        return loc < endLoc ? BufferStart[loc++] : '\0';
+    ~ContentCache() { 
+        delete Buffer;
+        if (lineOffsetMapping)
+            reinterpret_cast<xvector<char>*>(lineOffsetMapping)->free();
     }
-    location_t getEndLoc() const { return startLoc + getFileSize(); }
-    void setName(const char *Name) { this->Name = Name; }
-    const char *getName() const { return Name; }
-    const char *getFileName() const { return getName(); }
-    StringRef getFileNameFromMemoryBuffer() const { return MemBuffer->getBufferIdentifier(); }
-    StringRef getBuffer() const { return MemBuffer->getBuffer(); }
+};
+struct IncludeFile {
+    ContentCache *cache;
+    const char *buffer_start;
+    location_t where_I_included;
+    location_t startLoc;
+    location_t loc;
+    location_t endLoc;
+    location_t getFileSize() const {
+        return endLoc - startLoc;
+    }
+    location_t getStartLoc() const {
+        return startLoc;
+    }
+    location_t getEndLoc() const {
+        return startLoc + cache->getFileSize();
+    }
+    location_t getIncludePos() const {
+        return where_I_included;
+    }
+    const char *getBufferStart() const {
+        return buffer_start;
+    }
+    IncludeFile(ContentCache *cache, location_t startLoc = 0, location_t includePos = 0): cache{cache}, where_I_included{includePos}, startLoc{startLoc} {
+        buffer_start = cache->getBufferStart();
+        endLoc = startLoc + cache->getFileSize();
+        loc = startLoc;
+    }
+    inline char read() {
+        return LLVM_LIKELY(loc < endLoc) ? buffer_start[loc++] : '\0';
+    }
+    location_t getLoc() {
+        return loc;
+    }
 };
 struct SourceMgr : public DiagnosticHelper {
     char buf[STREAM_BUFFER_SIZE];
     SmallVector<xstring, 16> sysPaths;
     SmallVector<xstring, 16> userPaths;
-    SmallVector<Stream*> streams;
-    SmallVector<fileid_t, 16> includeStack;
+    SmallVector<IncludeFile> includeStack;
+    llvm::StringMap<ContentCache*> cached_files;
+    SmallVector<ContentCache*, 0> cached_strings;
     LocTree *tree = nullptr;
-    std::map<location_t, LocTree *, std::less<location_t>> location_map;
+    std::map<location_t, LocTree */*, std::less<location_t>*/> location_map;
     StringRef lastDir = StringRef();
     bool trigraphs;
     bool is_tty;
     unsigned current_line = 1;
     void setLine(unsigned line) { current_line = line; }
-    const char *getFileName(unsigned i) const { return streams[i]->getFileName(); }
-    const char *getFileName() const {
-        return includeStack.size() ? streams[includeStack.back()]->getFileName() : "(unknown file)";
+    StringRef getFileName() const {
+        return includeStack.back().cache->getName();
     }
-    void setFileName(const char *Name) { streams[includeStack.back()]->setName(Name); }
-    location_t getCurrentLocation() const { return streams.back()->loc; }
-    location_t getEndLoc() const { return streams.empty() ? 0 : streams[includeStack.back()]->endLoc; }
-    location_t getLoc() const { return streams[includeStack.back()]->loc; }
+    ~SourceMgr() {
+        for (ContentCache *it : cached_strings) {
+            delete it;
+        }
+        for (const auto &it: cached_files) {
+            ContentCache *c = it.second;
+            delete c;
+        }
+    }
+    void setFileName(StringRef Name) { includeStack.back().cache->setName(Name); }
+    location_t getLoc() const { return includeStack.back().loc; }
     inline LocTree *getLocTree() const { return tree; }
     void beginExpandMacro(PPMacroDef *M, xcc_context &context) {
-        location_map[getCurrentLocation()] = (tree = new (context.getAllocator()) LocTree(tree, M));
+        location_map[getLoc()] = (tree = new (context.getAllocator()) LocTree(tree, M));
     }
-    void beginInclude(xcc_context &context, fileid_t theFD) {
-        assert(includeStack.size() >= 2 && "call beginInclude() without previous include position!");
-        Include_Info *info = new (context.getAllocator()) Include_Info{.line = current_line, .fd = theFD};
-        location_map[getCurrentLocation()] = (tree = new (context.getAllocator()) LocTree(tree, info));
-    }
-    void endTree() { location_map[getCurrentLocation()] = (tree = tree->getParent()); }
+    void endTree() { location_map[getLoc()] = (tree = tree->getParent()); }
     SourceMgr(DiagnosticsEngine &Diag) : DiagnosticHelper{Diag}, buf{}, trigraphs{false} {
 #if WINDOWS
         DWORD dummy;
@@ -109,7 +163,18 @@ struct SourceMgr : public DiagnosticHelper {
     void addSysIncludeDir(xstring path) { sysPaths.push_back(path); }
     void addUsernIcludeDir(StringRef path) { userPaths.push_back(xstring::get(path)); }
     void addSysIncludeDir(StringRef path) { sysPaths.push_back(xstring::get(path)); }
-    bool addFile(const char *path, bool verbose = true) {
+    location_t getInsertPos() const {
+        if (includeStack.empty())
+            return 0;
+        return includeStack.back().endLoc + 1;
+    }
+    bool addFile(StringRef path, bool verbose = true, location_t includePos = 0) {
+        auto it = cached_files.insert({path, static_cast<ContentCache*>(nullptr)});
+        if (!it.second) {
+PUSH:
+            includeStack.emplace_back(it.first->second, getInsertPos(), includePos);
+            return true;
+        }
         location_t fileSize;
 #if WINDOWS
         llvm::SmallVector<WCHAR, 128> convertBuffer;
@@ -134,7 +199,7 @@ struct SourceMgr : public DiagnosticHelper {
             return error("file size %Z is too large for XCC", total), false;
         }
 #else
-        int fd = ::open(path, O_RDONLY);
+        int fd = ::open(path.data(), O_RDONLY);
         if (fd < 0) {
             if (verbose)
                 error("cannot open %s: %o", path, errno);
@@ -163,67 +228,36 @@ struct SourceMgr : public DiagnosticHelper {
             error("error reading %s: %R", path, msgStr);
             return false;
         }
-        const size_t Id = streams.size();
-        streams.push_back(new Stream(MemberBufferOrErr->release(), getEndLoc(), path));
+        ContentCache *cache = new ContentCache(MemberBufferOrErr->release(), it.first->getKey());
+        includeStack.emplace_back(cache, getInsertPos(), includePos);
+        it.first->second = cache;
         lastDir = llvm::sys::path::parent_path(path, llvm::sys::path::Style::native);
         if (lastDir.empty())
             lastDir = ".";
-        includeStack.push_back(Id);
 #if WINDOWS
         CloseHandle(fd);
 #else
         close(fd);
 #endif
-        return true;
+        goto PUSH;
     }
-    fileid_t getFileID(location_t loc, location_t &offset) const {
-        for (size_t i = 0; i < streams.size(); ++i) {
-            if (loc < streams[i]->endLoc) {
-                offset = loc - streams[i]->startLoc;
-                return i;
+    const IncludeFile* searchIncludeFile(location_t loc, location_t &offset) const {
+        for (const auto &entry: includeStack) {
+            if (loc < entry.endLoc) {
+                offset = loc - entry.startLoc;
+                return &entry;
             }
         }
-        return (fileid_t)-1;
-    }
-    fileid_t lastQueryFileId_line = (fileid_t)-1;
-    location_t lastQueryOffset_line = (location_t)-1;
-    unsigned lastQueryResult_line = 0;
-    unsigned getLineNumber(location_t offset, fileid_t FD) {
-        Stream &f = *streams[FD];
-        const auto &line_vec = f.getLineOffsetMappingSafe();
-        const unsigned *lineStart = line_vec.data();
-        const unsigned *lineEnd = lineStart + line_vec.size();
-        const unsigned *searchBegin = lineStart;
-        location_t QueriedFilePos = offset + 1;
-        if (FD == lastQueryFileId_line) {
-            if (offset > lastQueryOffset_line)
-                searchBegin = lineStart + lastQueryResult_line - 1;
-            if (searchBegin + 5 < lineEnd) {
-                if (searchBegin[5] > QueriedFilePos)
-                    lineEnd = searchBegin + 5;
-                else if (searchBegin + 10 < lineEnd) {
-                    if (searchBegin[10] > QueriedFilePos)
-                        lineEnd = searchBegin + 10;
-                    else if (searchBegin + 20 < lineEnd) {
-                        if (searchBegin[20] > QueriedFilePos)
-                            lineEnd = searchBegin + 20;
-                    }
-                }
-            }
-        }
-        const unsigned *Pos = std::lower_bound(searchBegin, lineEnd, QueriedFilePos);
-        return (lastQueryResult_line = Pos - lineStart);
+        return nullptr;
     }
     unsigned getLineNumber(location_t loc) {
         location_t offset;
-        fileid_t FD = getFileID(loc, offset);
-        if (FD == (fileid_t)-1)
-            return 1;
-        return getLineNumber(offset, FD);
+        const IncludeFile *entry = searchIncludeFile(loc, offset);
+        if (!entry) return 1;
+        return entry ? entry->cache->getLineNumber(offset) : 1;
     }
-    unsigned getColumnNumber(location_t offset, fileid_t FD) {
-        Stream &f = *streams[FD];
-        const char *Buffer = f.getBufferStart();
+    unsigned getColumnNumber(location_t offset, const IncludeFile &stack) {
+        const char *Buffer = stack.getBufferStart();
         unsigned lineStart = offset;
         while (lineStart && Buffer[lineStart - 1] != '\n' && Buffer[lineStart - 1] != '\r')
             --lineStart;
@@ -231,27 +265,23 @@ struct SourceMgr : public DiagnosticHelper {
     }
     unsigned getColumnNumber(location_t loc) {
         location_t offset;
-        fileid_t FD = getFileID(loc, offset);
-        if (FD == (fileid_t)-1)
-            return 1;
-        return getColumnNumber(offset, FD);
+        const IncludeFile *entry = searchIncludeFile(loc, offset);
+        return entry ? getColumnNumber(offset, *entry) : 1;
     }
     std::pair<unsigned, unsigned> getLineAndColumn(location_t loc) {
         location_t offset;
-        fileid_t fd = getFileID(loc, offset);
-        if (fd == (fileid_t)-1)
-            return std::make_pair<unsigned, unsigned>(1, 1);
-        return std::make_pair<unsigned, unsigned>(getLineNumber(offset, fd), getColumnNumber(offset, fd));
+        const IncludeFile *entry = searchIncludeFile(loc, offset);
+        if (!entry)
+            return {0U, 0U};
+        return {entry->cache->getLineNumber(offset), getColumnNumber(offset, *entry)};
     }
     bool translateLocation(location_t loc, source_location &out, const ArrayRef<SourceRange> ranges = {}) {
-        assert(streams.size() && "cannot call translateLocation when empty stream");
         if (loc == 0)
             return false;
         location_t offset;
-        fileid_t fd = getFileID(loc, offset);
-        if (fd == (fileid_t)-1)
+        const IncludeFile *fd = searchIncludeFile(loc, offset);
+        if (!fd)
             return false;
-        out.fd = fd;
         auto it = location_map.lower_bound(loc);
         if (it == location_map.begin())
             goto NO_TREE;
@@ -259,20 +289,22 @@ struct SourceMgr : public DiagnosticHelper {
         if (it == location_map.begin())
             goto NO_TREE;
         out.tree = it->second;
-        get_source(offset, out, loc, ranges);
+        get_source(offset, out, loc, ranges, *fd);
         return true;
 NO_TREE:
         out.tree = nullptr;
-        get_source(offset, out, loc, ranges);
+        get_source(offset, out, loc, ranges, *fd);
         return true;
     }
     // translate location_t to 
     // 1. source line(string)
     // 2. line
     // 3. column
-    static void get_source_for_string(const char *s, size_t max, source_location &out, location_t offset, location_t loc,
-                                      const ArrayRef<SourceRange> ranges) {
+    static void get_source(location_t offset, source_location &out, location_t loc,
+             const ArrayRef<SourceRange> ranges, const IncludeFile &entry) {
         location_t last_line_offset = 0;
+        const char *s = entry.getBufferStart();
+        size_t max = entry.getFileSize();
         unsigned line = 1;
         bool lastIsCL = false;
         for (location_t i = 0; i < offset; ++i) {
@@ -304,38 +336,31 @@ NO_TREE:
             out.source_line.push_back(c, loc, ranges);
         }
     }
-    void get_source(location_t offset, source_location &out, location_t original_loc,
-                    const ArrayRef<SourceRange> ranges = {}) {
-        Stream &s = *streams[out.fd];
-        get_source_for_string(s.getBufferStart(), s.getFileSize(), out, offset, original_loc, ranges);
+    StringRef getMainFileName() {
+        return includeStack.front().cache->getName();
     }
     bool empty() const { return includeStack.empty(); }
-    // read a char from a stream
-    char raw_read(Stream &stream) {
-        return stream.readChar();
-    }
-    char raw_read_from_id(unsigned id) { return raw_read(*streams[id]); }
-    bool searchFileInDir(xstring &result, StringRef path, xstring *dir, size_t len) {
+    bool searchFileInDir(xstring &result, StringRef path, xstring *dir, size_t len, location_t loc) {
         for (size_t i = 0; i < len; ++i) {
             result += dir[i];
             if (dir[i].empty() || dir[i].front() == '/' || dir[i].front() == '\\')
                 result += '/';
             result += path;
             result.make_eos();
-            if (addFile(result.data()), false)
+            if (addFile(result.data(), false, loc))
                 return true;
             result.clear();
         }
         return false;
     }
-    bool searchFileInDir(xstring &result, StringRef path, const char **dir, size_t len) {
+    bool searchFileInDir(xstring &result, StringRef path, const char **dir, size_t len, location_t loc) {
         for (size_t i = 0; i < len; ++i) {
             result += dir[i];
             if (!*(dir[i]) || dir[i][0] == '/' || dir[i][0] == '\\')
                 result += '/';
             result += path;
             result.make_eos();
-            if (addFile(result.data()), false)
+            if (addFile(result.data(), false, loc))
                 return true;
             result.clear();
         }
@@ -349,13 +374,13 @@ NO_TREE:
             result += lastDir;
             result += '/';
             result += path;
-            if (addFile(result.data(), false))
+            if (addFile(result.data(), false, loc))
                 return true;
             result.clear();
         }
-        if (searchFileInDir(result, path, userPaths.data(), userPaths.size()))
+        if (searchFileInDir(result, path, userPaths.data(), userPaths.size(), loc))
             return true;
-        if (searchFileInDir(result, path, sysPaths.data(), sysPaths.size()))
+        if (searchFileInDir(result, path, sysPaths.data(), sysPaths.size(), loc))
             return true;
         result.free();
         pp_error(loc, "#include file not found: %r", StringRef(path.data(), path.size() - 1));
@@ -429,14 +454,8 @@ BREAK:
         Msg += " ";
         note("%r", StringRef(Msg));
     }
-    // you should call this only if you don't use any streams and don't use any reference with MemoryBuffer(Name and contents)
-    void closeAllFiles() {
-        for (Stream *s : streams)
-            delete s;
-        streams.clear();
-    }
-    ~SourceMgr() { closeAllFiles(); }
-    void addStdin(const char *Name = "<stdin>") {
+    // this function does not save the string, so the called must pass as constant global string or alloced somewhere.
+    void addStdin(StringRef Name = "<stdin>", location_t includePos = 0) {
         ErrorOr<std::unique_ptr<MemoryBuffer>> MemberBufferOrErr = llvm::MemoryBuffer::getSTDIN();
         if (!MemberBufferOrErr) {
             std::string msg = MemberBufferOrErr.getError().message();
@@ -444,17 +463,18 @@ BREAK:
             error("error reading from stdin: %R", Name, msgStr);
             return;
         }
-        const size_t Id = streams.size();
-        streams.push_back(new Stream(MemberBufferOrErr->release(), getEndLoc(), Name));
-        includeStack.push_back(Id);
+        ContentCache *cache = new ContentCache(MemberBufferOrErr->release(), Name);
+        cached_strings.push_back(cache);
+        includeStack.emplace_back(cache, getInsertPos(), includePos);
     }
-    void addString(StringRef s, const char *Name = "<string>") {
-        const size_t Id = streams.size();
-        streams.push_back(new Stream(llvm::MemoryBuffer::getMemBuffer(s, Name, false).release(), getEndLoc(), Name));
-        includeStack.push_back(Id);
+    // this function does not save the string, so the called must pass as constant global string or alloced somewhere.
+    void addString(StringRef s, StringRef Name = "<string>", location_t includePos = 0) {
+        ContentCache *cache = new ContentCache(llvm::MemoryBuffer::getMemBuffer(s, Name, false).release(), Name);
+        cached_strings.push_back(cache);
+        includeStack.emplace_back(cache, getInsertPos(), includePos);
     }
     uint16_t lastc = 256, lastc2 = 256;
-    char raw_read_from_stack() { return raw_read(*streams[includeStack.back()]); }
+    char advance_next() { return includeStack.back().read(); }
     // Translation phases 1
     char stream_read() {
         // for support '\r' end-of-lines
@@ -471,16 +491,10 @@ BREAK:
         if (includeStack.empty()) {
             return '\0';
         } else {
-            char c = raw_read_from_stack();
+            char c = advance_next();
             switch (c) {
             default: return c;
             case '\0':
-                if (tree) {
-                    current_line = tree->getLastIncludeLine();
-                    location_map[getCurrentLocation()] = tree->getParent();
-                } else {
-                    location_map[getCurrentLocation()] = nullptr;
-                }
                 includeStack.pop_back();
                 if (includeStack.empty())
                     return '\0';
@@ -490,7 +504,7 @@ BREAK:
                 return '\n';
             case '\r': {
                 char c2;
-                c2 = raw_read_from_stack();
+                c2 = advance_next();
                 current_line++;
                 if (c2 != '\n')
                     lastc = (unsigned char)c;
@@ -587,25 +601,5 @@ RET:
         case '<': return '{';
         case '-': return '~';
         }
-    }
-    void dump(raw_ostream &OS = llvm::errs()) const {
-        OS << "Dumping class SourceMgr:\n"
-           << "Number of Streams:" << streams.size() << '\n';
-        if (streams.empty())
-            OS << "  (empty)\n";
-        else {
-            for (unsigned i = 0; i < streams.size(); ++i) {
-                const Stream &s = *streams[i];
-                OS << "  # stream " << i << ": " << s.getFileName() << ", " << s.getFileSize() << " bytes, startLoc =" << s.startLoc << ", endLoc ="  << s.endLoc << "\n";
-            }
-        }
-        OS << "\nInclude stack:\n";
-        if (includeStack.empty())
-            OS << "  (empty)\n";
-        else {
-            for (unsigned i = 0; i < includeStack.size(); ++i)
-                OS << "  # include_stack " << i << ": fd =" << includeStack[i] << '\n';
-        }
-        OS << "\n";
     }
 };

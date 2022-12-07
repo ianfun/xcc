@@ -23,31 +23,31 @@ void TextDiagnosticPrinter::printSource(source_location &loc, const ArrayRef<Fix
     }
     OS << '\n';
 }
-void TextDiagnosticPrinter::write_loc(const source_location &loc) {
+void TextDiagnosticPrinter::write_loc(const source_location &loc, const struct IncludeFile *file) {
     OS.changeColor(llvm::raw_ostream::Colors::SAVEDCOLOR, true);
-    OS << SM->getFileName(loc.fd) << ':' << loc.line << ':' << loc.col << ": ";
+    OS << file->cache->getName() << ':' << loc.line << ':' << loc.col << ": ";
     OS.changeColor(llvm::raw_ostream::Colors::SAVEDCOLOR, false);
 }
 void TextDiagnosticPrinter::realHandleDiagnostic(const Diagnostic &Diag) {
     bool locValid = false;
-    LocTree *begin_macro = nullptr;
     source_location loc;
     if (SM && Diag.loc != 0) {
         locValid = SM->translateLocation(Diag.loc, loc, Diag.ranges);
         if (!locValid)
             goto NO_LOC;
-        begin_macro = loc.tree;
-        LocTree *ptr = begin_macro;
-        for (; ptr && ptr->isAInclude; ptr = ptr->getParent()) {
-            auto it = ptr->include;
-            OS << StringRef(ptr == begin_macro ? "In file included from " : "                      ", 22);
+        location_t dummy;
+        const IncludeFile *file = SM->searchIncludeFile(Diag.loc, dummy), *ptr = file;
+        if (!file) goto NO_LOC; // the location may invalid or to big
+        bool first = true;
+        while (ptr->getIncludePos() != 0 && (ptr = SM->searchIncludeFile(ptr->getIncludePos(), dummy))) {
+            OS << StringRef(first ? "In file included from " : "                      ", 22);
             OS.changeColor(llvm::raw_ostream::Colors::SAVEDCOLOR, true);
-            OS << SM->getFileName(it->fd) << ':' << it->line;
+            OS << ptr->cache->getName() << ':' << ptr->getIncludePos();
             OS.changeColor(llvm::raw_ostream::Colors::SAVEDCOLOR, false);
             OS << ":\n";
+            first = false;
         }
-        begin_macro = ptr;
-        write_loc(loc);
+        write_loc(loc, ptr);
     } else {
 NO_LOC:
         OS << "xcc: ";
@@ -88,10 +88,13 @@ NO_LOC:
     }
     if (locValid) {
         printSource(loc, Diag.FixItHints);
-        for (LocTree *ptr = begin_macro; ptr; ptr = ptr->getParent()) {
+        for (LocTree *ptr = loc.tree; ptr; ptr = ptr->getParent()) {
             PPMacroDef *def = ptr->macro;
             SM->translateLocation(def->loc, loc);
-            write_loc(loc);
+            location_t dummy;
+            const IncludeFile *file = SM->searchIncludeFile(def->loc, dummy);
+            if (file)
+                write_loc(loc, file);
             OS.changeColor(noteColor, true);
             OS << "note: ";
             OS.resetColor();

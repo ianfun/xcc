@@ -3,7 +3,7 @@ template <typename T> struct xvector {
         size_t _length, _capacity;
         T _data[0];
     } *p;
-    using p_xvector_impl = decltype(p);
+    using p_xvector_impl = _xvector_impl*;
     void free() const { std::free(reinterpret_cast<void *>(this->p)); };
     static xvector<T> get() {
         xvector<T> res;
@@ -19,6 +19,11 @@ template <typename T> struct xvector {
         res.p = reinterpret_cast<p_xvector_impl>(llvm::safe_malloc(sizeof(_xvector_impl) + init_size * sizeof(T)));
         res.p->_length = 0;
         res.p->_capacity = init_size;
+        return res;
+    }
+    static xvector<T> from_opache_pointer(const void *Ptr) {
+        xvector<T> res;
+        res.p = reinterpret_cast<p_xvector_impl>(const_cast<void*>(Ptr));
         return res;
     }
     static xvector<T> get_with_length(size_t length) {
@@ -94,9 +99,9 @@ template <typename T> struct xvector {
         --p->_length;
     }
     bool empty() const { return p->_length == 0; }
-    T front() const { return *p->_data; }
+    const T &front() const { return *p->_data; }
     T &front() { return *p->_data; }
-    T back() const { return p->_data[p->_length - 1]; }
+    const T & back() const { return p->_data[p->_length - 1]; }
     T &back() { return p->_data[p->_length - 1]; }
     const T *begin() const { return p->_data; };
     T *begin() { return p->_data; }
