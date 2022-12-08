@@ -27,10 +27,14 @@ struct Lexer : public EvalHelper {
 
     Lexer(SourceMgr &SM, Parser *parser, xcc_context &context, DiagnosticsEngine &Diag)
         : EvalHelper{Diag}, parser{parser}, SM{SM}, context{context} { }
+private:
     location_t getLoc() const { return loc; }
     location_t getEndLoc() const { return endLoc; }
     Expr constant_expression();
-    void updateLoc() { loc = SM.getLoc() - 1; }
+    void updateLoc() { 
+        loc = SM.getLoc() - 1; 
+        endLoc = loc;
+    }
     static bool isCSkip(char c) {
         // space, tab, new line, form feed are translate into ' '
         return c == ' ' || c == '\t' || c == '\f' || c == '\v';
@@ -364,9 +368,10 @@ END:
                 return true;
         return false;
     }
+public:
     void cpp() {
         if (tokenq.empty())
-            tok = lex();
+            tok = lexAndLoc();
         else
             tok = tokenq.back(), tokenq.pop_back();
         if (tok.tok >= kw_start && tok.tok != TIdentifier) {
@@ -375,6 +380,8 @@ END:
             isPPMode = false;
             if (tok.tok == TNewLine)
                 return cpp();
+            if (tok.tok > TIdentifier)
+                tok.tok = TIdentifier;
         } else if (tok.tok == PPMacroPop) {
             SM.endTree();
             expansion_list.pop_back();
@@ -420,9 +427,15 @@ END:
         case dc: return eat(), dt;                                                                                     \
         default: return d;                                                                                             \
         }
-
+    // lex a token and update the location
+    inline TokenV lexAndLoc() {
+        TokenV it = lex();
+        it.setLoc(loc);
+        it.setEndLoc(endLoc);
+        return it;
+    }
+    // lex and retrun a token without expanding macros
     TokenV lex() {
-        // Tokenize
         for (;;) {
             if (c == '\0')
                 return isPPMode = false, TEOF;
@@ -530,8 +543,11 @@ RUN:
                         tok = lex(); // eat ')'
                         isDisableSpace = false;
                     }
+                    tok.setLoc(loc);
+                    tok.setEndLoc(endLoc);
                     while (isPPMode) {
-                        theMacro->tokens.push_back(tok), tok = lex();
+                        theMacro->tokens.push_back(tok);
+                        tok = lexAndLoc();
                     }
                     if (theMacro->tokens.size())
                         while (theMacro->tokens.back().tok == TSpace)
@@ -881,10 +897,11 @@ STD_INCLUDE:
                     return lexIdent();
                 warning(loc, "stray %C(ascii %u) in program", c, (unsigned)(unsigned char)c);
                 break;
-            } // end switch
+            }
             eat();
-        } // end for
-    }     // end lex
+        }
+    }
+private:
     void checkMacro() {
         IdentRef name = tok.s;
         Token saved_tok;

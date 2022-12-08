@@ -107,9 +107,11 @@ struct SourceMgr : public DiagnosticHelper {
     char buf[STREAM_BUFFER_SIZE];
     SmallVector<xstring, 16> sysPaths;
     SmallVector<xstring, 16> userPaths;
-    SmallVector<IncludeFile> includeStack;
+    SmallVector<IncludeFile> includeStack; // incremental include stack
+    SmallVector<unsigned> grow_include_stack; // the actual dynamic include stack
     llvm::StringMap<ContentCache *> cached_files;
     SmallVector<ContentCache *, 0> cached_strings;
+    IncludeFile *cur_include_file;
     LocTree *tree = nullptr;
     std::map<location_t, LocTree * /*, std::less<location_t>*/> location_map;
     StringRef lastDir = StringRef();
@@ -117,7 +119,7 @@ struct SourceMgr : public DiagnosticHelper {
     bool is_tty;
     unsigned current_line = 1;
     void setLine(unsigned line) { current_line = line; }
-    StringRef getFileName() const { return includeStack.back().cache->getName(); }
+    StringRef getFileName() const { return includeStack[grow_include_stack.back()].cache->getName(); }
     ~SourceMgr() {
         for (ContentCache *it : cached_strings) {
             delete it;
@@ -127,8 +129,8 @@ struct SourceMgr : public DiagnosticHelper {
             delete c;
         }
     }
-    void setFileName(StringRef Name) { includeStack.back().cache->setName(Name); }
-    location_t getLoc() const { return includeStack.back().loc; }
+    void setFileName(StringRef Name) { includeStack[grow_include_stack.back()].cache->setName(Name); }
+    location_t getLoc() const { return includeStack[grow_include_stack.back()].loc; }
     inline LocTree *getLocTree() const { return tree; }
     void beginExpandMacro(PPMacroDef *M, xcc_context &context) {
         location_map[getLoc()] = (tree = new (context.getAllocator()) LocTree(tree, M));
@@ -157,6 +159,7 @@ struct SourceMgr : public DiagnosticHelper {
         if (!it.second) {
 PUSH:
             includeStack.emplace_back(it.first->second, getInsertPos(), includePos);
+            addBuffer();
             return true;
         }
         location_t fileSize;
@@ -214,6 +217,7 @@ PUSH:
         }
         ContentCache *cache = new ContentCache(MemberBufferOrErr->release(), it.first->getKey());
         includeStack.emplace_back(cache, getInsertPos(), includePos);
+        addBuffer();
         it.first->second = cache;
         lastDir = llvm::sys::path::parent_path(path, llvm::sys::path::Style::native);
         if (lastDir.empty())
@@ -260,12 +264,13 @@ PUSH:
             return {0U, 0U};
         return {entry->cache->getLineNumber(offset), getColumnNumber(offset, *entry)};
     }
+public:
     bool translateLocation(location_t loc, source_location &out, const ArrayRef<SourceRange> ranges = {}) {
         if (loc == 0)
             return false;
         location_t offset;
         const IncludeFile *fd = searchIncludeFile(loc, offset);
-        if (!fd)
+        if (!fd) 
             return false;
         auto it = location_map.lower_bound(loc);
         if (it == location_map.begin())
@@ -322,7 +327,7 @@ NO_TREE:
         }
     }
     StringRef getMainFileName() { return includeStack.front().cache->getName(); }
-    bool empty() const { return includeStack.empty(); }
+private:
     bool searchFileInDir(xstring &result, StringRef path, xstring *dir, size_t len, location_t loc) {
         for (size_t i = 0; i < len; ++i) {
             result += dir[i];
@@ -349,6 +354,7 @@ NO_TREE:
         }
         return false;
     }
+public:
     bool addIncludeFile(StringRef path, bool isAngled, location_t loc) {
         // https://stackoverflow.com/q/21593/15886008
         // path must be null terminated
@@ -437,6 +443,15 @@ BREAK:
         Msg += " ";
         note("%r", StringRef(Msg));
     }
+public:
+    // Returns true if no source file inputs
+    bool empty() const {
+        return includeStack.empty();
+    }
+    // Retruns true if no files current reading
+    bool empty_active() const {
+        return grow_include_stack.empty();
+    }
     // this function does not save the string, so the called must pass as constant global string or alloced somewhere.
     void addStdin(StringRef Name = "<stdin>", location_t includePos = 0) {
         ErrorOr<std::unique_ptr<MemoryBuffer>> MemberBufferOrErr = llvm::MemoryBuffer::getSTDIN();
@@ -449,15 +464,22 @@ BREAK:
         ContentCache *cache = new ContentCache(MemberBufferOrErr->release(), Name);
         cached_strings.push_back(cache);
         includeStack.emplace_back(cache, getInsertPos(), includePos);
+        addBuffer();
     }
     // this function does not save the string, so the called must pass as constant global string or alloced somewhere.
     void addString(StringRef s, StringRef Name = "<string>", location_t includePos = 0) {
         ContentCache *cache = new ContentCache(llvm::MemoryBuffer::getMemBuffer(s, Name, false).release(), Name);
         cached_strings.push_back(cache);
         includeStack.emplace_back(cache, getInsertPos(), includePos);
+        addBuffer();
+    }
+private:
+    void addBuffer() {
+        grow_include_stack.push_back(includeStack.size() - 1);
+        cur_include_file = &includeStack[grow_include_stack.back()];
     }
     uint16_t lastc = 256, lastc2 = 256;
-    char advance_next() { return includeStack.back().read(); }
+    char advance_next() { return cur_include_file->read(); }
     // Translation phases 1
     char stream_read() {
         // for support '\r' end-of-lines
@@ -471,17 +493,19 @@ BREAK:
             lastc = 256;
             return res;
         }
-        if (includeStack.empty()) {
+        if (grow_include_stack.empty()) {
             return '\0';
         } else {
+            CONTINUE:
             char c = advance_next();
             switch (c) {
             default: return c;
             case '\0':
-                includeStack.pop_back();
-                if (includeStack.empty())
+                grow_include_stack.pop_back();
+                if (grow_include_stack.empty())
                     return '\0';
-                return stream_read();
+                cur_include_file = &includeStack[grow_include_stack.back()];
+                goto CONTINUE;
             case '\n': current_line++; return '\n';
             case '\r': {
                 char c2;
@@ -494,6 +518,21 @@ BREAK:
             }
         }
     }
+    static char GetTrigraphCharForLetter(char Letter) {
+        switch (Letter) {
+        default: return 0;
+        case '=': return '#';
+        case ')': return ']';
+        case '(': return '[';
+        case '!': return '|';
+        case '\'': return '^';
+        case '>': return '}';
+        case '/': return '\\';
+        case '<': return '{';
+        case '-': return '~';
+        }
+    }
+public:
     char skip_read() {
         char c = stream_read();
         if (c == '/') {
@@ -568,19 +607,5 @@ RET:
             return c;
         }
         return c;
-    }
-    static char GetTrigraphCharForLetter(char Letter) {
-        switch (Letter) {
-        default: return 0;
-        case '=': return '#';
-        case ')': return ']';
-        case '(': return '[';
-        case '!': return '|';
-        case '\'': return '^';
-        case '>': return '}';
-        case '/': return '\\';
-        case '<': return '{';
-        case '-': return '~';
-        }
     }
 };

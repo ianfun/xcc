@@ -1,4 +1,4 @@
-#define DECL static int name = 0;
+#define DECL static int xxx = 0;
 
 DECL
 

@@ -2047,15 +2047,11 @@ NOT_CONSTANT:
     };
     CType declaration_specifiers() { return specifier_qualifier_list(); }
     void consume() {
-        // eat token from preprocessor
         l.cpp();
-        // make preprocessor identfiers to normal identfier
-        if (l.tok.tok > TIdentifier)
-            l.tok.tok = TIdentifier;
     }
     SourceMgr &SM() { return l.SM; }
-    location_t getEndLoc() { return l.getEndLoc(); }
-    location_t getLoc() { return l.getLoc(); }
+    location_t getEndLoc() { return l.tok.getEndLoc(); }
+    location_t getLoc() const { return l.tok.getLoc(); }
     void checkSemicolon() {
         if (l.tok.tok != TSemicolon)
             return (void)warning(getLoc(), "missing ';'");

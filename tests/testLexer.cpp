@@ -3,7 +3,7 @@
     xcc::TokenV tok;
 
     do {
-        tok = parser.l.lex();
+        tok = parser.l.lexAndLoc();
         tok.dump(llvm::errs());
         llvm::errs() << '\n';
     } while (tok.tok != xcc::TEOF);

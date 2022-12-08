@@ -1040,12 +1040,12 @@ static bool compatible(CType p, CType expected) {
     }
     llvm_unreachable("invalid CTypeKind");
 }
-
-// TokenV: A Token with a value, and a macro is a sequence of TokenVs
+// A token with a location(may have length) and a value.
+// This structure is currently only 16 bytes in 64 bit machine to make it faster to tokenize and cheaper to store tokens in a macro.
 struct TokenV {
-    void *ptr;
-    Token tok;
-    location_t loc; // optional location
+    Token tok: 8; // 1 bytes
+    unsigned length: 24; // 3 bytes
+    location_t loc; // 4 bytes
     union {
         // containing the encoding, .e.g: 8, 16, 32
         xstring str;
@@ -1064,8 +1064,41 @@ struct TokenV {
         return r;
     }
     // Return the start location.
-    location_t getLocation() const {
+    location_t getLoc() const {
         return loc;
+    }
+    // Return the end location(maybe equals to start)
+    location_t getEndLoc() const {
+        return loc + length;
+    }
+    SourceRange getSourceRange() const {
+        return SourceRange(getLoc(), getEndLoc());
+    }
+    Token getToken() const {
+        return tok;
+    }
+    bool is(Token tok) const {
+        return this->tok == tok;
+    }
+    bool isNot(Token tok) const {
+        return this->tok != tok;
+    }
+    bool matches(const ArrayRef<Token> pattern) {
+        for (Token tok: pattern) {
+            if (this->tok == tok)
+                return true;
+        }
+        return false;
+    }
+    void setLoc(location_t loc) {
+        this->loc = loc;
+    }
+    void setEndLoc(location_t loc) {
+        assert(this->loc <= loc && "invalid endLoc!");
+        length = loc - this->loc + 1;
+    }
+    bool isNull() const {
+        return tok == TNul;
     }
     void setStringPrefix(enum StringPrefix enc = Prefix_none) { str.push_back(static_cast<char>(enc)); }
     enum StringPrefix getCharPrefix() const { return static_cast<enum StringPrefix>(itag); }

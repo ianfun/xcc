@@ -173,7 +173,7 @@ int main(int argc_, const char **argv_)
         xcc::Lexer lexer(SM, nullptr, ctx, engine);
         xcc::TokenV tok;
         do {
-            tok = lexer.lex();
+            tok = lexer.lexAndLoc();
             tok.dump(OS);
             OS << '\n';
         } while (tok.tok != xcc::TEOF);
