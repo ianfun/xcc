@@ -78,10 +78,14 @@ struct OpaqueCType {
     type_tag_t getTags() const { return tags; }
     type_tag_t getTagsQualifiersOnly() const { return tags & type_qualifiers; }
     type_tag_t getTagsStoragesOnly() const { return tags & storage_class_specifiers; }
-    type_tag_t getTagsStoragesAndFunctionsOnly() const { return tags & (storage_class_specifiers | TYINLINE | TYNORETURN); }
+    type_tag_t getTagsStoragesAndFunctionsOnly() const {
+        return tags & (storage_class_specifiers | TYINLINE | TYNORETURN);
+    }
     type_tag_t getTagsQualifiersAndStoragesOnly() const { return tags & type_qualifiers_and_storage_class_specifiers; }
     type_tag_t getTagsNoQualifiersAndStorages() const { return tags & ~type_qualifiers_and_storage_class_specifiers; }
-    type_tag_t getTagsNoQualifiersAndStoragesAndFunctions() const { return tags & (~type_qualifiers_and_storage_class_specifiers | TYINLINE | TYNORETURN); }
+    type_tag_t getTagsNoQualifiersAndStoragesAndFunctions() const {
+        return tags & (~type_qualifiers_and_storage_class_specifiers | TYINLINE | TYNORETURN);
+    }
     type_tag_t getTagsNoQualifiers() const { return tags & ~type_qualifiers; }
     type_tag_t getTagsNoStorages() const { return tags & ~storage_class_specifiers; }
     void clearQualifiers() { tags &= ~type_qualifiers; }
@@ -124,7 +128,7 @@ struct OpaqueCType {
     void addTags(const type_tag_t tags) { return addTag(tags); }
     bool isScalar() const {
         auto k = getKind();
-        return k == TYPOINTER || (k == TYPRIM && !(tags & TYVOID));
+        return k == TYPOINTER || (k == TYPRIM && !(tags & TYVOID)) || (k == TYTAG && isEnum());
     }
     bool isNullPtr_t() const { return hasTag(TYNULLPTR); }
     enum CTypeKind getKind() const { return static_cast<enum CTypeKind>(tags >> 60); }
@@ -211,12 +215,8 @@ struct OpaqueCType {
     void clearTags(const type_tag_t tags_to_clear) { tags &= ~tags_to_clear; }
     void clearTag(const type_tag_t tag_to_clear) { tags &= ~tag_to_clear; }
     type_tag_t andTags(const type_tag_t tag_to_clear) const { return tags & tag_to_clear; }
-    const_CType getFunctionAttrTy() const {
-        return this;
-    }
-    CType getFunctionAttrTy() {
-        return this;
-    }
+    const_CType getFunctionAttrTy() const { return this; }
+    CType getFunctionAttrTy() { return this; }
     void noralize() {
         switch (getKind()) {
         case TYFUNCTION: {
@@ -278,11 +278,81 @@ struct OpaqueCType {
     }
     bool isIncomplete() const {
         const auto kind = getKind();
-        if (kind == TYINCOMPLETE)
-            return true;
-        if (isVoid())
-            return true;
-        if (kind == TYARRAY && hassize == false)
-            return true;
-        return false;
+        return kind == TYTAG || isVoid() || (kind == TYARRAY && hassize == false);
+    }
+    bool isBitInt() const { return getKind() == TYBITINT; }
+    unsigned getBitIntBits() const {
+        assert(isBitInt());
+        return bits;
+    }
+    void setBitIntBits(unsigned bits) {
+        assert(isBitInt());
+        this->bits = bits;
+    }
+    CType getBitIntBaseType() const {
+        assert(isBitInt());
+        return bitint_base;
+    }
+    bool isBitIntSigned() const {
+        assert(isBitInt());
+        return bitint_base->isSigned();
+    }
+    void setDefinition(struct RecordDecl *def) {
+        assert(isAgg());
+        tag_decl = def;
+    }
+    bool hasDefinition() const {
+        assert(isAgg());
+        return static_cast<bool>(tag_decl);
+    }
+    void completeDefinition(union TagDecl tag_decl) {
+        assert(isAgg());
+        this->tag_decl = tag_decl;
+    }
+    enum TagKind getTagDeclTagType() const { return tag; }
+    bool isTag(enum TagKind tag) const { return tag == this->tag; }
+    bool isAgg() const { return getKind() == TYTAG; }
+    bool isEnum() const {
+        assert(isAgg());
+        return isTag(TagType_Enum);
+    }
+    bool isUnion() const {
+        assert(isAgg());
+        return isTag(TagType_Union);
+    }
+    bool isStruct() const {
+        assert(isAgg());
+        return isTag(TagType_Struct);
+    }
+    bool isUnionOrStruct() const {
+        assert(isAgg());
+        return isTag(TagType_Struct) || isTag(TagType_Union);
+    }
+    const TagDecl getTagDecl() const {
+        assert(isAgg());
+        return tag_decl;
+    }
+    const RecordDecl *getRecord() const {
+        assert(isUnionOrStruct());
+        return tag_decl.getRecord();
+    }
+    RecordDecl *getRecord() {
+        assert(isUnionOrStruct());
+        return tag_decl.getRecord();
+    }
+    const EnumDecl *getEnum() const {
+        assert(isEnum());
+        return tag_decl.getEnum();
+    }
+    EnumDecl *getEnum() {
+        assert(isEnum());
+        return tag_decl.getEnum();
+    }
+    IdentRef getTagName() const {
+        assert(isAgg());
+        return tag_name;
+    }
+    void setTagName(IdentRef tag_name) {
+        assert(isAgg());
+        this->tag_name = tag_name;
     }

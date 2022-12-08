@@ -5,16 +5,16 @@ struct Options {
     const llvm::Target *theTarget;
     bool g : 1;
     bool trigraphs : 1;
-    bool UnrollLoops: 1;
-    bool RerollLoops: 1;
-    bool MergeFunctions: 1;
-    bool VectorizeLoop: 1;
-    bool VectorizeSLP: 1;
-    bool DisableIntegratedAS: 1;
-    bool VerifyModule: 1;
+    bool UnrollLoops : 1;
+    bool RerollLoops : 1;
+    bool MergeFunctions : 1;
+    bool VectorizeLoop : 1;
+    bool VectorizeSLP : 1;
+    bool DisableIntegratedAS : 1;
+    bool VerifyModule : 1;
     unsigned OptimizationLevel;
     unsigned OptimizeSize;
-    std::vector< std::string > PassPlugins;
+    std::vector<std::string> PassPlugins;
     llvm::Reloc::Model RelocationModel;
     Optional<llvm::CodeModel::Model> CodeModel;
     Options() { llvm::sys::fs::current_path(CWD); }
@@ -28,7 +28,7 @@ struct Options {
         VectorizeSLP = false;
         DisableIntegratedAS = false;
         VerifyModule = false;
-        
+
         OptimizationLevel = 0;
         OptimizeSize = 0;
         RelocationModel = llvm::Reloc::PIC_;

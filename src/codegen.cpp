@@ -40,7 +40,7 @@ struct IRGen : public DiagnosticHelper {
         TypeIndexHigh
     };
     uint64_t getsizeof(llvm::Type *ty) { return layout->getTypeStoreSize(ty); }
-    uint64_t getsizeof(CType ty) { 
+    uint64_t getsizeof(CType ty) {
         assert((!ty->isVLA()) && "VLA should handled in other case");
         type_tag_t Align = ty->getAlignLog2Value();
         if (Align)
@@ -48,15 +48,15 @@ struct IRGen : public DiagnosticHelper {
         const auto k = ty->getKind();
         if (ty->isVoid() || k == TYFUNCTION)
             return 1;
-        return getsizeof(wrap2(ty)); 
+        return getsizeof(wrap2(ty));
     }
     uint64_t getsizeof(Expr e) { return getsizeof(e->ty); }
     uint64_t getAlignof(llvm::Type *ty) { return layout->getPrefTypeAlign(ty).value(); }
-    uint64_t getAlignof(CType ty) { 
+    uint64_t getAlignof(CType ty) {
         type_tag_t Align = ty->getAlignLog2Value();
         if (Align)
             return uint64_t(1) << Align;
-        return getAlignof(wrap2(ty)); 
+        return getAlignof(wrap2(ty));
     }
     uint64_t getAlignof(Expr e) { return getAlignof(e->ty); }
     llvm::Type *wrapNoComplexScalar(CType ty) {
@@ -69,18 +69,35 @@ struct IRGen : public DiagnosticHelper {
         switch (ty->getKind()) {
         case TYPRIM: return wrapPrim(ty);
         case TYPOINTER: return pointer_type;
-        case TYSTRUCT:
-        case TYUNION: {
-            size_t L = ty->selems.size();
+        case TYFUNCTION: {
+            // fast case: search cached
+            auto it = function_type_cache.find(ty);
+            if (it != function_type_cache.end())
+                return it->second;
+            // slow case: wrap all
+            size_t l = ty->params.size();
+            llvm::Type **buf = alloc.Allocate<llvm::Type *>(l);
+            size_t i = 0;
+            for (const auto &it : ty->params)
+                buf[i++] = wrap(it.ty);
+            auto T = llvm::FunctionType::get(wrap(ty->ret), ArrayRef<llvm::Type *>{buf, i}, ty->isVarArg);
+            function_type_cache[ty] = T; // add to cache
+            return T;
+        }
+        case TYTAG: {
+            if (ty->isEnum())
+                return integer_types[context.getIntLog2()];
+            const auto &fields = ty->getRecord()->fields;
+            size_t L = fields.size();
             llvm::Type **buf = alloc.Allocate<llvm::Type *>(L);
             for (size_t i = 0; i < L; ++i)
-                buf[i] = wrap2(ty->selems[i].ty);
+                buf[i] = wrap2(fields[i].ty);
             return llvm::StructType::create(ctx, ArrayRef<llvm::Type *>(buf, L));
         }
         case TYARRAY: return llvm::ArrayType::get(wrap(ty->arrtype), ty->arrsize);
-        case TYENUM: return integer_types[context.getIntLog2()];
+        case TYBITINT: return llvm::IntegerType::get(ctx, ty->getBitIntBits());
+        case TYBITFIELD: llvm_unreachable("bit field should handled other case!");
         case TYVLA: llvm_unreachable("VLA should handled other case!");
-        default: llvm_unreachable("unexpected type");
         }
     }
     static enum TypeIndex getTypeIndex(CType ty) {
@@ -117,17 +134,12 @@ struct IRGen : public DiagnosticHelper {
         llvm_unreachable("invalid FloatKind");
     }
     CodeGenOpt::Level getCGOptLevel() const {
-      switch (options.OptimizationLevel) {
-        default:
-              llvm_unreachable("Invalid optimization level!");
-        case 0:
-              return CodeGenOpt::None;
-        case 1:
-              return CodeGenOpt::Less;
-        case 2:
-              return CodeGenOpt::Default; // O2/Os/Oz
-        case 3:
-            return CodeGenOpt::Aggressive;
+        switch (options.OptimizationLevel) {
+        default: llvm_unreachable("Invalid optimization level!");
+        case 0: return CodeGenOpt::None;
+        case 1: return CodeGenOpt::Less;
+        case 2: return CodeGenOpt::Default; // O2/Os/Oz
+        case 3: return CodeGenOpt::Aggressive;
         }
     }
     llvm::Type *wrapFloating(CType ty) { return float_types[static_cast<uint64_t>(ty->getFloatKind())]; }
@@ -185,8 +197,9 @@ struct IRGen : public DiagnosticHelper {
     llvm::StructType *_complex_float, *_complex_double;
     location_t debugLoc;
     DenseMap<CType, llvm::FunctionType *> function_type_cache{};
-    DenseMap<Expr, llvm::Value*> vla_size_map{};
-private:
+    DenseMap<Expr, llvm::Value *> vla_size_map{};
+
+  private:
     void store(llvm::Value *p, llvm::Value *v) { (void)B.CreateStore(v, p); }
     llvm::LoadInst *load(llvm::Value *p, llvm::Type *t) {
         assert(p);
@@ -223,9 +236,7 @@ private:
         llvm::Value *v = llvm::ConstantInt::get(integer_types[context.getIntLog2()], num);
         return llvm::ValueAsMetadata::get(v);
     }
-    StringRef getFileStr(unsigned ) {
-        return "";
-    }
+    StringRef getFileStr(unsigned) { return ""; }
     llvm::DIScope *getLexScope() { return lexBlocks.back(); }
     llvm::DIFile *getFile(unsigned ID) {
         if (lastFileID != ID)
@@ -246,6 +257,16 @@ private:
         switch (ty->getKind()) {
         case TYPRIM: return wrapPrim(ty);
         case TYPOINTER: return pointer_type;
+        case TYTAG: {
+            if (ty->isEnum())
+                return integer_types[context.getIntLog2()];
+            const auto &fields = ty->getRecord()->fields;
+            size_t L = fields.size();
+            llvm::Type **buf = alloc.Allocate<llvm::Type *>(L);
+            for (size_t i = 0; i < L; ++i)
+                buf[i] = wrap2(fields[i].ty);
+            return llvm::StructType::create(ctx, ArrayRef<llvm::Type *>(buf, L));
+        }
         case TYFUNCTION: {
             // fast case: search cached
             auto it = function_type_cache.find(ty);
@@ -262,17 +283,8 @@ private:
             return T;
         }
         case TYARRAY: return llvm::ArrayType::get(wrap(ty->arrtype), ty->arrsize);
-        case TYENUM: return integer_types[context.getIntLog2()];
-        case TYINCOMPLETE:
-            switch (ty->tag) {
-            case TagType_Struct:
-            case TagType_Union: return tags[ty->iidx];
-            case TagType_Enum: return integer_types[context.getIntLog2()];
-            default: llvm_unreachable("bad TagType");
-            }
-        case TYBITFIELD:
-        case TYSTRUCT: return tags[ty->sidx];
-        case TYUNION: return tags[ty->uidx];
+        case TYBITINT: return llvm::IntegerType::get(ctx, ty->getBitIntBits());
+        case TYBITFIELD: llvm_unreachable("bit field should handled other case!");
         case TYVLA: llvm_unreachable("VLA should handled other case!");
         default: llvm_unreachable("unexpected type!");
         }
@@ -362,109 +374,98 @@ private:
             module->addModuleFlag(llvm::Module::Warning, "Dwarf Version", llvm::dwarf::DWARF_VERSION);
         }
     }
-llvm::OptimizationLevel mapToLevel() const {
-  switch (options.OptimizationLevel) {
-  default:
-    llvm_unreachable("Invalid optimization level!");
+    llvm::OptimizationLevel mapToLevel() const {
+        switch (options.OptimizationLevel) {
+        default: llvm_unreachable("Invalid optimization level!");
 
-  case 0:
-    return llvm::OptimizationLevel::O0;
+        case 0: return llvm::OptimizationLevel::O0;
 
-  case 1:
-    return llvm::OptimizationLevel::O1;
+        case 1: return llvm::OptimizationLevel::O1;
 
-  case 2:
-    switch (options.OptimizeSize) {
-    default:
-      llvm_unreachable("Invalid optimization level for size!");
+        case 2:
+            switch (options.OptimizeSize) {
+            default: llvm_unreachable("Invalid optimization level for size!");
 
-    case 0:
-      return llvm::OptimizationLevel::O2;
+            case 0: return llvm::OptimizationLevel::O2;
 
-    case 1:
-      return llvm::OptimizationLevel::Os;
+            case 1: return llvm::OptimizationLevel::Os;
 
-    case 2:
-      return llvm::OptimizationLevel::Oz;
+            case 2: return llvm::OptimizationLevel::Oz;
+            }
+
+        case 3: return llvm::OptimizationLevel::O3;
+        }
     }
-
-  case 3:
-    return llvm::OptimizationLevel::O3;
-  }
-}
     // clang::EmitAssemblyHelper::RunOptimizationPipeline
-void RunOptimizationPipeline() {
-  llvm::Optional<llvm::PGOOptions> PGOOpt;
-  machine->setPGOOption(PGOOpt);
+    void RunOptimizationPipeline() {
+        llvm::Optional<llvm::PGOOptions> PGOOpt;
+        machine->setPGOOption(PGOOpt);
 
-  llvm::PipelineTuningOptions PTO;
-  PTO.LoopUnrolling = options.UnrollLoops;
-  // For historical reasons, loop interleaving is set to mirror setting for loop
-  // unrolling.
-  PTO.LoopInterleaving = options.UnrollLoops;
-  PTO.LoopVectorization = options.VectorizeLoop;
-  PTO.SLPVectorization = options.VectorizeSLP;
-  PTO.MergeFunctions = options.MergeFunctions;
-  // Only enable CGProfilePass when using integrated assembler, since
-  // non-integrated assemblers don't recognize .cgprofile section.
-  PTO.CallGraphProfile = !options.DisableIntegratedAS;
+        llvm::PipelineTuningOptions PTO;
+        PTO.LoopUnrolling = options.UnrollLoops;
+        // For historical reasons, loop interleaving is set to mirror setting for loop
+        // unrolling.
+        PTO.LoopInterleaving = options.UnrollLoops;
+        PTO.LoopVectorization = options.VectorizeLoop;
+        PTO.SLPVectorization = options.VectorizeSLP;
+        PTO.MergeFunctions = options.MergeFunctions;
+        // Only enable CGProfilePass when using integrated assembler, since
+        // non-integrated assemblers don't recognize .cgprofile section.
+        PTO.CallGraphProfile = !options.DisableIntegratedAS;
 
-  llvm::LoopAnalysisManager LAM;
-  llvm::FunctionAnalysisManager FAM;
-  llvm::CGSCCAnalysisManager CGAM;
-  llvm::ModuleAnalysisManager MAM;
+        llvm::LoopAnalysisManager LAM;
+        llvm::FunctionAnalysisManager FAM;
+        llvm::CGSCCAnalysisManager CGAM;
+        llvm::ModuleAnalysisManager MAM;
 
-  llvm::PassInstrumentationCallbacks PIC;
-  llvm::PrintPassOptions PrintPassOpts;
-  llvm::StandardInstrumentations SI(
-      false,
-      /*VerifyEach*/ false, PrintPassOpts);
-  SI.registerCallbacks(PIC, &FAM);
-  llvm::PassBuilder PB(machine, PTO, PGOOpt, &PIC);
+        llvm::PassInstrumentationCallbacks PIC;
+        llvm::PrintPassOptions PrintPassOpts;
+        llvm::StandardInstrumentations SI(false,
+                                          /*VerifyEach*/ false, PrintPassOpts);
+        SI.registerCallbacks(PIC, &FAM);
+        llvm::PassBuilder PB(machine, PTO, PGOOpt, &PIC);
 
-
-  // Enable verify-debuginfo-preserve-each for new PM.
-  DebugInfoPerPass DebugInfoBeforePass;
-  // Attempt to load pass plugins and register their callbacks with PB.
-  for (auto &PluginFN : options.PassPlugins) {
-    auto PassPlugin = PassPlugin::Load(PluginFN);
-    if (PassPlugin) {
-      PassPlugin->registerPassBuilderCallbacks(PB);
-    } else {
-      StringRef str(PluginFN);
-      std::string errStr(llvm::toString(PassPlugin.takeError()));
-      StringRef errStr2(errStr);
-      error("unable to load plugin %R: %R") << str << errStr2;
-    }
-  }
-#define HANDLE_EXTENSION(Ext)                                                  \
-  get##Ext##PluginInfo().RegisterPassBuilderCallbacks(PB);
+        // Enable verify-debuginfo-preserve-each for new PM.
+        DebugInfoPerPass DebugInfoBeforePass;
+        // Attempt to load pass plugins and register their callbacks with PB.
+        for (auto &PluginFN : options.PassPlugins) {
+            auto PassPlugin = PassPlugin::Load(PluginFN);
+            if (PassPlugin) {
+                PassPlugin->registerPassBuilderCallbacks(PB);
+            } else {
+                StringRef str(PluginFN);
+                std::string errStr(llvm::toString(PassPlugin.takeError()));
+                StringRef errStr2(errStr);
+                error("unable to load plugin %R: %R") << str << errStr2;
+            }
+        }
+#define HANDLE_EXTENSION(Ext) get##Ext##PluginInfo().RegisterPassBuilderCallbacks(PB);
 #include "llvm/Support/Extension.def"
 
-  // Register all the basic analyses with the managers.
-  PB.registerModuleAnalyses(MAM);
-  PB.registerCGSCCAnalyses(CGAM);
-  PB.registerFunctionAnalyses(FAM);
-  PB.registerLoopAnalyses(LAM);
-  PB.crossRegisterProxies(LAM, FAM, CGAM, MAM);
+        // Register all the basic analyses with the managers.
+        PB.registerModuleAnalyses(MAM);
+        PB.registerCGSCCAnalyses(CGAM);
+        PB.registerFunctionAnalyses(FAM);
+        PB.registerLoopAnalyses(LAM);
+        PB.crossRegisterProxies(LAM, FAM, CGAM, MAM);
 
-  llvm::ModulePassManager MPM;
-    // Map our optimization levels into one of the distinct levels used to
-    // configure the pipeline.
-    llvm::OptimizationLevel Level = mapToLevel();
-    if (options.OptimizationLevel == 0) {
-      MPM = PB.buildO0DefaultPipeline(Level, false);
-    } else {
-      MPM = PB.buildPerModuleDefaultPipeline(Level);
+        llvm::ModulePassManager MPM;
+        // Map our optimization levels into one of the distinct levels used to
+        // configure the pipeline.
+        llvm::OptimizationLevel Level = mapToLevel();
+        if (options.OptimizationLevel == 0) {
+            MPM = PB.buildO0DefaultPipeline(Level, false);
+        } else {
+            MPM = PB.buildPerModuleDefaultPipeline(Level);
+        }
+        if (options.VerifyModule)
+            MPM.addPass(VerifierPass());
+        {
+            llvm::PrettyStackTraceString CrashInfo("Optimizer");
+            llvm::TimeTraceScope TimeScope("Optimizer");
+            MPM.run(*module, MAM);
+        }
     }
-  if (options.VerifyModule)
-    MPM.addPass(VerifierPass());
-  {
-    llvm::PrettyStackTraceString CrashInfo("Optimizer");
-    llvm::TimeTraceScope TimeScope("Optimizer");
-    MPM.run(*module, MAM);
-  }
-}
     void runOptmize() {
         // setCommandLineOpts();
         // llvm::cl::PrintOptionValues();
@@ -536,23 +537,17 @@ void RunOptimizationPipeline() {
         }
         return float_types[static_cast<uint64_t>(ty->getFloatKind())];
     }
-    llvm::DIType *createEnum(CType ty, llvm::DICompositeType *old) {
-        llvm::Metadata **buf = alloc.Allocate<llvm::Metadata *>(ty->eelems.size());
+    auto *createEnum(CType ty, llvm::DICompositeType *old) {
+        const auto enums = ty->getEnum()->enums;
+        llvm::Metadata **buf = alloc.Allocate<llvm::Metadata *>(enums.size());
         StringRef Name;
-        if (ty->ename)
-            Name = ty->ename->getKey();
-        for (size_t i = 0; i < ty->eelems.size(); i++) {
-            buf[i] = di->createEnumerator(ty->eelems[i].name->getKey(), ty->eelems[i].val);
-        }
-
-        auto MD = di->createEnumerationType(getLexScope(), Name, getFile(debugLoc), getLine(debugLoc), 32, 0,
-                                            di->getOrCreateArray(ArrayRef<llvm::Metadata *>(buf, ty->selems.size())),
-                                            ditypes[i32ty]);
-        if (old) {
-            old = llvm::MDNode::replaceWithPermanent(llvm::TempDICompositeType(old));
-            llvm::MetadataTracking::untrack(&old, *old);
-        }
-        return MD;
+        if (ty->getTagName())
+            Name = ty->getTagName()->getKey();
+        for (size_t i = 0; i < enums.size(); i++)
+            buf[i] = di->createEnumerator(enums[i].name->getKey(), enums[i].val);
+        return di->createEnumerationType(getLexScope(), Name, getFile(debugLoc), getLine(debugLoc), 32, 0,
+                                         di->getOrCreateArray(ArrayRef<llvm::Metadata *>(buf, enums.size())),
+                                         ditypes[i32ty]);
     }
     llvm::DIType *wrap3Noqualified(CType ty) {
         switch (ty->getKind()) {
@@ -562,49 +557,6 @@ void RunOptimizationPipeline() {
             if (ty->hasTag(TYVOID))
                 return ditypes[ptrty];
             return di->createPointerType(wrap3(ty->p), pointerSizeInBits);
-        case TYSTRUCT:
-        case TYUNION: {
-            return dtags[ty->sidx];
-            /*
-            StringRef Name;
-            DIType T;
-            if (ty->sname) {
-                Name = ty->sname->getKey();
-                T = dtags[ty->sidx];
-                if (!T->isForwardDecl())
-                    return T;
-            }
-            auto t = cast<llvm::StructType>(wrap(ty));
-            auto slayout = layout->getStructLayout(t);
-            size_t L = ty->selems.size();
-            llvm::Metadata **buf = alloc.Allocate<llvm::Metadata*>(L);
-            for (size_t i = 0;i < L;i++) {
-                buf[i] = di->createMemberType(
-                    getLexScope(), ty->selems[i].name->getKey(),
-                    getFile(debugLoc.id), debugLoc.line, getsizeof(ty->selems[i].ty),
-                    0, slayout->getElementOffsetInBits(i),
-                    llvm::DINode::FlagZero,
-                    wrap3(ty->selems[i].ty)
-                );
-            }
-            DIType result = (ty->getKind() == TYSTRUCT) ?
-                    di->createStructType(
-                    getLexScope(), Name,
-                    getFile(debugLoc.id), debugLoc.line,
-                    slayout->getSizeInBits(),
-                    slayout->getAlignment().value() * 8,
-                    llvm::DINode::FlagZero, nullptr, di->getOrCreateArray(ArrayRef<llvm::Metadata*>{buf, L})) :
-                    di->createUnionType(
-                    getLexScope(), Name,
-                    getFile(debugLoc.id), debugLoc.line,
-                    slayout->getSizeInBits(),
-                    slayout->getAlignment().value() * 8,
-                    llvm::DINode::FlagZero, di->getOrCreateArray(ArrayRef<llvm::Metadata*>{buf, L}));
-            if (ty->sname)
-                dtags[ty->sidx] = result;
-            return result;
-            */
-        }
         case TYARRAY: {
             auto size = getsizeof(ty);
             auto subscripts =
@@ -613,8 +565,6 @@ void RunOptimizationPipeline() {
             return di->createArrayType(size, getAlignof(ty) * 8, wrap3(ty->arrtype), arr);
         }
         case TYFUNCTION: return createDebugFuctionType(ty);
-        case TYENUM: return dtags[ty->eidx];
-        case TYINCOMPLETE: return dtags[ty->iidx];
         default: return nullptr;
         }
     }
@@ -655,7 +605,8 @@ void RunOptimizationPipeline() {
         default: llvm_unreachable("bad cast operator");
         }
     }
-    llvm::Function *newFunction(llvm::FunctionType *fty, IdentRef name, type_tag_t tags, size_t idx, bool isDefinition = false) {
+    llvm::Function *newFunction(llvm::FunctionType *fty, IdentRef name, type_tag_t tags, size_t idx,
+                                bool isDefinition = false) {
         auto old = module->getFunction(name->getKey());
         if (old)
             return old;
@@ -731,46 +682,27 @@ void RunOptimizationPipeline() {
             //                lexBlocks.pop_back();
         } break;
         case SDecl: {
-            if (s->decl_ty->getKind() == TYINCOMPLETE) {
-                if (s->decl_ty->tag != TagType_Enum) {
-                    auto T = llvm::StructType::create(ctx, s->decl_ty->name->getKey());
-                    tags[s->decl_idx] = T;
-                }
-                // if (options.g) {
-                //     unsigned tag;
-                //     switch (s->decl_ty->tag) {
-                //     case TagType_Struct: tag = llvm::dwarf::DW_TAG_structure_type; break;
-                //     case TagType_Enum: tag = llvm::dwarf::DW_TAG_enumeration_type; break;
-                //     case TagType_Union: tag = llvm::dwarf::DW_TAG_union_type; break;
-                //     default: llvm_unreachable("invalid type tag");
-                //     }
-                // auto MD = di->createReplaceableCompositeType(tag, s->decl_ty->name->getKey(), getLexScope(),
-                //                                                                 getFile(s->loc), s->loc.line);
-                // dtags[s->decl_idx] = MD;
-                //}
-            } else {
-                if (s->decl_ty->getKind() != TYENUM) {
-                    size_t l = s->decl_ty->selems.size();
-                    llvm::Type **buf = alloc.Allocate<llvm::Type *>(l);
-                    for (size_t i = 0; i < l; ++i)
-                        buf[i] = wrap(s->decl_ty->selems[i].ty);
-                    ArrayRef<llvm::Type *> arr(buf, l);
-                    tags[s->decl_idx] = s->decl_ty->sname
-                                            ? llvm::StructType::create(ctx, arr, s->decl_ty->sname->getKey())
-                                            : llvm::StructType::create(ctx, arr);
-                }
+            CType ty = s->decl_ty;
+            if (ty->isEnum())
+                break;
+            IdentRef Name = ty->getTagName();
+            RecordDecl *RD = ty->getRecord();
+            if (!RD) {
+                // xxx: incomplex struct/union should must not used, so there is no needed to create it ...
+                if (Name)
+                    tags[s->decl_idx] = llvm::StructType::create(ctx, ty->getTagName()->getKey());
+                else
+                    tags[s->decl_idx] = llvm::StructType::create(ctx);
+                break;
             }
-        } break;
-        case SUpdateForwardDecl: {
-            if (s->now->tag != TagType_Enum) {
-                auto T = cast<llvm::StructType>(tags[s->prev_idx]);
-                size_t L = s->now->selems.size();
-                llvm::Type **buf = alloc.Allocate<llvm::Type *>(L);
-                for (size_t i = 0; i < L; ++i)
-                    buf[i] = wrap(s->now->selems[i].ty);
-                T->setBody(ArrayRef<llvm::Type *>(buf, L));
-            }
-            // replaceAllUsesWith
+            const auto &fields = RD->fields;
+            size_t l = fields.size();
+            llvm::Type **buf = alloc.Allocate<llvm::Type *>(l);
+            for (size_t i = 0; i < l; ++i)
+                buf[i] = wrap(fields[i].ty);
+            ArrayRef<llvm::Type *> arr(buf, l);
+            tags[s->decl_idx] =
+                Name ? llvm::StructType::create(ctx, arr, Name->getKey()) : llvm::StructType::create(ctx, arr);
         } break;
         case SNoReturnCall:
             (void)gen(s->call_expr);
@@ -780,13 +712,14 @@ void RunOptimizationPipeline() {
         case SFunction: {
             assert(this->labels.empty());
             auto ty = cast<llvm::FunctionType>(wrap(s->functy));
-            currentfunction = newFunction(ty, s->funcname, s->functy->getFunctionAttrTy()->getTags(), s->func_idx, true);
+            currentfunction =
+                newFunction(ty, s->funcname, s->functy->getFunctionAttrTy()->getTags(), s->func_idx, true);
             llvm::DISubprogram *sp = nullptr;
             /*if (options.g) {
                 sp =
-                    di->createFunction(getLexScope(), s->funcname->getKey(), getLinkageName(s->functy->getFunctionAttrTy()->getTags()),
-                                       getFile(s->loc.id), s->loc.line, createDebugFuctionType(s->functy), s->loc.line);
-                currentfunction->setSubprogram(sp);
+                    di->createFunction(getLexScope(), s->funcname->getKey(),
+            getLinkageName(s->functy->getFunctionAttrTy()->getTags()), getFile(s->loc.id), s->loc.line,
+            createDebugFuctionType(s->functy), s->loc.line); currentfunction->setSubprogram(sp);
                 lexBlocks.push_back(sp);
                 emitDebugLocation();
             }*/
@@ -827,8 +760,7 @@ void RunOptimizationPipeline() {
             this->labels.clear();
             this->currentfunction = nullptr;
         } break;
-        case SReturn:
-            B.CreateRet(s->ret ? gen(s->ret) : nullptr); break;
+        case SReturn: B.CreateRet(s->ret ? gen(s->ret) : nullptr); break;
         case SDeclOnly:
             if (options.g)
                 (void)wrap3Noqualified(s->decl);
@@ -876,7 +808,8 @@ void RunOptimizationPipeline() {
                 if (varty->hasTag(TYTYPEDEF)) {
                     /* nothing */
                 } else if (varty->getKind() == TYFUNCTION) {
-                    newFunction(cast<llvm::FunctionType>(wrap(varty)), name, varty->getFunctionAttrTy()->getTags(), idx);
+                    newFunction(cast<llvm::FunctionType>(wrap(varty)), name, varty->getFunctionAttrTy()->getTags(),
+                                idx);
                 } else if (!currentfunction || varty->isGlobalStorage()) {
                     auto GV = module->getGlobalVariable(name->getKey(), true);
                     if (GV) {
@@ -933,16 +866,15 @@ void RunOptimizationPipeline() {
                         // llvm.stackrestore()
                         // llvm.stacksave()
                         isVLA = true;
-                        const std::pair<llvm::Value*, llvm::Type*> pair = genVLASizeof(varty);
+                        const std::pair<llvm::Value *, llvm::Type *> pair = genVLASizeof(varty);
                         alloca_size = pair.first;
                         ty = pair.second;
                     } else {
                         alloca_size = nullptr;
                         ty = wrap(varty);
                     }
-                    llvm::AllocaInst *val =
-                        new llvm::AllocaInst(ty, layout->getAllocaAddrSpace(), alloca_size,
-                                             layout->getPrefTypeAlign(ty), name->getKey());
+                    llvm::AllocaInst *val = new llvm::AllocaInst(ty, layout->getAllocaAddrSpace(), alloca_size,
+                                                                 layout->getPrefTypeAlign(ty), name->getKey());
                     if (LLVM_UNLIKELY(isVLA)) {
                         B.Insert(val);
                     } else {
@@ -1042,7 +974,7 @@ void RunOptimizationPipeline() {
         assert(ty->isVLA());
         return genVLANumelements(ty->vla_expr);
     }
-    std::pair<llvm::Value*, llvm::Type*> genVLASizeof(Expr e, CType elementType) {
+    std::pair<llvm::Value *, llvm::Type *> genVLASizeof(Expr e, CType elementType) {
         llvm::Value *numElements = genVLANumelements(e);
         if (elementType->getKind() == TYVLA) {
             const auto pair = genVLASizeof(elementType->vla_expr, elementType->vla_arraytype);
@@ -1050,7 +982,7 @@ void RunOptimizationPipeline() {
         }
         return std::make_pair(numElements, wrap(elementType));
     }
-    std::pair<llvm::Value*, llvm::Type*> genVLASizeof(CType ty) {
+    std::pair<llvm::Value *, llvm::Type *> genVLASizeof(CType ty) {
         assert(ty->isVLA());
         return genVLASizeof(ty->vla_expr, ty->vla_arraytype);
     }
@@ -1058,8 +990,7 @@ void RunOptimizationPipeline() {
         emitDebugLocation(e);
         switch (e->k) {
         case EConstant: return e->C;
-        case EBitCast:
-            return gen(e->src);
+        case EBitCast: return gen(e->src);
         case EConstantArraySubstript:
             return llvm::ConstantExpr::getInBoundsGetElementPtr(wrap(e->ty->p), e->carray,
                                                                 ConstantInt::get(ctx, e->cidx));
@@ -1311,11 +1242,11 @@ BINOP_ATOMIC_RMW:
                 auto sub = B.CreateSub(lhs, rhs);
 
                 if (LLVM_UNLIKELY(target->isVLA())) {
-                    std::pair<llvm::Value*, llvm::Type*> pair = genVLASizeof(target);
+                    std::pair<llvm::Value *, llvm::Type *> pair = genVLASizeof(target);
                     uint64_t Size = getsizeof(pair.second);
-                    dividend = Size == 1 ? pair.first : B.CreateNSWMul(pair.first, llvm::ConstantInt::get(intptrTy, Size));
-                }
-                else {
+                    dividend =
+                        Size == 1 ? pair.first : B.CreateNSWMul(pair.first, llvm::ConstantInt::get(intptrTy, Size));
+                } else {
                     uint64_t Size = getsizeof(target);
                     if (Size == 1)
                         return sub;
@@ -1323,15 +1254,14 @@ BINOP_ATOMIC_RMW:
                 }
                 return B.CreateExactSDiv(sub, dividend);
             }
-            case SAddP:
-            {
+            case SAddP: {
                 if (const ConstantInt *CI = dyn_cast<ConstantInt>(rhs))
                     if (CI->isZero())
                         return lhs;
                 CType target = e->ty->p;
                 llvm::Type *T;
                 if (LLVM_UNLIKELY(target->isVLA())) {
-                    const std::pair<llvm::Value*, llvm::Type*> pair = genVLASizeof(target);
+                    const std::pair<llvm::Value *, llvm::Type *> pair = genVLASizeof(target);
                     T = pair.second;
                     if (const ConstantInt *CI = dyn_cast<ConstantInt>(rhs)) {
                         if (CI->getLimitedValue() == 1) {
@@ -1343,7 +1273,7 @@ BINOP_ATOMIC_RMW:
                 } else {
                     T = wrap(target);
                 }
-                VLA_NEXT: ;
+VLA_NEXT:;
                 return B.CreateInBoundsGEP(T, lhs, {rhs});
             }
             case Complex_CMPLX: return make_complex_pair(e->ty, lhs, rhs);
@@ -1492,12 +1422,12 @@ BINOP_SHIFT:
             phi->addIncoming(right, iffalse);
             return phi;
         }
-        case ESizeof:
-        {
-            std::pair<llvm::Value*, llvm::Type*> pair = genVLASizeof(e->theType);
+        case ESizeof: {
+            std::pair<llvm::Value *, llvm::Type *> pair = genVLASizeof(e->theType);
             if (pair.second->isIntegerTy(1))
                 return pair.first;
-            return B.CreateNSWMul(pair.first, /*llvm::ConstantExpr::getSizeOf(pair.second)*/ llvm::ConstantInt::get(intptrTy, getsizeof(pair.second)));
+            return B.CreateNSWMul(pair.first, /*llvm::ConstantExpr::getSizeOf(pair.second)*/ llvm::ConstantInt::get(
+                                      intptrTy, getsizeof(pair.second)));
         }
         case ECast: return B.CreateCast(getCastOp(e->castop), gen(e->castval), wrap(e->ty));
         case ECall: {
@@ -1521,15 +1451,16 @@ BINOP_SHIFT:
         default: llvm_unreachable("bad enum kind!");
         }
     }
-public:
+
+  public:
     IRGen(xcc_context &context, DiagnosticsEngine &Diag, SourceMgr &SM, LLVMContext &ctx, const Options &options)
         : DiagnosticHelper{Diag}, context{context}, SM{SM}, ctx{ctx}, B{ctx}, options{options} {
         auto CPU = "generic";
         auto Features = "";
         llvm::TargetOptions opt;
 
-        machine = options.theTarget->createTargetMachine(options.triple.str(), CPU, Features, opt, options.RelocationModel,
-                                                         options.CodeModel, getCGOptLevel());
+        machine = options.theTarget->createTargetMachine(options.triple.str(), CPU, Features, opt,
+                                                         options.RelocationModel, options.CodeModel, getCGOptLevel());
         if (LLVM_UNLIKELY(!machine))
             llvm::report_fatal_error("failed to create llvm::TargetMachine: the target might has no target machine");
         layout = new llvm::DataLayout(machine->createDataLayout());

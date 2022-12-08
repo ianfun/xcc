@@ -273,21 +273,22 @@ struct DiagnosticHelper {
     unsigned getNumErrors() const { return engine.getNumErrors(); }
     unsigned getNumWarnings() const { return engine.getNumWarnings(); }
 #define DIAGNOSTIC_HANDLER(HANDLER, LEVEL)                                                                             \
-    template <typename... Args> [[maybe_unused]] DiagnosticBuilder HANDLER(const char *msg, const Args &...args) {                      \
+    template <typename... Args> [[maybe_unused]] DiagnosticBuilder HANDLER(const char *msg, const Args &...args) {     \
         engine.CurrentDiagnostic.reset(msg, LEVEL);                                                                    \
         engine.CurrentDiagnostic.write(args...);                                                                       \
         return DiagnosticBuilder(engine);                                                                              \
     }                                                                                                                  \
-    [[maybe_unused]] DiagnosticBuilder HANDLER(const char *msg) {                                                                       \
+    [[maybe_unused]] DiagnosticBuilder HANDLER(const char *msg) {                                                      \
         engine.CurrentDiagnostic.reset(msg, LEVEL);                                                                    \
         return DiagnosticBuilder(engine);                                                                              \
     }                                                                                                                  \
-    template <typename... Args> [[maybe_unused]] DiagnosticBuilder HANDLER(location_t loc, const char *msg, const Args &...args) {      \
+    template <typename... Args>                                                                                        \
+    [[maybe_unused]] DiagnosticBuilder HANDLER(location_t loc, const char *msg, const Args &...args) {                 \
         engine.CurrentDiagnostic.reset(msg, LEVEL, loc);                                                               \
         engine.CurrentDiagnostic.write(args...);                                                                       \
         return DiagnosticBuilder(engine);                                                                              \
     }                                                                                                                  \
-    template <typename... Args> [[maybe_unused]] DiagnosticBuilder HANDLER(location_t loc, const char *msg) {                           \
+    template <typename... Args> [[maybe_unused]] DiagnosticBuilder HANDLER(location_t loc, const char *msg) {          \
         engine.CurrentDiagnostic.reset(msg, LEVEL, loc);                                                               \
         return DiagnosticBuilder(engine);                                                                              \
     }

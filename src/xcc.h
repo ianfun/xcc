@@ -161,7 +161,7 @@
 #include <optional>
 #include <algorithm>
 #include <cmath>
-#include <cstdint>  
+#include <cstdint>
 #include <cstdio>
 #include <ctime>
 #include <deque>
@@ -229,25 +229,32 @@ using llvm::SmallVectorImpl;
 using llvm::StringRef;
 using llvm::Twine;
 using type_tag_t = uint64_t;
+
 constexpr APFloat::cmpResult cmpGreaterThan = APFloat::cmpGreaterThan, cmpEqual = APFloat::cmpEqual,
                              cmpLessThan = APFloat::cmpLessThan;
-enum TagType : uint8_t {
+enum TagKind : uint8_t {
     TagType_Enum,
     TagType_Struct,
     TagType_Union
 };
-template <typename T>
-struct WithAlloc {
+static const char *show(enum TagKind k) {
+    switch (k) {
+    case TagType_Enum: return "enum";
+    case TagType_Union: return "union";
+    case TagType_Struct: return "struct";
+    }
+    llvm_unreachable("invalid enum TagType");
+}
+template <typename T> struct WithAlloc {
     T *data;
     size_t Size;
-    WithAlloc(size_t Size): Size{Size} { data = new T[Size]; }
-    template <typename T2>
-    WithAlloc(const WithAlloc<T2> &) = delete; 
-    ~WithAlloc() { delete [] data; }
+    WithAlloc(size_t Size) : Size{Size} { data = new T[Size]; }
+    template <typename T2> WithAlloc(const WithAlloc<T2> &) = delete;
+    ~WithAlloc() { delete[] data; }
     T *begin() { return data; }
     T *end() { return data + Size; }
     size_t size() const { return Size; }
-    T &operator [](size_t i) { return data[i]; }
+    T &operator[](size_t i) { return data[i]; }
     T *operator->() { return data; }
 };
 enum StringPrefix : uint8_t {
@@ -257,14 +264,6 @@ enum StringPrefix : uint8_t {
     Prefix_u,    // A UTF-16 character constant has type char16_t (unsigned)
     Prefix_U,    // A UTF-32 character constant has type char32_t (unsigned)
 };
-const char *show(enum TagType tag) {
-    switch (tag) {
-    case TagType_Enum: return "enum";
-    case TagType_Struct: return "struct";
-    case TagType_Union: return "union";
-    }
-    llvm_unreachable("invalid enum TagType");
-}
 enum PostFixOp {
     PostfixIncrement = 1,
     PostfixDecrement
@@ -676,21 +675,21 @@ typedef struct OpaqueExpr *Expr;
 typedef const struct OpaqueExpr *const_Expr;
 typedef struct OpaqueCType *CType;
 typedef const struct OpaqueCType *const_CType;
-
 typedef unsigned line_t;
 typedef unsigned column_t;
 typedef unsigned fileid_t;
 typedef uint32_t location_t;
-
-
 static const char hexs[] = "0123456789ABCDEF";
 static char hexed(unsigned a) { return hexs[a & 0b1111]; }
 struct SourceRange {
     location_t start, end;
     SourceRange() : start{0}, end{0} {};
-    SourceRange(location_t loc) : start{loc}, end{loc} { assert(end <= start && "attempt to construct an invalid SourceRange"); }
+    SourceRange(location_t loc) : start{loc}, end{loc} {
+        assert(end <= start && "attempt to construct an invalid SourceRange");
+    }
     SourceRange(location_t L, location_t R) : start{L}, end{R} { }
-    SourceRange(location_t start, IdentRef Name): start{start}, end{start + static_cast<location_t>(Name->getKeyLength())} {}
+    SourceRange(location_t start, IdentRef Name)
+        : start{start}, end{start + static_cast<location_t>(Name->getKeyLength()) - 1} { }
     location_t getStart() const { return start; }
     location_t getEnd() const { return end; }
     location_t getStartLoc() const { return start; }
@@ -790,31 +789,71 @@ struct source_location {
 struct LocTree {
     struct LocTree *parent;
     struct PPMacroDef *macro;
-    LocTree(struct LocTree *parent, struct PPMacroDef *def = nullptr) : parent{parent} {
-        this->macro = def;
-    }
+    LocTree(struct LocTree *parent, struct PPMacroDef *def = nullptr) : parent{parent} { this->macro = def; }
     void setParent(LocTree *theParent) { this->parent = theParent; }
     LocTree *getParent() const { return parent; }
 };
+// A declaration with a type and name
+// https://clang.llvm.org/doxygen/classclang_1_1DeclaratorDecl.html
 struct Declator {
     IdentRef name;
     CType ty;
     Declator(IdentRef Name = nullptr, CType ty = nullptr) : name{Name}, ty{ty} { }
 };
+// function parameter-list
 struct Param : public Declator {
     Param(IdentRef Name = nullptr, CType ty = nullptr) : Declator{Name, ty} { }
     Param(const Declator &decl) : Declator(decl) { }
 };
+// enumerator
+// https://clang.llvm.org/doxygen/classclang_1_1EnumConstantDecl.html
 struct EnumPair {
     IdentRef name;
     uint64_t val;
+    EnumPair(IdentRef Name, uint64_t val) : name{Name}, val{val} { }
 };
+// any declaration or definition but except function definition
+// https://clang.llvm.org/doxygen/classclang_1_1VarDecl.html
 struct VarDecl {
     IdentRef name;
     CType ty;
     Expr init; // maybe null
     unsigned idx;
 };
+// enum declaration
+// https://clang.llvm.org/doxygen/classclang_1_1EnumDecl.html
+struct EnumDecl {
+    SmallVector<EnumPair, 6> enums;
+};
+// A struct/union's field
+// https://clang.llvm.org/doxygen/classclang_1_1FieldDecl.html
+struct FieldDecl : public Declator {
+    FieldDecl(IdentRef Name = nullptr, CType ty = nullptr) : Declator(Name, ty) { }
+    FieldDecl(const Declator &decl) : Declator(decl) { }
+};
+
+// Record - A struct or a union
+// https://clang.llvm.org/doxygen/classclang_1_1RecordDecl.html
+struct RecordDecl {
+    SmallVector<FieldDecl, 4> fields;
+};
+// Tag - A record or enum
+// https://clang.llvm.org/doxygen/classclang_1_1TagDecl.html
+union TagDecl {
+    RecordDecl *struct_decl;
+    EnumDecl *enum_decl;
+    TagDecl() : struct_decl{nullptr} { }
+    TagDecl(RecordDecl *TD) : struct_decl{TD} { }
+    TagDecl(EnumDecl *TD) : enum_decl{TD} { }
+    const RecordDecl *getRecord() const { return struct_decl; }
+    RecordDecl *getRecord() { return struct_decl; }
+    const EnumDecl *getEnum() const { return enum_decl; }
+    EnumDecl *getEnum() { return enum_decl; }
+
+    bool hasValue() const { return struct_decl != nullptr; }
+    operator bool() const { return hasValue(); }
+};
+// Simple 'case' statement with one value
 struct SwitchCase {
     location_t loc;
     const APInt *CaseStart;
@@ -822,6 +861,7 @@ struct SwitchCase {
     SwitchCase(location_t loc, label_t label, const APInt *CastStart) : loc{loc}, CaseStart{CastStart}, label{label} { }
     static bool equals(const SwitchCase &lhs, const SwitchCase &rhs) { return *lhs.CaseStart == *rhs.CaseStart; }
 };
+// GNU extension: from (start ... end) or (start ... start + range)
 struct GNUSwitchCase : public SwitchCase {
     APInt range;
     GNUSwitchCase(location_t loc, label_t label, const APInt *CastStart, const APInt *CaseEnd)
@@ -927,9 +967,7 @@ location_t OpaqueExpr::getEndLoc() const {
     }
     llvm_unreachable("invalid Expr");
 }
-bool OpaqueExpr::hasSideEffects() const {
-    return !isSimple();
-}
+bool OpaqueExpr::hasSideEffects() const { return !isSimple(); }
 static constexpr uint64_t build_integer(IntegerKind kind, bool Signed) {
     const uint64_t log2size = kind.asLog2();
     return (log2size << 47) | (Signed ? OpaqueCType::sign_bit : 0ULL);
@@ -938,44 +976,8 @@ static constexpr uint64_t build_float(FloatKind kind) {
     const uint64_t k = static_cast<uint64_t>(kind);
     return (k << 47) | OpaqueCType::integer_bit;
 }
-static enum CTypeKind transform(enum TagType tag) {
-    switch (tag) {
-    case TagType_Union: return TYUNION;
-    case TagType_Struct: return TYSTRUCT;
-    case TagType_Enum: return TYENUM;
-    }
-    llvm_unreachable("bad TagType");
-}
-static enum TagType transform(enum CTypeKind k) {
-    switch (k) {
-    case TYSTRUCT: return TagType_Struct;
-    case TYUNION: return TagType_Union;
-    case TYENUM: return TagType_Enum;
-    default: llvm_unreachable("invalid argument to transform()");
-    }
-}
-static const char *show2(enum CTypeKind k) {
-    switch (k) {
-    case TYENUM: return "enum";
-    case TYUNION: return "union";
-    case TYSTRUCT: return "struct";
-    default: llvm_unreachable("invalid argument to show_transform()");
-    }
-}
-static const char *show2(enum TagType k) {
-    switch (k) {
-    case TagType_Enum: return "enum";
-    case TagType_Union: return "union";
-    case TagType_Struct: return "struct";
-    default: llvm_unreachable("invalid argument to show_transform()");
-    }
-}
-static void scope_index_set_unnamed_alloca(unsigned &i) {
-    i |= 1U << 31;
-}
-static bool scope_index_is_unnamed_alloca(unsigned i) {
-    return i & 1U << 31;
-}
+static void scope_index_set_unnamed_alloca(unsigned &i) { i |= 1U << 31; }
+static bool scope_index_is_unnamed_alloca(unsigned i) { return i & 1U << 31; }
 static bool is_declaration_specifier(Token a) { return a >= Kextern && a <= Kvolatile; }
 
 static bool type_equal(CType a, CType b) {
@@ -984,22 +986,35 @@ static bool type_equal(CType a, CType b) {
     if (a->getKind() != b->getKind())
         return false;
     switch (a->getKind()) {
+    case TYBITFIELD: return (a->bitsize == b->bitsize) && type_equal(a->bittype, b->bittype);
+    case TYARRAY:
+        if (a->hassize != b->hassize)
+            return false;
+        if (a->hassize && (a->arrsize != b->arrsize))
+            return false;
+        return type_equal(a->arrtype, b->arrtype);
     case TYPRIM: return a->basic_equals(b);
     case TYPOINTER: return type_equal(a->p, b->p);
-    case TYENUM:
-    case TYSTRUCT:
-    case TYUNION: return a == b;
-    case TYINCOMPLETE: return a->name == b->name;
-    default: return false;
+    case TYTAG: return a->getTagDecl() == b->getTagDecl();
+    case TYBITINT:
+        return (a->getBitIntBits() == b->getBitIntBits()) && type_equal(a->getBitIntBaseType(), b->getBitIntBaseType());
+    case TYFUNCTION:
+        if (!type_equal(a->ret, b->ret) || a->params.size() != b->params.size())
+            return false;
+        for (unsigned i = 0; i < b->params.size(); ++i)
+            if (!type_equal(a->params[i].ty, b->params[i].ty))
+                return false;
+        return true;
+    case TYVLA: return (a->vla_expr == b->vla_expr) && type_equal(a->vla_arraytype, b->vla_arraytype);
     }
+    llvm_unreachable("invalid CTypeKind");
 }
 static bool compatible(CType p, CType expected) {
     // https://en.cppreference.com/w/c/language/type
     if (p->getKind() != expected->getKind())
         return false;
     switch (p->getKind()) {
-    case TYVLA:
-        return compatible(p->vla_arraytype, expected->vla_arraytype) && (p->vla_expr == expected->vla_expr);
+    case TYVLA: return (p->vla_expr == expected->vla_expr) && compatible(p->vla_arraytype, expected->vla_arraytype);
     case TYPRIM: return p->basic_equals(expected);
     case TYFUNCTION:
         if (!compatible(p->ret, expected->ret) || p->params.size() != expected->params.size())
@@ -1008,24 +1023,22 @@ static bool compatible(CType p, CType expected) {
             if (!compatible(p->params[i].ty, expected->params[i].ty))
                 return false;
         return true;
-    case TYSTRUCT:
-    case TYENUM:
-    case TYUNION: return p == expected;
-    case TYPOINTER: {
-        // ignore TYLVALUE attribute
+    case TYPOINTER:
         return p->isNullPtr_t() || expected->isNullPtr_t() || p->p->isVoid() || expected->p->isVoid() ||
                (p->andTags(type_qualifiers) == expected->andTags(type_qualifiers) && compatible(p->p, expected->p));
-    }
-    case TYINCOMPLETE: return p->tag == expected->tag && p->name == expected->name;
-    case TYBITFIELD: llvm_unreachable("");
+    case TYBITFIELD: return (p->bitsize == expected->bitsize) && type_equal(p->bittype, expected->bittype);
     case TYARRAY:
         if (p->hassize != expected->hassize)
             return false;
         if (p->hassize && (p->arrsize != expected->arrsize))
             return false;
         return compatible(p->arrtype, expected->arrtype);
+    case TYTAG: return p->getTagDecl() == expected->getTagDecl();
+    case TYBITINT:
+        return (p->getBitIntBits() == expected->getBitIntBits()) &&
+               compatible(p->getBitIntBaseType(), expected->getBitIntBaseType());
     }
-    llvm_unreachable("bad CTypeKind");
+    llvm_unreachable("invalid CTypeKind");
 }
 
 // TokenV: A Token with a value, and a macro is a sequence of TokenVs

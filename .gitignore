@@ -2,5 +2,10 @@
 *.out
 *.exe
 *.o
-tests/run.sh
-.vscode
+*.a
+*.lib
+*.so
+*.dll
+*.obj
+tests/xc.c
+.vscode/

@@ -4,7 +4,7 @@
 
 struct xcc_context {
     xcc_context(const xcc_context &) = delete;
-    xcc_context() : table{} {
+    xcc_context() : table{}, prim_ctype_map{} {
         constint = make_signed(getIntLog2(), TYCONST);
         v = make_unsigned(0, TYVOID);
         b = make_unsigned(getBoolLog2());
@@ -64,26 +64,34 @@ struct xcc_context {
         _imaginary_float = make(ffloatty->getTags() | TYIMAGINARY);
     }
     IdentifierTable table; // contains allocator!
+    llvm::DenseMap<type_tag_t, CType> prim_ctype_map;
     CType constint, b, v, i8, u8, i16, u16, i32, u32, i64, u64, i128, u128, ffloatty, fdoublety, bfloatty, fhalfty,
         f128ty, ppc_f128, f80ty, str8ty, str16ty, str32ty, stringty, wstringty, _complex_float, _complex_double,
         _complex_longdouble, _short, _ushort, _wchar, _long, _ulong, _longlong, _ulonglong, _longdouble, _uchar,
         _size_t, _ptr_diff_t, _uint_ptr, fdecimal32, fdecimal64, fdecimal128, _imaginary_double, _imaginary_float,
         _nullptr_t;
-    [[nodiscard]] CType make(uint64_t tags) { return TNEW(PrimType){.tags = tags}; }
-    [[nodiscard]] CType make_unsigned(uint8_t shift, uint64_t tags = 0) {
+    [[nodiscard]] CType make(type_tag_t tags) { return TNEW(PrimType){.tags = tags}; }
+    [[nodiscard]] CType make_cached(type_tag_t tags) {
+        auto it = prim_ctype_map.insert({tags, nullptr});
+        if (it.second) { // not found
+            it.first->second = make(tags);
+        }
+        return it.first->second;
+    }
+    [[nodiscard]] CType make_unsigned(uint8_t shift, type_tag_t tags = 0) {
         return make(build_integer(IntegerKind::fromLog2(shift), false) | tags);
     }
-    [[nodiscard]] CType make_signed(uint8_t shift, uint64_t tags = 0) {
+    [[nodiscard]] CType make_signed(uint8_t shift, type_tag_t tags = 0) {
         return make(build_integer(IntegerKind::fromLog2(shift), true) | tags);
     }
-    [[nodiscard]] CType make_floating(FloatKind kind, uint64_t tags = 0) { return make(build_float(kind) | tags); }
-    [[nodiscard]] CType make_complex_float(FloatKind kind, uint64_t tags = 0) {
+    [[nodiscard]] CType make_floating(FloatKind kind, type_tag_t tags = 0) { return make(build_float(kind) | tags); }
+    [[nodiscard]] CType make_complex_float(FloatKind kind, type_tag_t tags = 0) {
         return make(build_float(kind) | TYCOMPLEX | tags);
     }
-    [[nodiscard]] CType make_imaginary_float(FloatKind kind, uint64_t tags = 0) {
+    [[nodiscard]] CType make_imaginary_float(FloatKind kind, type_tag_t tags = 0) {
         return make(build_float(kind) | TYIMAGINARY | tags);
     }
-    [[nodiscard]] CType lookupType(const_CType ty, uint64_t tags) {
+    [[nodiscard]] CType lookupType(const_CType ty, type_tag_t tags) {
         if (ty->isFloating()) {
             switch (ty->getFloatKind().asEnum()) {
             case F_Float: return getFloat();
@@ -108,7 +116,7 @@ struct xcc_context {
             default: break;
             }
         }
-        return make(ty->del(tags));
+        return make_cached(ty->del(tags));
     }
     [[nodiscard]] CType getComplexElementType(const_CType ty) {
         // For each floating type there is a corresponding real type, which is always a real floating type. For real
@@ -125,7 +133,7 @@ struct xcc_context {
             default: break;
             }
         }
-        return make(ty->getTags() | TYCOMPLEX);
+        return make_cached(ty->getTags() | TYCOMPLEX);
     }
     [[nodiscard]] CType tryGetImaginaryTypeFromNonImaginary(const_CType ty) {
         if (ty->isFloating()) {
@@ -135,11 +143,11 @@ struct xcc_context {
             default: break;
             }
         }
-        return make(ty->getTags() | TYIMAGINARY);
+        return make_cached(ty->getTags() | TYIMAGINARY);
     }
     [[nodiscard]] CType getImaginaryDouble() { return _imaginary_double; }
     [[nodiscard]] CType getImaginaryFloat() { return _imaginary_float; }
-    [[nodiscard]] CType getPointerType(CType base, uint64_t tags = 0) {
+    [[nodiscard]] CType getPointerType(CType base, type_tag_t tags = 0) {
         CType result = TNEW(PointerType){.tags = tags, .p = base};
         result->setKind(TYPOINTER);
         return result;

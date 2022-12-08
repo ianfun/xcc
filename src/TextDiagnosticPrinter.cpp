@@ -37,7 +37,8 @@ void TextDiagnosticPrinter::realHandleDiagnostic(const Diagnostic &Diag) {
             goto NO_LOC;
         location_t dummy;
         const IncludeFile *file = SM->searchIncludeFile(Diag.loc, dummy), *ptr = file;
-        if (!file) goto NO_LOC; // the location may invalid or to big
+        if (!file)
+            goto NO_LOC; // the location may invalid or to big
         bool first = true;
         while (ptr->getIncludePos() != 0 && (ptr = SM->searchIncludeFile(ptr->getIncludePos(), dummy))) {
             OS << StringRef(first ? "In file included from " : "                      ", 22);

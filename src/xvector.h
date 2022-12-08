@@ -3,7 +3,7 @@ template <typename T> struct xvector {
         size_t _length, _capacity;
         T _data[0];
     } *p;
-    using p_xvector_impl = _xvector_impl*;
+    using p_xvector_impl = _xvector_impl *;
     void free() const { std::free(reinterpret_cast<void *>(this->p)); };
     static xvector<T> get() {
         xvector<T> res;
@@ -23,7 +23,7 @@ template <typename T> struct xvector {
     }
     static xvector<T> from_opache_pointer(const void *Ptr) {
         xvector<T> res;
-        res.p = reinterpret_cast<p_xvector_impl>(const_cast<void*>(Ptr));
+        res.p = reinterpret_cast<p_xvector_impl>(const_cast<void *>(Ptr));
         return res;
     }
     static xvector<T> get_with_length(size_t length) {
@@ -43,19 +43,17 @@ template <typename T> struct xvector {
     T *data() { return p->_data; }
     void erase(const T *it) {
         assert(it >= begin() && it < end() && "Iterator to erase is out of bounds.");
-        std::move(const_cast<T*>(it)+1, this->end(), const_cast<T*>(it));
+        std::move(const_cast<T *>(it) + 1, this->end(), const_cast<T *>(it));
         pop_back();
     }
-    const T* find(const T &elem) const {
-        for (const T &it = begin();it != end();++it) {
-            if (*it == elem) return &it;
+    const T *find(const T &elem) const {
+        for (const T &it = begin(); it != end(); ++it) {
+            if (*it == elem)
+                return &it;
         }
         return nullptr;
     }
-    T* find(const T &elem) 
-    {
-        return const_cast<const xvector<T>>(*this)->find(elem);
-    }
+    T *find(const T &elem) { return const_cast<const xvector<T>>(*this)->find(elem); }
     T operator[](size_t Index) const {
         assert(Index < p->_length && "Index too large!");
         return p->_data[Index];
@@ -101,7 +99,7 @@ template <typename T> struct xvector {
     bool empty() const { return p->_length == 0; }
     const T &front() const { return *p->_data; }
     T &front() { return *p->_data; }
-    const T & back() const { return p->_data[p->_length - 1]; }
+    const T &back() const { return p->_data[p->_length - 1]; }
     T &back() { return p->_data[p->_length - 1]; }
     const T *begin() const { return p->_data; };
     T *begin() { return p->_data; }

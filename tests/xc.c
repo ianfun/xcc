@@ -84,7 +84,7 @@ void next() {
 
     while (token = *src) {
         ++src;
-
+        
         if (token == '\n') {
             if (assembly) {
                 // print compile info
@@ -318,7 +318,6 @@ void next() {
         }
     }
 }
-
 void match(int tk) {
     if (token == tk) {
         next();

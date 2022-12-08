@@ -77,7 +77,8 @@ struct Parser : public EvalHelper {
     StringPool string_pool;
     llvm::ConstantPointerNull *null_ptr;
     Expr null_ptr_expr;
-private:
+
+  private:
     uint64_t getsizeof(CType ty) { return irgen.getsizeof(ty); }
     uint64_t getAlignof(CType ty) { return irgen.getAlignof(ty); }
     uint64_t getAlignof(Expr e) { return getAlignof(e->ty); }
@@ -85,10 +86,11 @@ private:
         if (e->k == EArrToAddress) {
             CType ty = e->arr3->ty;
             if (ty->isVLA())
-                return ENEW(SizeofExpr) {.ty = context.getSize_t(), .theType = ty, .sizeof_loc_begin = begin, .sizeof_loc_end = end};
+                return ENEW(SizeofExpr){
+                    .ty = context.getSize_t(), .theType = ty, .sizeof_loc_begin = begin, .sizeof_loc_end = end};
         }
         return wrap(context.getSize_t(),
-                ConstantInt::get(irgen.ctx, APInt(context.getSize_tBitWidth(), getsizeof(e->ty))), begin, end);
+                    ConstantInt::get(irgen.ctx, APInt(context.getSize_tBitWidth(), getsizeof(e->ty))), begin, end);
     }
     [[nodiscard]] Expr binop(Expr a, BinOp op, Expr b, CType ty) {
         return ENEW(BinExpr){.ty = ty, .lhs = a, .bop = op, .rhs = b};
@@ -225,24 +227,25 @@ private:
         }
         return ref.idx;
     }
-    CType gettagByName(IdentRef Name, enum CTypeKind expected, location_t full_loc) {
+    CType gettagByName(IdentRef Name, enum TagKind expected, location_t full_loc) {
         assert(Name && "gettagByName: Name is nullptr");
         CType result;
         unsigned idx;
         auto r = sema.tags.getSym(Name, idx);
         if (r) {
-            if (r->ty->getKind() != expected)
-                type_error(full_loc, "%s %I is not a %s", show2(r->ty->getKind()), Name, show2(expected)) << SourceRange(full_loc,  Name);
+            if ((!r->ty->isAgg()) || (r->ty->getTagDeclTagType() != expected))
+                type_error(full_loc, "%s %I is not a %s", show(r->ty->getTagDeclTagType()), Name, show(expected))
+                    << SourceRange(full_loc, Name);
             result = r->ty;
         } else {
-            result = TNEW(IncompleteType){.tag = transform(expected), .name = Name};
-            result->setKind(TYINCOMPLETE);
+            result = TNEW(TagType){.tag = expected, .tag_name = Name};
+            result->setKind(TYTAG);
             Type_info info = Type_info{.ty = result, .loc = full_loc};
             insertStmt(SNEW(DeclStmt){.decl_idx = sema.tags.putSym(Name, info), .decl_ty = result});
         }
         return result;
     }
-    size_t puttag(IdentRef Name, CType ty, location_t loc, enum CTypeKind k) {
+    size_t puttag(IdentRef Name, CType ty, location_t loc, enum TagKind k) {
         assert(ty && "no type provided");
         bool found = false;
         if (Name) {
@@ -250,24 +253,27 @@ private:
             auto old = sema.tags.getSymInCurrentScope(Name, prev);
             if (old) {
                 const SourceRange range(loc, Name);
-                const SourceRange prev_range(old->loc, Name);
-                if (old->ty->getKind() != TYINCOMPLETE) {
-                    type_error(loc, "%s %I redefined", show2(k), Name) << range;
-                    note(old->loc, "previous declaration is here") << prev_range;
-                } else if (transform(old->ty->tag) != k) {
-                    type_error(loc, "%s %I redeclared with different as different kind: %s", show2(k), Name,
-                               show(old->ty->tag)) << range;
+
+                bool has_error = true;
+                if ((!old->ty->isAgg()) || old->ty->getTagDeclTagType() != k) {
+                    type_error(loc, "%s %I redeclared with different as different kind of aggregate type: %s", show(k),
+                               Name, show(old->ty->tag))
+                        << range;
+                } else if (old->ty->hasDefinition()) {
+                    type_error(loc, "redefining aggregate type: %s %I", show(k), Name) << range;
+                } else {
+                    has_error = false;
+                }
+                if (has_error) {
+                    const SourceRange prev_range(old->loc, Name);
                     note(old->loc, "previous declaration is here") << prev_range;
                 }
                 old->ty = ty;
                 old->loc = loc;
-                insertStmt(SNEW(UpdateForwardDeclStmt){
-                    .prev_idx = prev,
-                    .now = ty,
-                });
                 found = true;
             }
         }
+        // if the struct has no name, we use the type as a unique IdentRef which cannot be finded.
         unsigned Idx = sema.tags.putSym(Name ? Name : reinterpret_cast<IdentRef>(ty), Type_info{.ty = ty, .loc = loc});
         if (!found) {
             insertStmt(SNEW(DeclStmt){.decl_idx = Idx, .decl_ty = ty});
@@ -316,7 +322,10 @@ private:
             }
         } else {
             idx = sema.typedefs.putSym(
-                Name, Variable_Info{.ty = yt, .loc = full_loc, .tags =  static_cast<uint8_t>(isDefinition ? ASSIGNED : 0)}); // function never undefined
+                Name,
+                Variable_Info{.ty = yt,
+                              .loc = full_loc,
+                              .tags = static_cast<uint8_t>(isDefinition ? ASSIGNED : 0)}); // function never undefined
         }
         return idx;
     }
@@ -331,7 +340,8 @@ private:
         if (it) {
             if (yt->hasTag(TYTYPEDEF)) {
                 if (!compatible(it->ty, yt)) {
-                    type_error(full_loc, "%I redeclared as different kind of symbol", Name) << SourceRange(full_loc, Name);
+                    type_error(full_loc, "%I redeclared as different kind of symbol", Name)
+                        << SourceRange(full_loc, Name);
                     note(it->loc, "previous declaration of %I is here", Name) << SourceRange(it->loc, Name);
                 }
                 goto PUT;
@@ -344,7 +354,8 @@ private:
                 if ((t1 & M) != (t2 & M))
                     type_error(full_loc, "conflicting type qualifiers for %I", Name) << SourceRange(full_loc, Name);
                 else if (!compatible(old, yt))
-                    type_error(full_loc, "conflicting types for %I: (%T v.s. %T)", Name, yt, old) << SourceRange(full_loc, Name);
+                    type_error(full_loc, "conflicting types for %I: (%T v.s. %T)", Name, yt, old)
+                        << SourceRange(full_loc, Name);
                 else
                     err = false;
                 if (err)
@@ -377,7 +388,9 @@ PUT:
         const auto mask = OpaqueCType::important_mask;
         switch (p->getKind()) {
         case TYVLA:
-            return (compatible(p->vla_arraytype, expected->vla_arraytype) && (p->vla_expr == expected->vla_expr)) ? Cast_Ok : Cast_Imcompatible;
+            return ((p->vla_expr == expected->vla_expr) && compatible(p->vla_arraytype, expected->vla_arraytype))
+                       ? Cast_Ok
+                       : Cast_Imcompatible;
         case TYPRIM: {
             if ((p->getTags() & mask) != (expected->getTags() & mask))
                 return Cast_Imcompatible;
@@ -398,17 +411,21 @@ PUT:
                 if (canBeSavelyCastTo(p->params[i].ty, expected->params[i].ty) != Cast_Ok)
                     return Cast_Imcompatible;
             return Cast_Ok;
-        case TYSTRUCT:
-        case TYENUM:
-        case TYUNION: return p == expected ? Cast_Ok : Cast_Imcompatible;
         case TYPOINTER:
             if (p->p->isVoid() || expected->p->isVoid())
                 return Cast_Ok;
             if ((p->p->getTags() & TYCONST) > (expected->p->getTags() & TYCONST))
                 return Cast_DiscardsQualifiers;
             return canBeSavelyCastTo(p->p, expected->p);
-        case TYINCOMPLETE: return (p->tag == expected->tag && p->name == expected->name) ? Cast_Ok : Cast_Imcompatible;
-        case TYBITFIELD: llvm_unreachable("");
+        case TYTAG: return (p->getTagDecl() == expected->getTagDecl()) ? Cast_Ok : Cast_Imcompatible;
+        case TYBITINT:
+            return (p->getBitIntBits() == expected->getBitIntBits()) &&
+                           type_equal(p->getBitIntBaseType(), expected->getBitIntBaseType())
+                       ? Cast_Ok
+                       : Cast_Imcompatible;
+        case TYBITFIELD:
+            return ((p->bitsize == expected->bitsize) && type_equal(p->bittype, expected->bittype)) ? Cast_Ok
+                                                                                                    : Cast_Imcompatible;
         case TYARRAY:
             if (p->hassize != expected->hassize)
                 return Cast_Imcompatible;
@@ -416,7 +433,7 @@ PUT:
                 return Cast_Imcompatible;
             return canBeSavelyCastTo(p->arrtype, expected->arrtype);
         }
-        llvm_unreachable("");
+        llvm_unreachable("invalid CTypeKind");
     }
     Expr float_cast2(Expr e, CType to) {
         assert(e && "cast from nullptr");
@@ -446,7 +463,8 @@ PUT:
                                             e->getBeginLoc(), e->getEndLoc())
                                      : make_cast(e, FPTrunc, to);
         if ((k3 >= F_Decimal32 && k3 <= F_Decimal128) || k3 == F_PPC128 || k3 == F_BFloat)
-            type_error(e->getBeginLoc(), "unsupported floating fast") << e->getSourceRange();;
+            type_error(e->getBeginLoc(), "unsupported floating fast") << e->getSourceRange();
+        ;
         return e;
     }
     Expr int_cast_promote(Expr e, bool isASigned, CType to) {
@@ -653,9 +671,9 @@ PTR_CAST:
             return integer_to_ptr(e, to, implict);
         if (k0 == TYPOINTER && k == TYPOINTER)
             return ptr_cast(e, to, implict);
-        if (k0 == TYENUM) // cast from enum: bit-cast e to int first, then do-cast to ty
+        if (k0 == TYTAG && e->ty->isEnum()) // cast from enum: bit-cast e to int first, then do-cast to ty
             return castto(bit_cast(e, context.getInt()), to);
-        if (k == TYENUM) // cast to enum: do-cast e to int first, then bit-cast to enum
+        if (k == TYTAG && to->isEnum()) // cast to enum: do-cast e to int first, then bit-cast to enum
             return bit_cast(castto(e, context.getInt()), to);
         if (k0 != TYPRIM || k != TYPRIM)
             return type_error(loc, "invalid conversion from %T to %T", e->ty, to), e;
@@ -687,8 +705,8 @@ PTR_CAST:
             if (!(to->isComplex() || to->isImaginary()))
                 return wrap(to, llvm::Constant::getNullValue(irgen.wrapNoComplexScalar(to)), e->getBeginLoc(),
                             e->getEndLoc());
-            CType ty = context.make(e->ty->del(TYIMAGINARY | TYCOMPLEX));
-            CType ty2 = context.make(to->del(TYCOMPLEX | TYIMAGINARY));
+            CType ty = context.make_cached(e->ty->del(TYIMAGINARY | TYCOMPLEX));
+            CType ty2 = context.make_cached(to->del(TYCOMPLEX | TYIMAGINARY));
             Expr res = castto(bit_cast(e, ty), ty2);
             if (to->isImaginary())
                 return res;
@@ -753,8 +771,7 @@ PTR_CAST:
                     if (it->info.tags & ASSIGNED) {
                         if (it->info.tags & PARAM) {
                             warning(loc, "unused parameter %I", it->sym) << range;
-                        }
-                        else {
+                        } else {
                             ++result;
                             warning(loc, "variable %I is unused after assignment", it->sym) << range;
                         }
@@ -784,15 +801,14 @@ PTR_CAST:
                         if (!(it->info.tags & PARAM)) {
                             set[idx++] = it - start;
                         }
-                    }
-                    else {
+                    } else {
                         set[idx++] = it - start;
                     }
                 }
             }
             assert(idx == result);
-            std::sort(set.begin(), set_end/*, std::less<unsigned>()*/);
-            for (Stmt ptr = begin, old_ptr = oldPtr;ptr != end;ptr = ptr->next) {
+            std::sort(set.begin(), set_end /*, std::less<unsigned>()*/);
+            for (Stmt ptr = begin, old_ptr = oldPtr; ptr != end; ptr = ptr->next) {
                 if (ptr->k == SVarDecl) {
                     auto start = ptr->vars.begin();
                     size_t length = ptr->vars.size();
@@ -806,7 +822,7 @@ PTR_CAST:
                             ptr->vars.erase(&it);
                             continue;
                         }
-                        SIDE_EFFECT:
+SIDE_EFFECT:
                         start++;
                     }
                     if (ptr->vars.empty()) {
@@ -846,9 +862,9 @@ PTR_CAST:
         if (!unused_gvs.empty()) {
             const auto m_begin = unused_gvs.begin();
             const auto m_end = unused_gvs.end();
-            std::sort(m_begin, m_end/*, std::less<unsigned>()*/);
+            std::sort(m_begin, m_end /*, std::less<unsigned>()*/);
             Stmt old_ptr = begin;
-            for (Stmt ptr = begin->next;ptr;ptr = ptr->next) {
+            for (Stmt ptr = begin->next; ptr; ptr = ptr->next) {
                 if (ptr->k == SVarDecl) {
                     auto start = ptr->vars.begin();
                     size_t length = ptr->vars.size();
@@ -1153,7 +1169,7 @@ PTR_CAST:
                 if (r->ty->isImaginary()) {
                     Expr e3 = bit_cast(r, context.getImaginaryElementType(r->ty));
                     make_add(e2, e3, opLoc);
-                    result = bit_cast(e2, context.make(e2->ty->getTags() | TYIMAGINARY));
+                    result = bit_cast(e2, context.make_cached(e2->ty->getTags() | TYIMAGINARY));
                     return;
                 }
                 // imag + real => complex
@@ -1540,9 +1556,7 @@ BAD:
 NOT_CONSTANT:
         result = binop(result, result->ty->isSigned() ? AShr : Shr, r, result->ty);
     }
-    Expr bit_cast(Expr e, CType to) {
-        return ENEW(BitCastExpr) {.ty = to, .src = e};
-    }
+    Expr bit_cast(Expr e, CType to) { return ENEW(BitCastExpr){.ty = to, .src = e}; }
     void make_bitop(Expr &result, Expr &r, BinOp op, location_t opLoc) {
         checkInteger(result, r, opLoc);
         conv(result, r);
@@ -1629,7 +1643,7 @@ ONE : {
                 // imag * real => imag
                 result = bit_cast(result, context.getImaginaryElementType(result->ty));
                 make_mul(result, r, opLoc);
-                result = bit_cast(result, context.make(result->ty->getTags() | TYIMAGINARY));
+                result = bit_cast(result, context.make_cached(result->ty->getTags() | TYIMAGINARY));
                 return;
             }
             assert(r->ty->isImaginary());
@@ -1643,7 +1657,7 @@ ONE : {
             // real * imag => imag
             Expr tmp = bit_cast(r, context.getImaginaryElementType(r->ty));
             make_mul(result, tmp, opLoc);
-            result = bit_cast(result, context.make(result->ty->getTags() | TYIMAGINARY));
+            result = bit_cast(result, context.make_cached(result->ty->getTags() | TYIMAGINARY));
             return;
         }
         conv(result, r);
@@ -1757,7 +1771,7 @@ ZERO:
                 // imag / real => imag
                 result = bit_cast(r, context.getImaginaryElementType(r->ty));
                 make_div(result, r, opLoc);
-                result = bit_cast(result, context.make(result->ty->getTags() | TYIMAGINARY));
+                result = bit_cast(result, context.make_cached(result->ty->getTags() | TYIMAGINARY));
                 return;
             }
             assert(r->ty->isImaginary());
@@ -1771,7 +1785,7 @@ ZERO:
             // real / imag => imag
             Expr tmp = bit_cast(r, context.getImaginaryElementType(r->ty));
             make_div(result, tmp, opLoc);
-            result = bit_cast(result, context.make(result->ty->getTags() | TYIMAGINARY));
+            result = bit_cast(result, context.make_cached(result->ty->getTags() | TYIMAGINARY));
             return;
         }
         conv(result, r);
@@ -2210,7 +2224,7 @@ BREAK:
             }
             if (tags) {
                 warning(loc, "type-specifier missing(has type-qualifiers), defaults to 'int'");
-                return context.make(context.getInt()->getTags() | tags);
+                return context.make_cached(context.getInt()->getTags() | tags);
             }
             switch (firstTok) {
             case K_Bool: return context.getBool();
@@ -2369,7 +2383,7 @@ BREAK:
                     tags |= OpaqueCType::sign_bit;
                 tags |= build_integer(I);
             }
-            return context.make(tags);
+            return context.make_cached(tags);
         }
         // try to merge typedef with type qualifiers and storage class specifers
         // If tags has 'void', '_Complex', '_Imaginary', or we have meet int(I) or float(F), than we cannot merge.
@@ -2439,15 +2453,16 @@ BREAK:
                 default: llvm_unreachable("bad string encoding");
                 }
             }
-            if (k != TYPRIM && k != TYPOINTER && k != TYENUM)
-                return type_error(getLoc(), "expect bracket initializer"), nullptr;
+            if (!ty->isScalar())
+                return type_error(getLoc(), "expect bracket initializer for aggregate types"), nullptr;
             if (!(e = assignment_expression()))
                 return nullptr;
             return castto(e, ty, Implict_Init);
         }
         auto k = sema.currentInitTy->getKind();
-        result = k == TYSTRUCT ? ENEW(StructExpr){.ty = sema.currentInitTy, .arr2 = xvector<Expr>::get()}
-                               : ENEW(ArrayExpr){.ty = sema.currentInitTy, .arr = xvector<Expr>::get()};
+        bool isStructUnion = sema.currentInitTy->isAgg() && sema.currentInitTy->isUnionOrStruct();
+        result = k == isStructUnion ? ENEW(StructExpr){.ty = sema.currentInitTy, .arr2 = xvector<Expr>::get()}
+                                    : ENEW(ArrayExpr){.ty = sema.currentInitTy, .arr = xvector<Expr>::get()};
         result->StructStartLoc = getLoc();
         consume();
         if (k == TYARRAY) {
@@ -2456,8 +2471,8 @@ BREAK:
             } else {
                 result->ty->hassize = true, result->ty->arrsize = 0, m = -1;
             }
-        } else if (k == TYSTRUCT) {
-            m = sema.currentInitTy->selems.size();
+        } else if (k == isStructUnion) {
+            m = sema.currentInitTy->getRecord()->fields.size();
         } else {
             // braces around scalar initializer
             m = 1;
@@ -2469,8 +2484,8 @@ BREAK:
                 consume();
                 break;
             }
-            if (k == TYSTRUCT) {
-                ty = i < (unsigned)m ? sema.currentInitTy->selems[i].ty : nullptr;
+            if (k == isStructUnion) {
+                ty = i < (unsigned)m ? sema.currentInitTy->getRecord()->fields[i].ty : nullptr;
             } else if (k == TYARRAY) {
                 ty = sema.currentInitTy->arrtype;
             } else {
@@ -2494,7 +2509,7 @@ BREAK:
             if (l.tok.tok == TComma)
                 consume();
         }
-        if (k == TYPRIM || k == TYPOINTER || k == TYENUM)
+        if (sema.currentInitTy->isScalar())
             result = result->arr.front();
         return result;
     }
@@ -2545,7 +2560,7 @@ BREAK:
                     type_error(current_declator_loc, "declaration of %I as array of voids", name);
                 else
                     type_error("declaration of type name as array of voids");
-            } else if (base->getKind() == TYINCOMPLETE) {
+            } else if (base->isIncomplete()) {
                 type_error("array type has incomplete element type");
             }
             CType ty = TNEW(ArrayType){.arrtype = base, .hassize = false, .arrsize = 0};
@@ -2574,7 +2589,7 @@ BREAK:
                 ty->hassize = true;
                 ty->arrsize = try_eval(e, ok);
                 if (!ok) {
-                    ty = TNEW(VlaType) {.vla_arraytype = base, .vla_expr = int_cast(e, context.getSize_t())};
+                    ty = TNEW(VlaType){.vla_arraytype = base, .vla_expr = int_cast(e, context.getSize_t())};
                     ty->setKind(TYVLA);
                 }
                 if (l.tok.tok != TRSquareBrackets)
@@ -2644,12 +2659,14 @@ BREAK:
             Name = l.tok.s;
             consume();
             if (l.tok.tok != TLcurlyBracket) // struct Foo
-                return gettagByName(Name, tok == Kstruct ? TYSTRUCT : TYUNION, full_loc);
+                return gettagByName(Name, tok == Kstruct ? TagType_Struct : TagType_Union, full_loc);
         } else if (l.tok.tok != TLcurlyBracket) {
             return parse_error(getLoc(), "expect '{' for start anonymous struct/union"), nullptr;
         }
-        CType result = TNEW(StructType){.sname = Name, .selems = xvector<Declator>::get()};
-        result->setKind(tok == Kstruct ? TYSTRUCT : TYUNION);
+        CType result = TNEW(TagType){.tag = tok == Kstruct ? TagType_Struct : TagType_Union,
+                                     .tag_name = Name,
+                                     .tag_decl = new (getAllocator())(RecordDecl){}};
+        result->setKind(TYTAG);
         consume();
         if (l.tok.tok != TRcurlyBracket) {
             for (;;) {
@@ -2672,14 +2689,14 @@ BREAK:
                         if (!e.ty)
                             return parse_error(getLoc(), "expect struct-declarator"), nullptr;
                         if (e.name) {
-                            for (const auto &p : result->selems) {
+                            for (const auto &p : result->getRecord()->fields) {
                                 if (p.name == e.name) {
                                     type_error(getLoc(), "duplicate member %I", e.name);
                                     break;
                                 }
                             }
                         }
-                        result->selems.push_back(e);
+                        result->getRecord()->fields.push_back(e);
                         if (l.tok.tok == TComma)
                             consume();
                         else {
@@ -2695,7 +2712,7 @@ BREAK:
             }
         } else
             consume();
-        result->sidx = puttag(Name, result, full_loc, tok == Kstruct ? TYSTRUCT : TYUNION);
+        result->idx = puttag(Name, result, full_loc, tok == Kstruct ? TagType_Struct : TagType_Union);
         return result;
     }
     CType enum_decl() {
@@ -2714,13 +2731,12 @@ BREAK:
             Name = l.tok.s;
             consume();
             if (l.tok.tok != TLcurlyBracket) // struct Foo
-                return gettagByName(Name, TYENUM, full_loc);
+                return gettagByName(Name, TagType_Enum, full_loc);
         } else if (l.tok.tok != TLcurlyBracket)
             return parse_error(full_loc, "expect '{' for start anonymous enum"), nullptr;
-        CType result = TNEW(EnumType){.ename = Name};
-        result->setKind(TYENUM);
-        if (!irgen.options.g)
-            result->eelems = xvector<EnumPair>::get();
+        CType result =
+            TNEW(TagType){.tag = TagType_Enum, .tag_name = Name, .tag_decl = new (getAllocator()) EnumDecl()};
+        result->setKind(TYTAG);
         consume();
         for (uint64_t c = 0;; c++) {
             if (l.tok.tok != TIdentifier)
@@ -2738,11 +2754,11 @@ BREAK:
                     if (I.getActiveBits() > 32) {
                         warning(full_loc, "enum constant exceeds 32 bit");
                     }
-                    c = I.getLimitedValue();
+                    c = I.getZExtValue();
                 }
             }
             putenum(s, c, full_loc);
-            result->eelems.push_back(EnumPair{.name = s, .val = c});
+            result->getEnum()->enums.emplace_back(s, c);
             if (l.tok.tok == TComma)
                 consume();
             else
@@ -2751,7 +2767,7 @@ BREAK:
         if (l.tok.tok != TRcurlyBracket)
             parse_error(getLoc(), "expect '}'");
         consume();
-        result->eidx = puttag(Name, result, full_loc, TYENUM);
+        result->idx = puttag(Name, result, full_loc, TagType_Enum);
         return result;
     }
     bool parameter_type_list(xvector<Param> &params, bool &isVararg) {
@@ -2776,13 +2792,13 @@ BREAK:
             if (!nt.ty)
                 return expect(current_declator_loc, "abstract-declarator"), false;
             params.push_back(nt);
-            if (nt.ty->getKind() == TYINCOMPLETE)
+            if (nt.ty->isIncomplete())
                 type_error(current_declator_loc, "parameter %u has imcomplete type %T", i, nt.ty), ok = false;
             if (nt.name) {
                 if (sema.typedefs.getSymInCurrentScope(nt.name))
                     type_error(current_declator_loc, "duplicate parameter %I", nt.name);
-                sema.typedefs.putSym(nt.name,
-                                     Variable_Info{.ty = nt.ty, .loc = current_declator_loc, .tags = ASSIGNED | USED | PARAM});
+                sema.typedefs.putSym(
+                    nt.name, Variable_Info{.ty = nt.ty, .loc = current_declator_loc, .tags = ASSIGNED | USED | PARAM});
             }
             if (l.tok.tok == TComma)
                 consume();
@@ -2923,7 +2939,7 @@ BREAK:
         }
         if (!(base = declaration_specifiers()))
             return expect(loc, "declaration-specifiers");
-        if (sema.currentAlign) { 
+        if (sema.currentAlign) {
             size_t m = getAlignof(base) * 8;
             if (sema.currentAlign < m) {
                 type_error(loc, "requested alignment is less than minimum alignment of %Z for type %T", m, base);
@@ -3008,7 +3024,7 @@ ARGV_OK:;
             if (!(st.ty->hasTag(TYEXTERN))) {
                 if ((st.ty->isVoid()) && !(st.ty->hasTag(TYTYPEDEF)))
                     return (void)type_error(current_declator_loc, "variable %I declared void", st.name);
-                if (st.ty->getKind() == TYINCOMPLETE)
+                if (st.ty->isIncomplete())
                     return (void)type_error(current_declator_loc, "variable %I has imcomplete type %T", st.name);
             }
             if (l.tok.tok == TAssign) {
@@ -3609,7 +3625,7 @@ NEXT:
                                        .constantArrayLocEnd = endLoc};
     }
     struct best_match {
-        best_match(IdentRef goal): m_goal{goal->getKey()} {}
+        best_match(IdentRef goal) : m_goal{goal->getKey()} { }
         unsigned m_best = 0;
         bool m_hasBest = false;
         StringRef m_goal;
@@ -3617,13 +3633,15 @@ NEXT:
             StringRef key = candidate->getKey();
 
             unsigned MinED = abs((int)key.size() - (int)m_goal.size());
-            if (MinED && m_goal.size() / MinED < 3) return;
+            if (MinED && m_goal.size() / MinED < 3)
+                return;
 
             // Compute an upper bound on the allowable edit distance, so that the
             // edit-distance algorithm can short-circuit.
             unsigned UpperBound = (m_goal.size() + 2) / 3;
             unsigned ED = m_goal.edit_distance(key, true, UpperBound);
-            if (ED > UpperBound) return;
+            if (ED > UpperBound)
+                return;
 
             if (ED > m_best)
                 return select(idx);
@@ -3637,12 +3655,14 @@ NEXT:
     };
     // clang::TypoCorrectionConsumer::addName
     // https://splichal.eu/doxygen/spellcheck_8h_source.html
-    // quote from gcc[https://gcc.gnu.org/git/?p=gcc.git;a=blob;f=gcc/c/c-decl.cc;h=4adb89e4aaf1b53448cc9c3ca05eb5d05f0d02bf;hb=HEAD]
-    // > Scopes are searched from innermost outwards, and within a scope in reverse order of declaration, thus benefiting candidates "near" to the current scope.
+    // quote from
+    // gcc[https://gcc.gnu.org/git/?p=gcc.git;a=blob;f=gcc/c/c-decl.cc;h=4adb89e4aaf1b53448cc9c3ca05eb5d05f0d02bf;hb=HEAD]
+    // > Scopes are searched from innermost outwards, and within a scope in reverse order of declaration, thus
+    // benefiting candidates "near" to the current scope.
     IdentRef try_suggest_identfier(IdentRef ID, SourceRange &declRange) {
         best_match result(ID);
         const auto &data = sema.typedefs.data;
-        for (unsigned i = data.size();i--;) 
+        for (unsigned i = data.size(); i--;)
             result.consider(data[i].sym, i);
         if (result.hasBest()) {
             auto &it = data[result.best()];
@@ -3727,8 +3747,8 @@ NEXT:
                     SourceRange declRange;
                     IdentRef Name = try_suggest_identfier(sym, declRange);
                     if (Name) {
-                        type_error(loc, "use of undeclared identifier %I; did you mean %I?", sym) << Name << range
-                        <<  FixItHint::CreateInsertion(Name->getKey(), loc);
+                        type_error(loc, "use of undeclared identifier %I; did you mean %I?", sym)
+                            << Name << range << FixItHint::CreateInsertion(Name->getKey(), loc);
                         if (declRange.isValid())
                             note(declRange.getStart(), "%I declared here", Name) << declRange;
                     } else {
@@ -3908,9 +3928,11 @@ GENERIC_END:
                 return getFunctionNameExpr(loc, endLoc);
             case K__builtin_LINE:
                 return wrap(context.getInt(),
-                            ConstantInt::get(irgen.integer_types[context.getIntLog2()], SM().getLineNumber(loc)), loc, endLoc);
-            case K__builtin_COLUMN: 
-                return wrap(context.getInt(), ConstantInt::get(irgen.integer_types[context.getIntLog2()], SM().getColumnNumber(loc)), loc,
+                            ConstantInt::get(irgen.integer_types[context.getIntLog2()], SM().getLineNumber(loc)), loc,
+                            endLoc);
+            case K__builtin_COLUMN:
+                return wrap(context.getInt(),
+                            ConstantInt::get(irgen.integer_types[context.getIntLog2()], SM().getColumnNumber(loc)), loc,
                             endLoc);
             case K__builtin_FILE:
                 return ENEW(ConstantArrayExpr){.ty = context.stringty,
@@ -3957,23 +3979,26 @@ DOT:
                 location_t mem_loc_end = getEndLoc();
                 if (isarrow) {
                     if (k != TYPOINTER) {
-                        type_error(opLoc, "member reference type %T is not a pointer; did you mean to use '.'", ty) << result->getSourceRange();
+                        type_error(opLoc, "member reference type %T is not a pointer; did you mean to use '.'", ty)
+                            << result->getSourceRange();
                         return result;
                     }
                     ty = result->ty->p;
                     isLvalue = true;
                 } else {
                     if (k == TYPOINTER) {
-                        type_error(opLoc, "member reference type %T is a pointer; did you mean to use '->'", ty) << result->getSourceRange();
+                        type_error(opLoc, "member reference type %T is a pointer; did you mean to use '->'", ty)
+                            << result->getSourceRange();
                         return result;
                     }
                 }
-                if (k != TYSTRUCT && k != TYUNION) {
+                if (!(ty->isAgg() && !ty->isEnum())) {
                     type_error(opLoc, "member access is not struct or union") << result->getSourceRange();
                     return result;
                 }
-                for (size_t i = 0; i < ty->selems.size(); ++i) {
-                    Declator pair = ty->selems[i];
+                const auto &fields = ty->getRecord()->fields;
+                for (size_t i = 0; i < fields.size(); ++i) {
+                    Declator pair = fields[i];
                     if (l.tok.s == pair.name) {
                         result = ENEW(MemberAccessExpr){
                             .ty = pair.ty, .obj = result, .idx = (unsigned)i, .memberEndLoc = getLoc()};
@@ -3985,7 +4010,8 @@ DOT:
                         goto CONTINUE;
                     }
                 }
-                type_error(opLoc, "struct/union %I has no member %I", result->ty->sname, l.tok.s) << SourceRange(mem_loc_begin, mem_loc_end);
+                type_error(opLoc, "struct/union %I has no member %I", result->ty->getTagName(), l.tok.s)
+                    << SourceRange(mem_loc_begin, mem_loc_end);
                 return nullptr;
 CONTINUE:;
             } break;
@@ -4243,9 +4269,7 @@ NEXT:
     void condJump(Expr test, label_t T, label_t F) {
         return insertStmt(SNEW(CondJumpStmt){.test = test, .T = T, .F = F});
     }
-    void insertBr(label_t L) { 
-        return insertStmt(SNEW(GotoStmt){.location = L});
-    }
+    void insertBr(label_t L) { return insertStmt(SNEW(GotoStmt){.location = L}); }
     void insertLabel(label_t L, IdentRef Name = nullptr) {
         sreachable = true;
         return insertStmtInternal(SNEW(LabelStmt){.label = L, .labelName = Name});
@@ -4266,7 +4290,8 @@ NEXT:
             if (unreachable_reason_loc) {
                 const char *desc_table[] = {"break statement",  "continue statement", "goto statement",
                                             "switch statement", "return statement",   "call to noreturn function"};
-                warning(current_stmt_loc, "unreachable statement after %s", desc_table[static_cast<size_t>(unreachable_reason)]);
+                warning(current_stmt_loc, "unreachable statement after %s",
+                        desc_table[static_cast<size_t>(unreachable_reason)]);
                 note(unreachable_reason_loc, "after this statemet is unreachable");
                 unreachable_reason_loc = 0;
             }
@@ -4361,12 +4386,12 @@ ONE_CASE:
             else
                 insertBr(jumper.topContinue);
             return setUnreachable(loc, UR_continue);
-        case Kbreak: 
+        case Kbreak:
             consume();
             checkSemicolon();
             if (jumper.topBreak == INVALID_LABEL)
                 parse_error(loc, "'break' statement not in loop or switch statement");
-            else 
+            else
                 insertBr(jumper.topBreak);
             return setUnreachable(loc, UR_break);
         case Kreturn: {
@@ -4375,10 +4400,12 @@ ONE_CASE:
                 Expr ret = nullptr;
                 consume();
                 if (!sema.currentfunction->ret->isVoid()) {
-                    type_error(loc, "function should not return void in a function return %T", sema.currentfunction->ret);
-                    ret = wrap(sema.currentfunction->ret, llvm::UndefValue::get(irgen.wrap2(sema.currentfunction->ret)), loc, loc);
+                    type_error(loc, "function should not return void in a function return %T",
+                               sema.currentfunction->ret);
+                    ret = wrap(sema.currentfunction->ret, llvm::UndefValue::get(irgen.wrap2(sema.currentfunction->ret)),
+                               loc, loc);
                 }
-                insertStmt(SNEW(ReturnStmt) {.ret = ret});
+                insertStmt(SNEW(ReturnStmt){.ret = ret});
                 return setUnreachable(loc, UR_return);
             }
             Expr e;
@@ -4472,8 +4499,8 @@ ONE_CASE:
                         }
                     }
                 }
-                if (origintestTy->getKind() == TYENUM && !hasDefault) {
-                    const auto &eelems = origintestTy->eelems;
+                if (origintestTy->isAgg() && origintestTy->isEnum() && !hasDefault) {
+                    const auto &eelems = origintestTy->getEnum()->enums;
                     llvm::BitVector handled_enums(eelems.size(), false);
                     for (const auto &S : sw->switchs) {
                         uint64_t val = S.CaseStart->getLimitedValue();
