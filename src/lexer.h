@@ -134,7 +134,7 @@ struct Lexer : public EvalHelper {
         // in ’x’. A UTF-8 character constant is the same, except prefixed by u8. A wchar_t character constant is
         // prefixed by the letter L. A UTF-16 character constant is prefixed by the letter u. A UTF-32 character
         // constant is prefixed by the letter U.
-        TokenV theTok = TokenV(ATokenVChar, TCharLit);
+        TokenV theTok = TokenV(TCharLit);
         theTok.itag = enc;
         eat(); // eat '
         if (c == '\\') {
@@ -193,7 +193,7 @@ struct Lexer : public EvalHelper {
         }
     }
     TokenV lexIdent() {
-        TokenV theTok = TokenV(ATokenIdent, PPIdent);
+        TokenV theTok = TokenV(PPIdent);
         for (;;) {
             unsigned n = 8;
             if (c == '\\') {
@@ -304,7 +304,7 @@ END:
             }
             endLoc = SM.getLoc() - 2;
             s.make_eos();
-            TokenV theTok = TokenV(ATokenVNumLit, PPNumber);
+            TokenV theTok = TokenV(PPNumber);
             theTok.str = s;
             return theTok;
         }
@@ -331,7 +331,7 @@ END:
     TokenV lexStringLit(enum StringPrefix enc = Prefix_none) {
         xstring str = xstring::get();
         eat(); // eat "
-        TokenV theTok = TokenV(ATokenVStrLit, TStringLit);
+        TokenV theTok = TokenV(TStringLit);
         for (;;) {
             if (c == '\\')
                 cat_codepoint(str, lexEscape());
@@ -360,7 +360,7 @@ END:
     }
     bool isMacroInUse(IdentRef Name) const {
         for (const auto &it : expansion_list)
-            if (it->m.Name == Name)
+            if (it->getName() == Name)
                 return true;
         return false;
     }
@@ -468,28 +468,24 @@ RUN:
                 }
                 switch (saved_tok) {
                 case PPdefine: {
-                    PPMacroDef *theMacro = context.newMacro();
-                    theMacro->loc = SM.getLoc();
-                    IdentRef name;
                     if (tok.tok < kw_start) {
                         pp_error(loc, "%s", "expect identifier");
                         goto BAD_RET;
                     }
-                    name = tok.s;
-                    theMacro->m.Name = name;
+                    PPMacroDef *theMacro = new (context.getAllocator())PPMacroDef(tok.s, SM.getLoc());
                     if (tok.tok >= PP__LINE__ && tok.tok <= PP_Pragma)
-                        warning(loc, "redefining builtin macro %I", name);
+                        warning(loc, "redefining builtin macro %I", theMacro->getName());
                     tok = lex();
                     if (tok.tok == TLbracket)
-                        theMacro->m.k = MFUNC;
+                        theMacro->setFunctionMacro();
                     while (tok.tok == TSpace)
                         tok = lex();
-                    if (theMacro->m.k == MFUNC) {
+                    if (theMacro->isFunction()) {
                         isDisableSpace = true;
                         for (;;) {
                             tok = lex();
                             if (tok.tok >= kw_start) {
-                                theMacro->m.params.push_back(tok.s);
+                                theMacro->params.push_back(tok.s);
                                 tok = lex();
                                 if (tok.tok == TRbracket)
                                     break;
@@ -509,7 +505,7 @@ RUN:
                                     parse_error(loc, "%s", "'.' expected");
                                     goto BAD_RET;
                                 }
-                                theMacro->m.ivarargs = true;
+                                theMacro->setVarArgs();
                                 tok = lex();
                                 if (tok.tok != TRbracket) {
                                     parse_error(loc, "%s", "')' expected");
@@ -518,7 +514,7 @@ RUN:
                                 continue;
                             }
                             if (tok.s->second.getToken() == PP__VA_ARGS__) {
-                                theMacro->m.ivarargs = true;
+                                theMacro->setVarArgs();
                                 tok = lex();
                                 if (tok.tok != TRbracket) {
                                     parse_error(loc, "%s", "')' expected");
@@ -535,25 +531,27 @@ RUN:
                         isDisableSpace = false;
                     }
                     while (isPPMode) {
-                        theMacro->m.tokens.push_back(tok), tok = lex();
+                        theMacro->tokens.push_back(tok), tok = lex();
                     }
-                    if (theMacro->m.tokens.size())
-                        while (theMacro->m.tokens.back().tok == TSpace)
-                            theMacro->m.tokens.pop_back();
+                    if (theMacro->tokens.size())
+                        while (theMacro->tokens.back().tok == TSpace)
+                            theMacro->tokens.pop_back();
                     bool ok = true;
-                    if (theMacro->m.tokens.size()) {
-                        if (theMacro->m.tokens.front().tok == PPSharpSharp)
+                    if (theMacro->tokens.size()) {
+                        if (theMacro->tokens.front().tok == PPSharpSharp)
                             parse_error(loc, "%s", "'##' cannot appear at start of macro expansion"), ok = false;
-                        if (theMacro->m.tokens.size() >= 2)
-                            if (theMacro->m.tokens.back().tok == PPSharpSharp)
+                        if (theMacro->tokens.size() >= 2)
+                            if (theMacro->tokens.back().tok == PPSharpSharp)
                                 parse_error(loc, "'##' cannot appear at end of macro expansion"), ok = false;
                     }
                     if (ok) {
-                        const auto it = macros.find(name);
-                        if (it != macros.end())
-                            if (!theMacro->m.equals(it->second->m))
-                                warning(loc, "macro %I redefined", name);
-                        macros[name] = theMacro;
+                        IdentRef Name = theMacro->getName();
+                        auto it = macros.insert({Name, nullptr});
+                        if (!it.second) {
+                            if (!theMacro->equals(*it.first->second))
+                                warning(loc, "macro %I redefined", Name);
+                        }
+                        it.first->second = theMacro;
                     }
                 } break;
                 case Kif: {
@@ -896,7 +894,7 @@ STD_INCLUDE:
             unsigned val = saved_tok == PP__LINE__ ? SM.current_line : counter++;
             char buf[13];
             int n = snprintf(buf, sizeof(buf), "%u", val);
-            tok = TokenV(ATokenVNumLit, PPNumber);
+            tok = TokenV(PPNumber);
             tok.str = xstring::get(StringRef(buf, n));
             return;
         }
@@ -912,13 +910,13 @@ STD_INCLUDE:
             else
                 // hh:mm:ss
                 str.msize() = snprintf(str.data(), 32, "%02d:%02d:%02d", t->tm_hour, t->tm_min, t->tm_sec);
-            tok = TokenV(ATokenVStrLit, TStringLit);
+            tok = TokenV(TStringLit);
             tok.str = str;
             tok.setStringPrefix(Prefix_none);
             return;
         }
         case PP__FILE__: {
-            tok = TokenV(ATokenVStrLit, TStringLit);
+            tok = TokenV(TStringLit);
             tok.str = xstring::get(SM.getFileName());
             tok.setStringPrefix(Prefix_none);
             return;
@@ -943,13 +941,13 @@ STD_INCLUDE:
                     tok.tok = TIdentifier;
                 return;
             }
-            PPMacro &m = it->second->m;
-            switch (m.k) {
-            case MOBJ: {
-                if (m.tokens.size()) {
+            const PPMacroDef *m = it->second;
+            if (m->isObj()) {
+                ArrayRef<TokenV> tokens = m->getTokens();
+                if (tokens.size()) {
                     beginExpandMacro(it->second);
-                    for (size_t i = m.tokens.size(); i--;) {
-                        TokenV theTok = m.tokens[i]; // copy ctor
+                    for (size_t i = tokens.size(); i--;) {
+                        TokenV theTok = tokens[i]; // copy ctor
                         if (theTok.tok != TSpace) {
                             if (tok.tok >= kw_start) {
                                 if (isMacroInUse(theTok.s)) {
@@ -965,7 +963,7 @@ STD_INCLUDE:
                 }
                 return cpp();
             }
-            case MFUNC: {
+            if (m->isFunction()) {
                 TokenV saved_token = tok; // copy ctor
                 cpp();
                 if (tok.tok == TLbracket) {
@@ -996,26 +994,28 @@ STD_INCLUDE:
                         while (args[i].size() && args[i].back().tok == TSpace)
                             args[i].pop_back();
                     }
-                    if (m.ivarargs ? args.size() < m.params.size() : args.size() != m.params.size()) {
-                        if (args.size() == 1 && args.front().empty() && m.params.size() <= 1) {
-                            if (m.params.size() == 0)
+                    ArrayRef<IdentRef> params = m->getParams();
+                    if (m->isVararg() ? args.size() < params.size() : args.size() != params.size()) {
+                        if (args.size() == 1 && args.front().empty() && params.size() <= 1) {
+                            if (params.empty())
                                 args.clear();
                             else
                                 args.front().clear();
                         } else {
                             return (void)pp_error(loc, "macro %I expect %z arguments, %z provided", name,
-                                                  m.params.size(), args.size());
+                                                  params.size(), args.size());
                         }
                     }
-                    if (m.tokens.size()) {
+                    ArrayRef<TokenV> tokens = m->getTokens();
+                    if (tokens.size()) {
                         beginExpandMacro(it->second);
-                        for (size_t i = m.tokens.size(); i--;) {
-                            TokenV theTok = m.tokens[i];
+                        for (size_t i = tokens.size(); i--;) {
+                            TokenV theTok = tokens[i];
                             if (theTok.tok != TSpace) {
                                 if (theTok.tok >= kw_start) {
                                     IdentRef s = theTok.s;
-                                    for (unsigned j = 0; j < m.params.size(); j++) {
-                                        if (s == m.params[j]) {
+                                    for (unsigned j = 0; j < params.size(); j++) {
+                                        if (s == params[j]) {
                                             for (const auto &it : args[j])
                                                 tokenq.push_back(it);
                                             goto BREAK;
@@ -1041,10 +1041,9 @@ BREAK:;
                 if (saved_token.tok == PPIdent)
                     tok.tok = TIdentifier;
                 return;
-            } // end cast
-            default: llvm_unreachable("bad macro kind");
-            } // end switch
-        }     // end default
-        }     // end switch
+            }
+            llvm_unreachable("invalid macro kind");
+        }
+        }
     }
 };

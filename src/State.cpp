@@ -62,6 +62,8 @@ struct xcc_context {
 
         _imaginary_double = make(fdoublety->getTags() | TYIMAGINARY);
         _imaginary_float = make(ffloatty->getTags() | TYIMAGINARY);
+
+        return_void_stmt = SNEW(ReturnStmt) {.ret = nullptr};
     }
     IdentifierTable table; // contains allocator!
     llvm::DenseMap<type_tag_t, CType> prim_ctype_map;
@@ -70,6 +72,7 @@ struct xcc_context {
         _complex_longdouble, _short, _ushort, _wchar, _long, _ulong, _longlong, _ulonglong, _longdouble, _uchar,
         _size_t, _ptr_diff_t, _uint_ptr, fdecimal32, fdecimal64, fdecimal128, _imaginary_double, _imaginary_float,
         _nullptr_t;
+    Stmt return_void_stmt;
     [[nodiscard]] CType make(type_tag_t tags) { return TNEW(PrimType){.tags = tags}; }
     [[nodiscard]] CType make_cached(type_tag_t tags) {
         auto it = prim_ctype_map.insert({tags, nullptr});
@@ -164,6 +167,14 @@ struct xcc_context {
         res->setKind(TYPRIM);
         return res;
     }
+    [[nodiscard]] Stmt getReturnVoidStmt() const {
+        return return_void_stmt;
+    }
+    [[nodiscard]] Stmt createRet(Expr e) {
+        if (e)
+            return SNEW(ReturnStmt) {.ret = e};
+        return return_void_stmt;
+    }
     [[nodiscard]] CType getComplexFloat() const { return _complex_float; }
     [[nodiscard]] CType getComplexDouble() const { return _complex_double; }
     [[nodiscard]] CType getComplexLongDouble() const { return _complex_longdouble; }
@@ -237,7 +248,6 @@ struct xcc_context {
     }
     [[nodiscard]] Stmt clone(Stmt s) { return reinterpret_cast<Stmt>(new_memcpy(stmt_size_map[s->k], s)); }
     [[nodiscard]] Expr clone(Expr e) { return reinterpret_cast<Expr>(new_memcpy(expr_size_map[e->k], e)); }
-    [[nodiscard]] PPMacroDef *newMacro() { return new (getAllocator()) PPMacroDef(); }
     [[nodiscard]] uint8_t getBoolLog2() const { return 0; }
     [[nodiscard]] uint8_t getCharLog2() const { return 3; }
     [[nodiscard]] uint8_t getShortLog2() const { return 4; }

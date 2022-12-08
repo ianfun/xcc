@@ -1042,18 +1042,10 @@ static bool compatible(CType p, CType expected) {
 }
 
 // TokenV: A Token with a value, and a macro is a sequence of TokenVs
-enum TokenVKind : uint8_t {
-    ATokenVBase,
-    ATokenIdent,
-    ATokenVNumLit,
-    ATokenVStrLit,
-    ATokenVChar,
-    ATokenVLoc
-};
-
 struct TokenV {
-    enum TokenVKind k = ATokenVBase; // 8 bits
-    Token tok;                       // 8 bits
+    void *ptr;
+    Token tok;
+    location_t loc; // optional location
     union {
         // containing the encoding, .e.g: 8, 16, 32
         xstring str;
@@ -1064,43 +1056,45 @@ struct TokenV {
         };
         struct LocTree *tree;
     };
-    TokenV() : k{ATokenVBase}, tok{TNul} {};
-    TokenV(enum TokenVKind k, Token tok) : k{k}, tok{tok} { }
-    TokenV(Token tok) : k{ATokenVBase}, tok{tok} { }
-    TokenV(struct LocTree *tree) : k{ATokenVLoc}, tok{PPMacroTraceLoc} { this->tree = tree; }
+    TokenV(Token tok = TNul, location_t loc = 0) : tok{tok}, loc{loc} {}
+    TokenV(struct LocTree *tree) :  tok{PPMacroTraceLoc}, loc{0} { this->tree = tree; }
     enum StringPrefix getStringPrefix() {
         auto r = static_cast<enum StringPrefix>(static_cast<unsigned char>(str.back()));
         str.pop_back();
         return r;
     }
+    // Return the start location.
+    location_t getLocation() const {
+        return loc;
+    }
     void setStringPrefix(enum StringPrefix enc = Prefix_none) { str.push_back(static_cast<char>(enc)); }
     enum StringPrefix getCharPrefix() const { return static_cast<enum StringPrefix>(itag); }
-    void dump(raw_ostream &OS) const {
-        switch (k) {
-        case ATokenVBase: OS << show(tok); break;
-        case ATokenIdent:
-            OS.write_escaped(s->getKey());
-            // OS << '(' << show(tok) << '-' << show(s->second.getToken()) << ')';
+    void dump(raw_ostream &OS = llvm::errs()) const {
+        switch (tok) {
+        default:
+            if (tok >= kw_start) 
+                OS << s->getKey();
+            else 
+                OS << show(tok); 
             break;
-        case ATokenVNumLit: OS << str.str(); break;
-        case ATokenVStrLit: OS.write_escaped(str.str()); break;
-        case ATokenVChar:
+        case PPNumber: OS << str.str(); break;
+        case TStringLit: OS.write_escaped(str.str()); break;
+        case TCharLit:
             if (isprint(i)) {
                 OS << '\'' << i << '\'';
             } else {
                 (OS << "<0x").write_hex(i) << '>';
             }
             break;
-        default: llvm_unreachable("bad TokenV kind");
         }
     }
 };
-enum PPMacroKind : uint8_t {
-    MOBJ,
-    MFUNC
+enum MacroFlags: unsigned char {
+    Macro_Function = 0x1,
+    Macro_VarArgs = 0x2
 };
-struct PPMacro {
-    static bool tokensEq(ArrayRef<TokenV> a, ArrayRef<TokenV> b) {
+struct PPMacroDef {
+    static bool tokensEq(const ArrayRef<TokenV> &a, const ArrayRef<TokenV> &b) {
         if (a.size() != b.size())
             return false;
         for (unsigned i = 0; i < a.size(); ++i) {
@@ -1128,17 +1122,48 @@ struct PPMacro {
         return true;
     }
     IdentRef Name;
-    enum PPMacroKind k = MOBJ; // 1 byte
-    bool ivarargs = false;     // 1 byte
-    SmallVector<TokenV, 20> tokens{};
-    SmallVector<IdentRef, 0> params{};
-    bool equals(PPMacro &other) {
-        return ((k == other.k) && (k == MFUNC ? (ivarargs == other.ivarargs) : true) && tokensEq(tokens, other.tokens));
+    SmallVector<TokenV, 8> tokens;
+    SmallVector<IdentRef, 2> params;
+    unsigned char flags = 0;
+    location_t loc; // where the macro is defined
+    PPMacroDef(IdentRef Name, location_t loc = 0): Name{Name}, tokens{}, params{}, flags{}, loc{loc} {}
+    location_t getMacroLoc() const {
+        return loc;
     }
-};
-struct PPMacroDef {
-    PPMacro m;
-    location_t loc;
+    ArrayRef<TokenV> getTokens() const {
+        return tokens;
+    }
+    ArrayRef<IdentRef> getParams() const {
+        assert(isFunction() && "Only function macro has parameters");
+        return params;
+    }
+    IdentRef getName() const {
+        return Name;
+    }
+    bool equals(const PPMacroDef &other) const {
+        return (flags == other.flags) && tokensEq(tokens, other.tokens);
+    }
+    bool isObj() const {
+        return !(flags & Macro_Function);
+    }
+    bool isFunction() const {
+        return flags & Macro_Function;
+    }
+    bool isVararg() const {
+        return flags & Macro_VarArgs;
+    }
+    void setObjMacro() {
+        flags &= ~Macro_Function;
+    }
+    void setFunctionMacro() {
+        flags |= Macro_Function;
+    }
+    void setNoVarArgs() {
+        flags &= ~Macro_VarArgs;
+    }
+    void setVarArgs() {
+        flags |= Macro_VarArgs;
+    }
 };
 static unsigned intRank(const_CType ty) { return ty->getIntegerKind().asLog2(); }
 static unsigned floatRank(const_CType ty) { return ty->getFloatKind().getBitWidth(); }

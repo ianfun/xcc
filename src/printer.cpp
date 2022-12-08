@@ -124,35 +124,64 @@ void printConstant(const llvm::Constant *C, llvm::raw_ostream &OS) {
     C->print(OS);
 }
 
+raw_ostream &operator<<(llvm::raw_ostream &OS, const_Expr e);
+
+void maybe_print_paren(const_Expr e, raw_ostream &OS) {
+    if (e->ty->hasTag(TYPAREN)) {
+        OS << '(' << e << ')';
+        return;
+    }
+    OS << e;
+}
 raw_ostream &operator<<(llvm::raw_ostream &OS, const_Expr e) {
     switch (e->k) {
     case EBitCast: return OS << "(" << raw_ostream::BLUE << e->ty << raw_ostream::RESET << ")" << e->src;
     case EConstantArraySubstript: printConstant(e->carray->getInitializer(), OS); return OS;
     case EConstantArray: printConstant(e->array, OS); return OS;
     case EConstant: printConstant(e->C, OS); return OS;
-    case EBin: return OS << '(' << e->lhs << ' ' << show(e->bop) << ' ' << e->rhs << ')';
+    case EBin: 
+        maybe_print_paren(e->lhs, OS);
+        OS << ' ' << show(e->bop) << ' ';
+        maybe_print_paren(e->rhs, OS);
+        return OS;
     case EUnary:
         if (e->uop == AddressOf && e->ty->p->getKind() == TYFUNCTION && !e->ty->hasTag(TYLVALUE))
-            return OS << e->uoperand;
-        return OS << show(e->uop) << e->uoperand;
-    case EVoid: return OS << e->voidexpr;
+            return maybe_print_paren(e->uoperand, OS), OS;
+        OS << show(e->uop);
+        maybe_print_paren(e->uoperand, OS);
+        return OS;
+    case EVoid: return maybe_print_paren(e->voidexpr, OS), OS;
     case EVar: {
         OS.changeColor(raw_ostream::MAGENTA);
         OS << e->varName->getKey();
         OS.resetColor();
         return OS;
     }
-    case ECondition: return OS << e->cond << " ? " << e->cleft << " : " << e->cright;
-    case ECast: return OS << '(' << raw_ostream::BLUE << e->ty << raw_ostream::RESET << ')' << e->castval;
+    case ECondition:
+        maybe_print_paren(e->cond, OS);
+        OS << " ? ";
+        maybe_print_paren(e->cleft, OS);
+        OS << " : ";
+        maybe_print_paren(e->cright, OS);
+        return OS;
+    case ECast: return OS << '(' << raw_ostream::BLUE << e->ty << raw_ostream::RESET << ')';maybe_print_paren(e->castval, OS);return OS;
     case ESizeof: return OS << "sizeof(" << raw_ostream::BLUE << e->theType << raw_ostream::RESET << ')';
     case ECall:
-        OS << e->callfunc << '(';
+        maybe_print_paren(e->callfunc, OS);
+        OS << '(';
         if (e->callargs.empty())
             return OS << ')';
-        for (size_t i = 0; i < e->callargs.size() - 1; ++i)
-            OS << e->callargs[i] << ", ";
-        return OS << e->callargs.back() << ')';
-    case ESubscript: return OS << e->left << '[' << e->right << ']';
+        for (size_t i = 0; i < e->callargs.size() - 1; ++i) {
+            maybe_print_paren(e->callargs[i], OS);
+            OS << ", ";
+        }
+        maybe_print_paren(e->callargs.back(), OS);
+        return OS << ')';
+    case ESubscript: 
+        maybe_print_paren(e->left, OS);
+        OS << '[';
+        maybe_print_paren(e->right, OS);
+        return OS << ']';
     case EArray:
         OS << '{';
         for (const auto e : e->arr)
@@ -163,9 +192,11 @@ raw_ostream &operator<<(llvm::raw_ostream &OS, const_Expr e) {
         for (const auto e : e->arr2)
             OS << e << ',';
         return OS << '}';
-    case EMemberAccess: return OS << e->obj << '.' << e->ty->getRecord()->fields[e->idx].name;
-    case EArrToAddress: return OS << e->arr3;
-    case EPostFix: return OS << e->poperand << show(e->pop);
+    case EMemberAccess: return maybe_print_paren(e->obj, OS), OS << '.' << e->ty->getRecord()->fields[e->idx].name;
+    case EArrToAddress: return maybe_print_paren(e->arr3, OS), OS;
+    case EPostFix: 
+        maybe_print_paren(e->poperand, OS);
+        return OS << show(e->pop);
     }
     llvm_unreachable("");
 }
@@ -405,10 +436,7 @@ struct AstDumper {
               unsigned Indentation = 2)
         : OS{OS}, NL{NL}, tab{tab}, IndentLevel{IndentLevel}, Indentation{Indentation} { }
     void printExpr(Expr e) {
-        if (e->k == EBin)
-            OS << e->lhs << ' ' << show(e->bop) << ' ' << e->rhs;
-        else
-            OS << e;
+        OS << e;
     }
     void Indent() {
         for (unsigned i = 0; i < IndentLevel; ++i)

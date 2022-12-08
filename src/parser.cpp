@@ -4405,21 +4405,19 @@ ONE_CASE:
                     ret = wrap(sema.currentfunction->ret, llvm::UndefValue::get(irgen.wrap2(sema.currentfunction->ret)),
                                loc, loc);
                 }
-                insertStmt(SNEW(ReturnStmt){.ret = ret});
+                insertStmt(context.createRet(ret));
                 return setUnreachable(loc, UR_return);
             }
-            Expr e;
-            if (!(e = expression()))
+            Expr ret;
+            if (!(ret = expression()))
                 return;
             checkSemicolon();
 
-            if (sema.currentfunction->ret->isVoid()) {
+            if (sema.currentfunction->ret->isVoid()) 
                 error(loc, "function should return a value in a function return void");
-                e = nullptr;
-            } else {
-                e = castto(e, sema.currentfunction->ret, Implict_Return);
-            }
-            insertStmt(SNEW(ReturnStmt){.ret = e});
+            else 
+                ret = castto(ret, sema.currentfunction->ret, Implict_Return);
+            insertStmt(context.createRet(ret));
             return setUnreachable(loc, UR_return);
         }
         case Kwhile:

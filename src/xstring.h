@@ -18,6 +18,11 @@ struct xstring {
         res.p->_capacity = init_size;
         return res;
     }
+    static xstring get_from_pointer(void *ptr) {
+        xstring res;
+        res.p = reinterpret_cast<_xstring_impl*>(ptr);
+        return res;
+    }
     static xstring get_empty() { return xstring{.p = nullptr}; }
     static xstring get_from_char(char c) {
         xstring res;
