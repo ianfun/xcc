@@ -198,6 +198,7 @@ struct IRGen : public DiagnosticHelper {
     location_t debugLoc;
     DenseMap<CType, llvm::FunctionType *> function_type_cache{};
     DenseMap<Expr, llvm::Value *> vla_size_map{};
+    Stmt currentfunctionAST;
 
   private:
     void store(llvm::Value *p, llvm::Value *v) { (void)B.CreateStore(v, p); }
@@ -466,11 +467,6 @@ struct IRGen : public DiagnosticHelper {
             MPM.run(*module, MAM);
         }
     }
-    void runOptmize() {
-        // setCommandLineOpts();
-        // llvm::cl::PrintOptionValues();
-        RunOptimizationPipeline();
-    }
     void finalsizeCodeGen() {
         if (di) {
             di->finalize();
@@ -671,6 +667,17 @@ struct IRGen : public DiagnosticHelper {
                 sw->addCase(ConstantInt::get(ctx, *it.CaseStart), labels[it.label]);
             B.Insert(sw);
         } break;
+        case SIndirectBr:
+        {
+            const label_t *start = currentfunctionAST->indirectBrs;
+            assert(start && "indirect goto in function with no address-of-label expressions");
+            unsigned num = *start++;
+            llvm::Value *V = getAddress(s->jump_addr);
+            llvm::IndirectBrInst *Inst = llvm::IndirectBrInst::Create(V, num);
+            for (unsigned i = 0;i < num;++i)
+                Inst->addDestination(labels[start[i]]);
+            B.Insert(Inst);
+        } break;
         case SHead: llvm_unreachable("");
         case SCompound: {
             //            if (options.g)
@@ -712,6 +719,7 @@ struct IRGen : public DiagnosticHelper {
         case SFunction: {
             assert(this->labels.empty());
             auto ty = cast<llvm::FunctionType>(wrap(s->functy));
+            currentfunctionAST = s;
             currentfunction =
                 newFunction(ty, s->funcname, s->functy->getFunctionAttrTy()->getTags(), s->func_idx, true);
             llvm::DISubprogram *sp = nullptr;
@@ -725,6 +733,7 @@ struct IRGen : public DiagnosticHelper {
             }*/
             llvm::BasicBlock *entry = llvm::BasicBlock::Create(ctx, "entry");
             append(entry);
+            statics("%u labels in function\n", s->numLabels);
             for (unsigned i = 0; i < s->numLabels; i++)
                 this->labels.push_back(llvm::BasicBlock::Create(ctx));
             unsigned arg_no = 0;
@@ -742,7 +751,7 @@ struct IRGen : public DiagnosticHelper {
                 store(p, arg);
                 vars[s->args[arg_no++]] = p;
             }
-            allocaInsertPt = entry->end();
+            allocaInsertPt = entry->begin();
             for (Stmt ptr = s->funcbody->next; ptr; ptr = ptr->next)
                 gen(ptr);
             if (!getTerminator()) {
@@ -879,7 +888,7 @@ struct IRGen : public DiagnosticHelper {
                         B.Insert(val);
                     } else {
                         auto &instList = currentfunction->getEntryBlock().getInstList();
-                        instList.insert(allocaInsertPt, val);
+                        instList.push_front(val);
                     }
                     vars[idx] = val;
                     /*                    if (options.g) {
@@ -923,7 +932,6 @@ struct IRGen : public DiagnosticHelper {
             auto ty = wrap(e->obj->ty);
             return B.CreateStructGEP(ty, basep, e->idx);
         }
-        case EBitCast: return getAddress(e->src);
         case EUnary:
             switch (e->uop) {
             case AddressOf: return getAddress(e->uoperand);
@@ -990,7 +998,6 @@ struct IRGen : public DiagnosticHelper {
         emitDebugLocation(e);
         switch (e->k) {
         case EConstant: return e->C;
-        case EBitCast: return gen(e->src);
         case EConstantArraySubstript:
             return llvm::ConstantExpr::getInBoundsGetElementPtr(wrap(e->ty->p), e->carray,
                                                                 ConstantInt::get(ctx, e->cidx));
@@ -1331,6 +1338,9 @@ BINOP_SHIFT:
             }
         }
         case EVoid: return (void)gen(e->voidexpr), nullptr;
+        case EBlockAddress:
+            assert(labels[e->addr] && "block address is nullptr");
+            return llvm::BlockAddress::get(currentfunction, labels[e->addr]);
         case EUnary: {
             if (e->uop == AddressOf)
                 return getAddress(e->uoperand);
@@ -1458,7 +1468,7 @@ BINOP_SHIFT:
         auto CPU = "generic";
         auto Features = "";
         llvm::TargetOptions opt;
-
+        // rustc: Could not create LLVM TargetMachine for triple: ...
         machine = options.theTarget->createTargetMachine(options.triple.str(), CPU, Features, opt,
                                                          options.RelocationModel, options.CodeModel, getCGOptLevel());
         if (LLVM_UNLIKELY(!machine))
@@ -1499,7 +1509,7 @@ BINOP_SHIFT:
     void run(Stmt s, size_t num_typedefs, size_t num_tags) {
         startCodeGen(num_typedefs, num_tags);
         runCodeGenTranslationUnit(s);
-        runOptmize();
+        RunOptimizationPipeline();
         finalsizeCodeGen();
     }
 };

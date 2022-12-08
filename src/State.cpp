@@ -40,6 +40,7 @@ struct xcc_context {
         _ptr_diff_t = make_signed(getSize_tLog2());
         _uint_ptr = make_unsigned(6);
         _nullptr_t = getPointerType(v, TYNULLPTR);
+        void_ptr_ty = getPointerType(v);
 
         // For wide string literals prefixed by the letter u or U, the array elements have type char16_t or char32_t
         str32ty = getPointerType(make(getChar()->getTags() | TYCONST));
@@ -71,7 +72,7 @@ struct xcc_context {
         f128ty, ppc_f128, f80ty, str8ty, str16ty, str32ty, stringty, wstringty, _complex_float, _complex_double,
         _complex_longdouble, _short, _ushort, _wchar, _long, _ulong, _longlong, _ulonglong, _longdouble, _uchar,
         _size_t, _ptr_diff_t, _uint_ptr, fdecimal32, fdecimal64, fdecimal128, _imaginary_double, _imaginary_float,
-        _nullptr_t;
+        _nullptr_t, void_ptr_ty;
     Stmt return_void_stmt;
     [[nodiscard]] CType make(type_tag_t tags) { return TNEW(PrimType){.tags = tags}; }
     [[nodiscard]] CType make_cached(type_tag_t tags) {
@@ -93,6 +94,12 @@ struct xcc_context {
     }
     [[nodiscard]] CType make_imaginary_float(FloatKind kind, type_tag_t tags = 0) {
         return make(build_float(kind) | TYIMAGINARY | tags);
+    }
+    [[nodiscard]] CType getVoidPtrType() const {
+        return void_ptr_ty;
+    }
+    [[nodiscard]] CType getBlockAddressType() const {
+        return void_ptr_ty;
     }
     [[nodiscard]] CType lookupType(const_CType ty, type_tag_t tags) {
         if (ty->isFloating()) {

@@ -12,8 +12,10 @@ struct Options {
     bool VectorizeSLP : 1;
     bool DisableIntegratedAS : 1;
     bool VerifyModule : 1;
+    bool TimeTrace: 1;
     unsigned OptimizationLevel;
     unsigned OptimizeSize;
+    unsigned TimeTraceGranularity;
     std::vector<std::string> PassPlugins;
     llvm::Reloc::Model RelocationModel;
     Optional<llvm::CodeModel::Model> CodeModel;
@@ -28,12 +30,14 @@ struct Options {
         VectorizeSLP = false;
         DisableIntegratedAS = false;
         VerifyModule = false;
+        TimeTrace = false;
 
         OptimizationLevel = 0;
         OptimizeSize = 0;
         RelocationModel = llvm::Reloc::PIC_;
         theTarget = nullptr;
         triple = llvm::Triple();
+        TimeTraceGranularity = 500;
         MergeFunctions = false;
         PassPlugins.clear();
         CWD.clear();

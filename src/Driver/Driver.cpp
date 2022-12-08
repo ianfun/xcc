@@ -429,6 +429,8 @@ bool BuildCompilation(ArrayRef<const char *> Args, Options &opts, SourceMgr &SM,
   opts.PassPlugins = getArgs().getAllArgValues(OPT_fpass_plugin_EQ);
   opts.mainFileName = getArgs().getLastArgValue(OPT_main_file_name);
   opts.VerifyModule = !getArgs().hasArg(OPT_disable_llvm_verifier);
+  opts.TimeTrace = getArgs().hasArg(OPT_ftime_trace);
+  opts.TimeTraceGranularity = getLastArgIntValue(getArgs(), OPT_ftime_trace_granularity_EQ, 500);
   should_exit |= BuildInputs(SM, opts);
   ret = should_exit ? 1 : 0;
   return should_exit;

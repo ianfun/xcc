@@ -135,7 +135,8 @@ void maybe_print_paren(const_Expr e, raw_ostream &OS) {
 }
 raw_ostream &operator<<(llvm::raw_ostream &OS, const_Expr e) {
     switch (e->k) {
-    case EBitCast: return OS << "(" << raw_ostream::BLUE << e->ty << raw_ostream::RESET << ")" << e->src;
+    case EBlockAddress:
+        return OS << "&&" << e->labelName->getKey();
     case EConstantArraySubstript: printConstant(e->carray->getInitializer(), OS); return OS;
     case EConstantArray: printConstant(e->array, OS); return OS;
     case EConstant: printConstant(e->C, OS); return OS;

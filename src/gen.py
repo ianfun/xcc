@@ -175,9 +175,12 @@ stmts = {
 	"SHead": (),
 	"SCompound": ("Stmt inner",),
 	"SLabel": ("label_t label", "IdentRef labelName",),
+
 	"SGoto": ("label_t location",),
 	"SCondJump": ("Expr test", "label_t T", "label_t F",),
 	"SSwitch": ("Expr itest", "xvector<SwitchCase> switchs", "xvector<GNUSwitchCase> gnu_switchs", "label_t sw_default", "location_t sw_default_loc",),
+	"SIndirectBr": ("Expr jump_addr",),
+
 	"SDeclOnly": ("CType decl",),
 	"SReturn": ("Expr ret",),
 	"SExpr": ("Expr exprbody",),
@@ -191,7 +194,8 @@ stmts = {
 		"CType functy", 
 		"Stmt funcbody", 
 		"unsigned numLabels", 
-		"xvector<unsigned> args"
+		"xvector<unsigned> args",
+		"label_t *indirectBrs"
 	),
 }
 exprs = {
@@ -212,7 +216,7 @@ exprs = {
 	"EArrToAddress": ("Expr arr3",),
 	"EPostFix": ("enum PostFixOp pop", "Expr poperand", "location_t postFixEndLoc", ),
 	"ESizeof": ("CType theType", "location_t sizeof_loc_begin", "location_t sizeof_loc_end",),
-	"EBitCast": ("Expr src",)
+	"EBlockAddress": ("label_t addr", "location_t block_loc_begin", "IdentRef labelName"),
 }
 ctypes = {
 	"TYPRIM": (),
@@ -502,6 +506,7 @@ struct OpaqueStmt {
             case SGoto:
             case SReturn:
             case SCondJump:
+            case SIndirectBr:
             case SNoReturnCall:
                 return true;
             default:

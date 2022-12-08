@@ -67,7 +67,13 @@ struct Parser : public EvalHelper {
         Label_Info &lookupLabel(IdentRef Name) {
             return labels.insert(std::make_pair(Name, Label_Info())).first->second;
         }
+        SmallVector<label_t, 0> indirectBrs;
     } jumper;
+    enum: unsigned {
+        Flag_Parsing_goto_expr = 0x1,
+        Flag_IndirectBr_used = 0x2
+    };
+    unsigned parse_flags;
     IRGen &irgen;
     Stmt InsertPt = nullptr;
     bool sreachable;
@@ -1096,7 +1102,7 @@ SIDE_EFFECT:
         case EMemberAccess:
         case EVar:
         case EConstant:
-        case EBitCast:
+        case EBlockAddress:
         case EArrToAddress:
         case ESizeof:
         case EConstantArraySubstript: return e;
@@ -2903,12 +2909,13 @@ BREAK:
             return expect(getLoc(), "',' or ')'"), false;
         return checkSemicolon(), true;
     }
-    bool assignable(Expr e) {
+    bool assignable(Expr e, const char *msg1 = "cannot modify const-qualified variable %r: %T",
+        const char *msg2 = "array is not assignable", const char *msg3 = "expression is not assignable") {
         if (e->k == EVar) {
             Variable_Info &var_info = sema.typedefs.getSym(e->sval);
             var_info.tags |= ASSIGNED;
             if (var_info.ty->hasTag(TYCONST)) {
-                type_error(getLoc(), "cannot modify const-qualified variable %r: %T", sema.typedefs.getSymName(e->sval),
+                type_error(getLoc(), msg1, sema.typedefs.getSymName(e->sval),
                            var_info.ty);
                 return false;
             }
@@ -2916,12 +2923,12 @@ BREAK:
         }
         if (e->ty->getKind() == TYPOINTER) {
             if ((e->ty->hasTag(TYLVALUE)) && e->ty->p->getKind() == TYARRAY)
-                return type_error(getLoc(), "array is not assignable"), false;
+                return type_error(getLoc(), msg2), false;
             return true;
         }
         if (e->ty->hasTag(TYLVALUE))
             return true;
-        return type_error(getLoc(), "expression is not assignable"), false;
+        return type_error(getLoc(), msg3), false;
     }
     void declaration() {
         // parse declaration or function definition
@@ -2999,13 +3006,27 @@ ARGV_OK:;
                 Stmt res = SNEW(FunctionStmt){.func_idx = idx,
                                               .funcname = st.name,
                                               .functy = st.ty,
-                                              .args = xvector<unsigned>::get_with_length(st.ty->params.size())};
+                                              .args = xvector<unsigned>::get_with_length(st.ty->params.size()),
+                                              .indirectBrs = nullptr
+                                          };
                 sema.currentfunction = st.ty;
                 sema.pfunc = st.name;
                 res->funcbody = function_body(st.ty->params, res->args, loc);
                 sema.pfunc = nullptr;
                 sema.currentfunction = nullptr;
                 res->numLabels = jumper.cur;
+                if (hasFlag(Flag_IndirectBr_used)) {
+                    size_t Size = jumper.indirectBrs.size();
+                    if (!Size) {
+                        type_error(current_declator_loc, "indirect goto in function with no address-of-label expressions");
+                    } else {
+                        res->indirectBrs = new (getAllocator())label_t[Size + 1];
+                        memcpy(res->indirectBrs + 1, jumper.indirectBrs.data(), Size);
+                        *res->indirectBrs = Size;
+                    }
+                }
+                jumper.indirectBrs.clear();
+                jumper.labels.clear();
                 jumper.cur = 0;
                 sreachable = true;
                 for (auto it = sema.typedefs.begin(); it != sema.typedefs.end(); ++it)
@@ -3187,11 +3208,22 @@ ARGV_OK:;
             if (e->k == EConstant) // fold simple bitwise-not, e.g., ~0ULL
                 return wrap(e->ty, llvm::ConstantExpr::getNot(e->C), e->getBeginLoc(), e->getEndLoc());
             return unary(e, Not, e->ty);
-            ;
+        }
+        case TLogicalAnd:
+        {
+            // GNU extension: labels as values
+            consume();
+            if (l.tok.tok != TIdentifier)
+                return expect(loc, "identifier"), nullptr;
+            IdentRef Name = l.tok.s;
+            label_t L = getLabel(Name);
+            consume();
+            jumper.indirectBrs.push_back(L);
+            return ENEW(BlockAddressExpr) {.ty = context.getBlockAddressType(), .addr = L, .labelName = Name};
         }
         case TBitAnd: {
-            Expr e;
             consume();
+            Expr e;
             if (!(e = cast_expression()))
                 return nullptr;
             if (e->k == EConstantArray) {
@@ -4107,6 +4139,8 @@ CONTINUE:;
     }
     void make_deref(Expr &e, location_t loc) {
         assert(e->ty->getKind() == TYPOINTER && "bad call to make_deref: expect a pointer");
+        if (LLVM_UNLIKELY(hasFlag(Flag_Parsing_goto_expr)))
+            return;
         if (e->ty->p->isIncomplete())
             return (void)type_error(loc, "dereference from incomplete/void type: %T", e->ty);
         if (e->k == EConstantArraySubstript) {
@@ -4373,8 +4407,21 @@ ONE_CASE:
             return;
         case Kgoto: {
             consume();
-            if (l.tok.tok != TIdentifier)
+            if (LLVM_UNLIKELY(l.tok.tok == TMul)) {
+                // GNU indirect goto extension.
+                addFlag(Flag_IndirectBr_used);
+                addFlag(Flag_Parsing_goto_expr);
+                Expr e = expression();
+                clearFlag(Flag_Parsing_goto_expr);
+                if (!e) return;
+                checkSemicolon();
+                if (!assignable(e, "expect an address(void * is allowed)")) return;
+                insertStmt(SNEW(IndirectBrStmt) {.jump_addr = e});
+                return setUnreachable(loc, UR_goto);
+            }
+            if (l.tok.tok != TIdentifier) {
                 return expect(loc, "identifier");
+            }
             IdentRef Name = l.tok.s;
             label_t L = getLabel(Name);
             consume();
@@ -5193,6 +5240,15 @@ ONE_CASE:
         sema.typedefs.pop_function();
         consume();
         return head;
+    }
+    void addFlag(unsigned flag) {
+        parse_flags |= flag;
+    }
+    bool hasFlag(unsigned flag) {
+        return parse_flags & flag;
+    }
+    void clearFlag(unsigned flag) {
+        parse_flags &= ~flag;
     }
     /*
      * public iterface to Parser and Sema

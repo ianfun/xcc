@@ -10,6 +10,12 @@
 
 using namespace xcc::driver::options;
 
+static int xcc_exit(int status = 0) {
+    llvm::TimerGroup::printAll(llvm::errs());
+    llvm::TimerGroup::clearAll();
+    return status;
+}
+
 std::string xcc_getLinkerPath() {
 #if WINDOWS
     auto gcc = llvm::sys::findProgramByName("gcc");
@@ -142,6 +148,10 @@ int main(int argc_, const char **argv_)
 
     const auto &Args = theDriver.getArgs();
 
+    if (Args.TimeTrace) {
+        llvm::timeTraceProfilerInitialize(options.TimeTraceGranularity);
+    }
+
     //auto tos = std::make_shared<xcc::TargetOptions>();
 
     //tos->Triple = options.triple.str();
@@ -193,7 +203,7 @@ int main(int argc_, const char **argv_)
             parser.l.tok.dump(OS);
             OS << '\n';
         } while (parser.l.tok.tok != xcc::TEOF);
-        return CC_EXIT_SUCCESS;
+        return xcc_exit(CC_EXIT_SUCCESS);
     }
 
     // now, parsing source files ...
@@ -201,7 +211,7 @@ int main(int argc_, const char **argv_)
     auto ast = parser.run(num_typedefs, num_tags);
 
     if (engine.getNumErrors())
-        return CC_EXIT_FAILURE;
+        return xcc_exit(CC_EXIT_FAILURE);
 
     if (const auto *A = Args.getLastArg(OPT_ast_dump_EQ)) {
         llvm::StringRef dump = A->getValue();
@@ -229,16 +239,16 @@ int main(int argc_, const char **argv_)
     }
 
     if (Args.hasArg(OPT_fsyntax_only))
-        return CC_EXIT_SUCCESS;
+        return xcc_exit(CC_EXIT_SUCCESS);
 
     ig.run(ast, num_typedefs, num_tags);
 
     if (Args.hasArg(OPT_emit_codegen_only)) 
-        return CC_EXIT_SUCCESS;
+        return xcc_exit(CC_EXIT_SUCCESS);
 
     // Build ASTs and convert to LLVM, discarding output
     if (Args.hasArg(OPT_emit_llvm_only))
-        return CC_EXIT_SUCCESS;
+        return xcc_exit(CC_EXIT_SUCCESS);
     
     std::error_code EC;
 
@@ -252,7 +262,7 @@ int main(int argc_, const char **argv_)
         dbgprint("bitcode writting to %s\n", outputFileName.c_str());
         llvm::WriteBitcodeToFile(*ig.module, OS);
         OS.close();
-        return CC_EXIT_SUCCESS;
+        return xcc_exit(CC_EXIT_SUCCESS);
     }
 
     // Use the LLVM representation for assembler and object files
@@ -265,7 +275,7 @@ int main(int argc_, const char **argv_)
         dbgprint("printing module to %s\n", outputFileName.data());
         ig.module->print(OS, nullptr);
         OS.close();
-        return CC_EXIT_SUCCESS;
+        return xcc_exit(CC_EXIT_SUCCESS);
     }
 
     {   // default - emit object file and linkning, or emit assembly
@@ -285,18 +295,18 @@ int main(int argc_, const char **argv_)
         OS.close();
 
         if (assembly)
-            return CC_EXIT_SUCCESS;
+            return xcc_exit(CC_EXIT_SUCCESS);
 
         // Only run preprocess, compile, and assemble steps
         if (Args.hasArg(OPT_C))
-            return CC_EXIT_SUCCESS;
+            return xcc_exit(CC_EXIT_SUCCESS);
 
         // the final phase - linking
         dbgprint("xcc_link(%s)\n", outputFileName.data());
-        return xcc_link(theDriver, outputFileName, options.triple);
+        return xcc_exit(xcc_link(theDriver, outputFileName, options.triple));
     }
 
 CC_ERROR:
     SM.error("cannot open output for writting: %R", EC.message());
-    return CC_EXIT_FAILURE;
+    return xcc_exit(CC_EXIT_FAILURE);
 }

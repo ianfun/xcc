@@ -475,7 +475,7 @@ static const char *show(enum UnaryOp o) {
     case LogicalNot: return "!";
     case C__real__: return "__real__ ";
     case C__imag__: return "__imag__ ";
-    case ToBool: return "(_Bool)";
+    case ToBool: return "(bool)";
     default: return "(unknown unary operator)";
     }
 }
@@ -921,7 +921,7 @@ location_t OpaqueExpr::getBeginLoc() const {
     if (ty->hasTag(TYPAREN))
         return *getParenLLoc();
     switch (k) {
-    case EBitCast: return src->getBeginLoc();
+    case EBlockAddress: return block_loc_begin;
     case ESizeof: return sizeof_loc_begin;
     case EVar: return varLoc;
     case EBin: return lhs->getBeginLoc();
@@ -946,7 +946,7 @@ location_t OpaqueExpr::getEndLoc() const {
     if (ty->hasTag(TYPAREN))
         return *getParenRLoc();
     switch (k) {
-    case EBitCast: return src->getEndLoc();
+    case EBlockAddress: return block_loc_begin + labelName->getKeyLength() - 1;
     case ESizeof: return sizeof_loc_end;
     case EConstant: return constantEndLoc;
     case EBin: return rhs->getEndLoc();
@@ -1045,9 +1045,8 @@ static bool isConstant(const_Expr e) {
         case EConstant:
         case EConstantArray:
         case EConstantArraySubstript:
+        case EBlockAddress:
             return true;
-        case EBitCast:
-            return isConstant(e->src);
         case EBin:
             switch(e->bop) {
                 case Complex_CMPLX: return true;

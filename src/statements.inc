@@ -6,6 +6,7 @@ enum StmtKind: uint8_t {
     SGoto,
     SCondJump,
     SSwitch,
+    SIndirectBr,
     SDeclOnly,
     SReturn,
     SExpr,
@@ -27,6 +28,7 @@ struct OpaqueStmt {
             case SGoto:
             case SReturn:
             case SCondJump:
+            case SIndirectBr:
             case SNoReturnCall:
                 return true;
             default:
@@ -57,6 +59,9 @@ union alignas(void*) {
         location_t sw_default_loc;
     };
     struct alignas(void*) {
+        Expr jump_addr;
+    };
+    struct alignas(void*) {
         CType decl;
     };
     struct alignas(void*) {
@@ -85,6 +90,7 @@ union alignas(void*) {
         Stmt funcbody;
         unsigned numLabels;
         xvector<unsigned> args;
+        label_t *indirectBrs;
     };
 };
 };
@@ -132,6 +138,13 @@ struct SwitchStmt {
         xvector<GNUSwitchCase> gnu_switchs;
         label_t sw_default;
         location_t sw_default_loc;
+    };
+};
+struct IndirectBrStmt {
+    Stmt next = nullptr;
+    enum StmtKind k=SIndirectBr;
+    struct alignas(void*) {
+        Expr jump_addr;
     };
 };
 struct DeclOnlyStmt {
@@ -194,6 +207,7 @@ struct FunctionStmt {
         Stmt funcbody;
         unsigned numLabels;
         xvector<unsigned> args;
+        label_t *indirectBrs;
     };
 };
 static uint8_t stmt_size_map[] = {
@@ -203,6 +217,7 @@ static uint8_t stmt_size_map[] = {
     sizeof(GotoStmt),
     sizeof(CondJumpStmt),
     sizeof(SwitchStmt),
+    sizeof(IndirectBrStmt),
     sizeof(DeclOnlyStmt),
     sizeof(ReturnStmt),
     sizeof(ExprStmt),
@@ -212,4 +227,4 @@ static uint8_t stmt_size_map[] = {
     sizeof(DeclStmt),
     sizeof(FunctionStmt)
 };
-static constexpr size_t stmt_max_size = std::max({sizeof(HeadStmt), sizeof(CompoundStmt), sizeof(LabelStmt), sizeof(GotoStmt), sizeof(CondJumpStmt), sizeof(SwitchStmt), sizeof(DeclOnlyStmt), sizeof(ReturnStmt), sizeof(ExprStmt), sizeof(NoReturnCallStmt), sizeof(AsmStmt), sizeof(VarDeclStmt), sizeof(DeclStmt), sizeof(FunctionStmt)});
+static constexpr size_t stmt_max_size = std::max({sizeof(HeadStmt), sizeof(CompoundStmt), sizeof(LabelStmt), sizeof(GotoStmt), sizeof(CondJumpStmt), sizeof(SwitchStmt), sizeof(IndirectBrStmt), sizeof(DeclOnlyStmt), sizeof(ReturnStmt), sizeof(ExprStmt), sizeof(NoReturnCallStmt), sizeof(AsmStmt), sizeof(VarDeclStmt), sizeof(DeclStmt), sizeof(FunctionStmt)});
