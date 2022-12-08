@@ -1556,7 +1556,11 @@ BAD:
 NOT_CONSTANT:
         result = binop(result, result->ty->isSigned() ? AShr : Shr, r, result->ty);
     }
-    Expr bit_cast(Expr e, CType to) { return ENEW(BitCastExpr){.ty = to, .src = e}; }
+    Expr bit_cast(Expr e, CType to) {
+        e = context.clone(e);
+        e->ty = to;
+        return e;
+    }
     void make_bitop(Expr &result, Expr &r, BinOp op, location_t opLoc) {
         checkInteger(result, r, opLoc);
         conv(result, r);
@@ -3047,11 +3051,15 @@ ARGV_OK:;
                     var_info.val = init->C; // for const and constexpr, their value can be fold to constant
                     var_info.tags |= CONST_VAR;
                 }
-                if ((isTopLevel() || st.ty->isGlobalStorage()) && init->k != EConstant && init->k != EConstantArray &&
-                    init->k != EConstantArraySubstript) {
+                if (
+    (isTopLevel() || st.ty->isGlobalStorage()) 
+    && !isConstant(init)) {
                     // take address of globals is constant!
                     if (!(init->k == EVar && (sema.typedefs.isInGlobalScope(init->sval) ||
                                               sema.typedefs.getSym(init->sval).ty->isGlobalStorage()))) {
+#if CC_DEBUG
+                        llvm::errs() << init;
+#endif
                         type_error(current_declator_loc, "global initializer is not constant");
                     }
                 }

@@ -1040,6 +1040,22 @@ static bool compatible(CType p, CType expected) {
     }
     llvm_unreachable("invalid CTypeKind");
 }
+static bool isConstant(const_Expr e) {
+    switch (e->k) {
+        case EConstant:
+        case EConstantArray:
+        case EConstantArraySubstript:
+            return true;
+        case EBitCast:
+            return isConstant(e->src);
+        case EBin:
+            switch(e->bop) {
+                case Complex_CMPLX: return true;
+                default: return false;
+            }
+        default: return false;
+    }
+}
 // A token with a location(may have length) and a value.
 // This structure is currently only 16 bytes in 64 bit machine to make it faster to tokenize and cheaper to store tokens in a macro.
 struct TokenV {
