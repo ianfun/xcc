@@ -775,20 +775,24 @@ struct IRGen : public DiagnosticHelper {
                 (void)wrap3Noqualified(s->decl);
             (void)wrap(s->decl);
             break;
+        case SNamedLabel:
         case SLabel: {
             auto BB = labels[s->label];
             if (!getTerminator())
                 B.CreateBr(BB);
             after(BB);
             BB->insertInto(currentfunction);
-            if (options.g && s->labelName) {
+            if (options.g && s->k == SNamedLabel) {
                 BB->setName(s->labelName->getKey());
+                // s->labelLoc;
                 //                auto LabelInfo =
                 //                    di->createLabel(getLexScope(), s->labelName->getKey(), getFile(s->loc.id),
                 //                    s->loc.line);
                 //                di->insertLabel(LabelInfo, wrap(s->loc), BB);
             }
         } break;
+        case SGotoWithLoc:
+        case SGotoWithLocName:
         case SGoto:
             if (!getTerminator())
                 B.CreateBr(labels[s->location]);

@@ -68,12 +68,15 @@ struct Parser : public EvalHelper {
             return labels.insert(std::make_pair(Name, Label_Info())).first->second;
         }
         SmallVector<label_t, 0> indirectBrs;
+        SmallVector<label_t, 0> vla_forbidden_labels;
     } jumper;
     enum: unsigned {
         Flag_Parsing_goto_expr = 0x1,
-        Flag_IndirectBr_used = 0x2
+        Flag_IndirectBr_used = 0x2,
+        Flag_this_scope_has_vla = 0x4,
+        Flag_this_function_has_vla
     };
-    unsigned parse_flags;
+    unsigned parse_flags = 0;
     IRGen &irgen;
     Stmt InsertPt = nullptr;
     bool sreachable;
@@ -796,7 +799,7 @@ PTR_CAST:
     }
     // return true if begin needed to be erased
     void removeUnusedVariables(const Stmt oldPtr, const Stmt begin, const Stmt end, const unsigned result) {
-        if (result) {
+        if (result && !hasFlag(Flag_this_function_has_vla)) {
             WithAlloc<unsigned> set(result);
             unsigned *set_end = set.end();
             auto *start = sema.typedefs.begin();
@@ -3027,6 +3030,7 @@ ARGV_OK:;
                 }
                 jumper.indirectBrs.clear();
                 jumper.labels.clear();
+                jumper.vla_forbidden_labels.clear();
                 jumper.cur = 0;
                 sreachable = true;
                 for (auto it = sema.typedefs.begin(); it != sema.typedefs.end(); ++it)
@@ -3039,7 +3043,7 @@ ARGV_OK:;
 #endif
             unsigned idx = putsymtype(st.name, st.ty, current_declator_loc);
 
-            result->vars.push_back(VarDecl{.name = st.name, .ty = st.ty, .init = nullptr, .idx = idx});
+            result->vars.push_back(VarDecl{.name = st.name, .ty = st.ty, .init = nullptr, .idx = idx, .loc = current_declator_loc});
             if (st.ty->hasTag(TYINLINE))
                 warning(current_declator_loc, "inline can only used in function declaration");
             if (!(st.ty->hasTag(TYEXTERN))) {
@@ -3086,6 +3090,8 @@ ARGV_OK:;
                 }
             } else {
                 const auto k = st.ty->getKind();
+                if (k == TYVLA) 
+                    addFlag(Flag_this_scope_has_vla, Flag_this_function_has_vla);
                 if (isTopLevel() || st.ty->isGlobalStorage()) {
                     if (k == TYVLA)
                         type_error(current_declator_loc, "variable length array declaration not allowed at file scope");
@@ -4308,9 +4314,19 @@ NEXT:
         return insertStmt(SNEW(CondJumpStmt){.test = test, .T = T, .F = F});
     }
     void insertBr(label_t L) { return insertStmt(SNEW(GotoStmt){.location = L}); }
-    void insertLabel(label_t L, IdentRef Name = nullptr) {
+    void insertBr(label_t L, location_t loc) { 
+        return insertStmt(SNEW(GotoWithLocStmt){.location2 = L, .goto_loc = loc}); 
+    }
+    void insertBr(label_t L, location_t loc, IdentRef Name) {
+        return insertStmt(SNEW(GotoWithLocNameStmt){.location3 = L, .goto_loc3 = loc, .goto_name = Name});
+    }
+    void insertLabel(label_t L) {
         sreachable = true;
-        return insertStmtInternal(SNEW(LabelStmt){.label = L, .labelName = Name});
+        return insertStmtInternal(SNEW(LabelStmt){.label = L});
+    }
+    void insertLabel(label_t L, IdentRef Name, location_t loc) {
+        sreachable = true;
+        return insertStmtInternal(SNEW(NamedLabelStmt){.label2 = L, .labelName = Name, .labelLoc = loc});
     }
     void insertStmtInternal(Stmt s) {
         InsertPt->next = s;
@@ -4426,7 +4442,7 @@ ONE_CASE:
             label_t L = getLabel(Name);
             consume();
             checkSemicolon();
-            insertBr(L);
+            insertBr(L, loc, Name);
             return setUnreachable(loc, UR_goto);
         }
         case Kcontinue:
@@ -4435,7 +4451,7 @@ ONE_CASE:
             if (jumper.topContinue == INVALID_LABEL)
                 parse_error(loc, "'continue' statement not in loop statement");
             else
-                insertBr(jumper.topContinue);
+                insertBr(jumper.topContinue, loc);
             return setUnreachable(loc, UR_continue);
         case Kbreak:
             consume();
@@ -4443,7 +4459,7 @@ ONE_CASE:
             if (jumper.topBreak == INVALID_LABEL)
                 parse_error(loc, "'break' statement not in loop or switch statement");
             else
-                insertBr(jumper.topBreak);
+                insertBr(jumper.topBreak, loc);
             return setUnreachable(loc, UR_break);
         case Kreturn: {
             consume();
@@ -4456,7 +4472,7 @@ ONE_CASE:
                     ret = wrap(sema.currentfunction->ret, llvm::UndefValue::get(irgen.wrap2(sema.currentfunction->ret)),
                                loc, loc);
                 }
-                insertStmt(context.createRet(ret));
+                insertStmt(SNEW(ReturnStmt) {.ret = ret, .ret_loc = loc});
                 return setUnreachable(loc, UR_return);
             }
             Expr ret;
@@ -4468,7 +4484,7 @@ ONE_CASE:
                 error(loc, "function should return a value in a function return void");
             else 
                 ret = castto(ret, sema.currentfunction->ret, Implict_Return);
-            insertStmt(context.createRet(ret));
+            insertStmt(SNEW(ReturnStmt) {.ret = ret, .ret_loc = loc});
             return setUnreachable(loc, UR_return);
         }
         case Kwhile:
@@ -4727,10 +4743,13 @@ ONE_CASE:
             if (l.tok.tok == TColon) { // labeled-statement
                 consume();
                 label_t L = putLable(tok.s, full_loc);
-                insertLabel(L, tok.s);
+                insertLabel(L, tok.s, loc);
                 if (l.tok.tok == TRcurlyBracket) {
-                    warning(full_loc, "missing statement after label, add ';' for you");
+                    warning(full_loc, "missing statement after label, adding ';' for you");
                     return;
+                }
+                if (hasFlag(Flag_this_scope_has_vla)) {
+                    jumper.vla_forbidden_labels.push_back(L);
                 }
                 return statement();
             }
@@ -5179,6 +5198,7 @@ ONE_CASE:
         else
             head->inner = real_head;
         consume();
+        clearFlag(Flag_this_scope_has_vla);
         insertStmt(head);
     }
     void eat_compound_statement() {
@@ -5191,6 +5211,19 @@ ONE_CASE:
                 break;
         }
     }
+    struct VLAErrorReporter: public DiagnosticHelper {
+        bool once = false;
+        VLAErrorReporter(DiagnosticsEngine &engine) : DiagnosticHelper(engine) { }
+        void Report(Stmt s, const ArrayRef<location_t> &locs) {
+            location_t target = s->labelLoc;
+            if (!once) {
+                type_error(target, "jump to this label(which is a protected scope) skips initialization of variable length array");
+                once = true;
+            }
+            for (const location_t loc: locs)
+                note(loc, "jump bypasses initialization of variable length array");
+        }
+    };
     Stmt function_body(const xvector<Param> params, xvector<unsigned> &args, location_t loc) {
         consume();
         Stmt head = SNEW(HeadStmt){};
@@ -5232,14 +5265,26 @@ ONE_CASE:
             default: llvm_unreachable("");
             }
         }
+        if (hasFlag(Flag_this_function_has_vla)) {
+            std::sort(jumper.vla_forbidden_labels.begin(), jumper.vla_forbidden_labels.end());
+            VLAErrorReporter reporter(this->engine);
+            VLAJumpDetector<VLAErrorReporter> detector(jumper.vla_forbidden_labels, reporter);
+            detector.Visit(head);
+        }
         auto num = leaveBlock(false);
         Stmt old_next = head->next;
+        clearFlag(Flag_this_function_has_vla, Flag_this_scope_has_vla);
         removeUnusedVariables(head, head->next, nullptr, num);
         if (!head->next)
             head->next = old_next ? old_next->next : nullptr;
         sema.typedefs.pop_function();
         consume();
         return head;
+    }
+    template <typename ...Args>
+    void addFlag(unsigned flag, const Args& ...args) {
+        parse_flags |= flag;
+        addFlag(args...);
     }
     void addFlag(unsigned flag) {
         parse_flags |= flag;
@@ -5249,6 +5294,11 @@ ONE_CASE:
     }
     void clearFlag(unsigned flag) {
         parse_flags &= ~flag;
+    }
+    template <typename ...Args>
+    void clearFlag(unsigned flag, const Args& ...args) {
+        parse_flags &= ~flag;
+        clearFlag(args...);
     }
     /*
      * public iterface to Parser and Sema

@@ -174,15 +174,17 @@ keywords_alias = (
 stmts = {
 	"SHead": (),
 	"SCompound": ("Stmt inner",),
-	"SLabel": ("label_t label", "IdentRef labelName",),
-
+	"SLabel": ("label_t label",),
+	"SNamedLabel": ("label_t label2", "IdentRef labelName", "location_t labelLoc", ),
+	"SGotoWithLocName": ("label_t location3", "location_t goto_loc3", "IdentRef goto_name", ),
+	"SGotoWithLoc": ("label_t location2", "location_t goto_loc",),
 	"SGoto": ("label_t location",),
 	"SCondJump": ("Expr test", "label_t T", "label_t F",),
 	"SSwitch": ("Expr itest", "xvector<SwitchCase> switchs", "xvector<GNUSwitchCase> gnu_switchs", "label_t sw_default", "location_t sw_default_loc",),
 	"SIndirectBr": ("Expr jump_addr",),
 
 	"SDeclOnly": ("CType decl",),
-	"SReturn": ("Expr ret",),
+	"SReturn": ("Expr ret", "location_t ret_loc",),
 	"SExpr": ("Expr exprbody",),
 	"SNoReturnCall": ("Expr call_expr",),
 	"SAsm": ("xstring asms",),
@@ -228,6 +230,13 @@ ctypes = {
 	"TYVLA": ("CType vla_arraytype", "Expr vla_expr"),
 	"TYBITINT": ("CType bitint_base", "unsigned bits")
 }
+def assertTuple(x: dict):
+	assert(isinstance(x, dict))
+	assert all(map(lambda it: isinstance(it, tuple), x.values())), "expect tuple"
+
+assertTuple(ctypes)
+assertTuple(exprs)
+assertTuple(stmts)
 
 def verbose(msg):
 	sys.stdout.write(msg)
@@ -508,6 +517,8 @@ struct OpaqueStmt {
             case SCondJump:
             case SIndirectBr:
             case SNoReturnCall:
+            case SGotoWithLoc:
+            case SGotoWithLocName:
                 return true;
             default:
                 return false;

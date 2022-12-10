@@ -1,3 +1,9 @@
+// C++'s Varargs cannot pass non-trivial objects, so we write our argument passing system.
+// There are two ways to add argument to format string:
+// 1. function call: like printf
+// 2. Use the '<<' operator.
+//    Like llvm::raw_ostream and clang::StreamingDiagnostic(and std::cout)
+
 enum DiagnosticLevel : uint8_t {
     Ignored,
     Note,

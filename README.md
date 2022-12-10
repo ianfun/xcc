@@ -2,13 +2,13 @@
 
 A C23(C2X) C compiler.
 
-![](screenshots.png)
+![](screenshots/screenshots.png)
 
 ## JIT
 
 Just In Time Compilation demo
 
-![](jit.png)
+![](screenshots/jit.png)
 
 ## Setting up your environment - Install LLVM
 
@@ -90,31 +90,31 @@ $ make all -j
 
 Dump colored AST
 
-![](ast-dump-colored.png)
+![](screenshots/ast-dump-colored.png)
 
 cdecl syntax
 
-![](cdecl.png)
+![](screenshots/cdecl.png)
 
 Expressive diagnostics
 
-![](diagnostic.png)
+![](screenshots/diagnostic.png)
 
 Include stack information
 
-![](diagnostic2.png)
+![](screenshots/diagnostic2.png)
 
 Supports Windows, WSL, Linux ...
 
-![](run.png)
+![](screenshots/run.png)
 
 Fix-it Hints
 
-![](fixit.png)
+![](screenshots/fixit.png)
 
 `_Complex`, `_Imaginary` support.
 
-![](complex.png)
+![](screenshots/complex.png)
 
 * trigraphs
 
@@ -139,7 +139,7 @@ ianfun
   - global variables/functions which not used and have static linkage
   - local variables not used, if has initializer and the initializer has side-effects, replace with the initializer
 
-![remove unused variables](tests/unused-variable.png)
+![remove unused variables](screenshots/unused-variable.png)
 
 * constant folding
 

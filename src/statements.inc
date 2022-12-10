@@ -3,6 +3,9 @@ enum StmtKind: uint8_t {
     SHead,
     SCompound,
     SLabel,
+    SNamedLabel,
+    SGotoWithLocName,
+    SGotoWithLoc,
     SGoto,
     SCondJump,
     SSwitch,
@@ -30,6 +33,8 @@ struct OpaqueStmt {
             case SCondJump:
             case SIndirectBr:
             case SNoReturnCall:
+            case SGotoWithLoc:
+            case SGotoWithLocName:
                 return true;
             default:
                 return false;
@@ -41,7 +46,20 @@ union alignas(void*) {
     };
     struct alignas(void*) {
         label_t label;
+    };
+    struct alignas(void*) {
+        label_t label2;
         IdentRef labelName;
+        location_t labelLoc;
+    };
+    struct alignas(void*) {
+        label_t location3;
+        location_t goto_loc3;
+        IdentRef goto_name;
+    };
+    struct alignas(void*) {
+        label_t location2;
+        location_t goto_loc;
     };
     struct alignas(void*) {
         label_t location;
@@ -66,6 +84,7 @@ union alignas(void*) {
     };
     struct alignas(void*) {
         Expr ret;
+        location_t ret_loc;
     };
     struct alignas(void*) {
         Expr exprbody;
@@ -110,7 +129,32 @@ struct LabelStmt {
     enum StmtKind k=SLabel;
     struct alignas(void*) {
         label_t label;
+    };
+};
+struct NamedLabelStmt {
+    Stmt next = nullptr;
+    enum StmtKind k=SNamedLabel;
+    struct alignas(void*) {
+        label_t label2;
         IdentRef labelName;
+        location_t labelLoc;
+    };
+};
+struct GotoWithLocNameStmt {
+    Stmt next = nullptr;
+    enum StmtKind k=SGotoWithLocName;
+    struct alignas(void*) {
+        label_t location3;
+        location_t goto_loc3;
+        IdentRef goto_name;
+    };
+};
+struct GotoWithLocStmt {
+    Stmt next = nullptr;
+    enum StmtKind k=SGotoWithLoc;
+    struct alignas(void*) {
+        label_t location2;
+        location_t goto_loc;
     };
 };
 struct GotoStmt {
@@ -159,6 +203,7 @@ struct ReturnStmt {
     enum StmtKind k=SReturn;
     struct alignas(void*) {
         Expr ret;
+        location_t ret_loc;
     };
 };
 struct ExprStmt {
@@ -214,6 +259,9 @@ static uint8_t stmt_size_map[] = {
     sizeof(HeadStmt),
     sizeof(CompoundStmt),
     sizeof(LabelStmt),
+    sizeof(NamedLabelStmt),
+    sizeof(GotoWithLocNameStmt),
+    sizeof(GotoWithLocStmt),
     sizeof(GotoStmt),
     sizeof(CondJumpStmt),
     sizeof(SwitchStmt),
@@ -227,4 +275,4 @@ static uint8_t stmt_size_map[] = {
     sizeof(DeclStmt),
     sizeof(FunctionStmt)
 };
-static constexpr size_t stmt_max_size = std::max({sizeof(HeadStmt), sizeof(CompoundStmt), sizeof(LabelStmt), sizeof(GotoStmt), sizeof(CondJumpStmt), sizeof(SwitchStmt), sizeof(IndirectBrStmt), sizeof(DeclOnlyStmt), sizeof(ReturnStmt), sizeof(ExprStmt), sizeof(NoReturnCallStmt), sizeof(AsmStmt), sizeof(VarDeclStmt), sizeof(DeclStmt), sizeof(FunctionStmt)});
+static constexpr size_t stmt_max_size = std::max({sizeof(HeadStmt), sizeof(CompoundStmt), sizeof(LabelStmt), sizeof(NamedLabelStmt), sizeof(GotoWithLocNameStmt), sizeof(GotoWithLocStmt), sizeof(GotoStmt), sizeof(CondJumpStmt), sizeof(SwitchStmt), sizeof(IndirectBrStmt), sizeof(DeclOnlyStmt), sizeof(ReturnStmt), sizeof(ExprStmt), sizeof(NoReturnCallStmt), sizeof(AsmStmt), sizeof(VarDeclStmt), sizeof(DeclStmt), sizeof(FunctionStmt)});

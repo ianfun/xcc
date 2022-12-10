@@ -819,6 +819,7 @@ struct VarDecl {
     CType ty;
     Expr init; // maybe null
     unsigned idx;
+    location_t loc;
 };
 // enum declaration
 // https://clang.llvm.org/doxygen/classclang_1_1EnumDecl.html
@@ -1238,6 +1239,7 @@ static unsigned scalarRank(const_CType ty) {
 #include "lexer.h"
 #include "output.cpp"
 #include "StringPool.cpp"
+#include "StmtVisitor.cpp"
 #include "parser.cpp"
 #include "lexer.cpp"
 #ifdef XCC_MAIN

@@ -469,12 +469,15 @@ struct AstDumper {
             Indent();
             OS << "}" << NL;
             return;
+        case SNamedLabel:
         case SLabel:
             OS << "%" << s->label << ':';
             if (s->labelName)
                 OS << " (" << s->labelName->getKey() << ")";
             OS << NL;
             return;
+        case SGotoWithLoc:
+        case SGotoWithLocName:
         case SGoto:
             OS.changeColor(raw_ostream::RED);
             OS << "goto";
