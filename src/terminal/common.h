@@ -8,6 +8,7 @@
 #include <sys/types.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <signal.h>
 #endif
 
 using llvm::SmallString;
@@ -37,9 +38,11 @@ struct Terminal
 	DWORD default_attrs;
 	COORD cursorPos;
 	void do_move();
+	static BOOL WINAPI signal_handler(DWORD);
 #else
 	int tty_fd;
 	unsigned cur_line = 0, cur_col = 0;
+	static void signal_handler(int, siginfo_t *, void *);
 #endif
 	Terminal();
 	void changeColor(const Color &c);
@@ -53,6 +56,7 @@ struct Terminal
 	void move(int x, int y);
 	void write(StringRef Text);
 	void sleep(unsigned ms);
+	void installSignalHandlers();
 	~Terminal();
 };
 
@@ -65,6 +69,10 @@ struct Terminal
 #ifdef TEST_TERMINAL
 int main() {
 	Terminal terminal;
+	terminal.installSignalHandlers();
+	for (unsigned i = 0;i < 10;++i) {
+		getchar();
+	}
 	terminal.write("Hello terminal!\n");
 	terminal.setColor(FUCHSIA);
 	terminal.write("Hello terminal with color!\n");
@@ -72,7 +80,7 @@ int main() {
 	for (unsigned i = 1;i < 50;++i) {
 		for (unsigned j = 1;j < 50;++j) {
 			terminal.moveTo(i, j);
-			terminal.sleep(100);
+			terminal.sleep(30);
 			terminal.write("A");
 		}
 	}

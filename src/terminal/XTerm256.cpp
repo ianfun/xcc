@@ -63,11 +63,32 @@ void Terminal::write(StringRef text) {
 void Terminal::sleep(unsigned ms) {
 	int res;
 	struct timespec ts;
-    ts.tv_sec = 0;
-    ts.tv_nsec = ms;
+    ts.tv_sec = ms / 1000;
+    ts.tv_nsec = (ms % 1000) * 1000000;
 
     do {
         res = nanosleep(&ts, &ts);
     } while (res && errno == EINTR);
+}
+void Terminal::signal_handler(int signo, siginfo_t *info, void *context) {
+	switch (signo) {
+	case SIGINT:
+		{
+		StringRef text = "Ctrl+C\n";
+		::write(STDOUT_FILENO, text.data(), text.size());
+		break;
+		}
+	default:
+		break;
+	}
+}
+void Terminal::installSignalHandlers() {
+    struct sigaction act = { 0 };
+
+    act.sa_flags = 0;
+
+    act.sa_sigaction = &signal_handler;
+
+    sigaction(SIGINT, &act, NULL);
 }
 Terminal::~Terminal() {}

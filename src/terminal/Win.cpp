@@ -77,4 +77,25 @@ void Terminal::write(StringRef text) {
 void Terminal::sleep(unsigned ms) {
 	::Sleep(ms);
 }
+BOOL WINAPI Terminal::signal_handler(DWORD dwCtrlType) {
+	switch (dwCtrlType) {
+	case CTRL_C_EVENT:
+	{
+		StringRef text = "Ctrl+C\n";
+		WriteConsoleA(GetStdHandle(STD_OUTPUT_HANDLE), text.data(), text.size(), nullptr, nullptr);
+		return TRUE;
+	}
+	case CTRL_BREAK_EVENT:
+	{
+		StringRef text = "Break\n";
+		WriteConsoleA(GetStdHandle(STD_OUTPUT_HANDLE), text.data(), text.size(), nullptr, nullptr);
+		return TRUE;
+	}
+	default:
+		return FALSE;
+	}
+}
+void Terminal::installSignalHandlers() {
+	SetConsoleCtrlHandler(signal_handler, TRUE);
+}
 Terminal::~Terminal() {}
