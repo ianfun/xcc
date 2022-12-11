@@ -111,6 +111,7 @@ union alignas(void*) {
         xvector<unsigned> args;
         label_t *indirectBrs;
         unsigned localStart;
+        unsigned localSize;
     };
 };
 };
@@ -255,6 +256,7 @@ struct FunctionStmt {
         xvector<unsigned> args;
         label_t *indirectBrs;
         unsigned localStart;
+        unsigned localSize;
     };
 };
 static uint8_t stmt_size_map[] = {

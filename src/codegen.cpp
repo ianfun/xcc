@@ -16,7 +16,7 @@ struct IRGen : public DiagnosticHelper {
                           DLLExportStorageClass = llvm::GlobalValue::DLLExportStorageClass;
     LLVMTypeConsumer *type_cache;
     xcc_context &context;
-    llvm::Module *module = nullptr;
+    std::unique_ptr<llvm::Module> module;
     SourceMgr &SM;
     LLVMContext &ctx;
     llvm::IRBuilder<> B;
@@ -25,7 +25,7 @@ struct IRGen : public DiagnosticHelper {
     const Options &options;
     llvm::Triple triple;
     llvm::Function *currentfunction = nullptr;
-    BasicBlock::iterator allocaInsertPt;
+    llvm::BasicBlock::iterator allocaInsertPt;
     // `i32 1/0/-1` constant
     llvm::ConstantInt *i32_1 = nullptr, *i32_0 = nullptr, *i32_n1 = nullptr;
     llvm::IntegerType *intptrTy = nullptr;
@@ -82,7 +82,7 @@ private:
     }
     void after(llvm::BasicBlock *loc) { B.SetInsertPoint(loc); }
     llvm::Function *addFunction(llvm::FunctionType *ty, const Twine &N) {
-        return llvm::Function::Create(ty, ExternalLinkage, N, module);
+        return llvm::Function::Create(ty, ExternalLinkage, N, module.get());
     }
     void handle_asm(StringRef s) {
         if (currentfunction)
@@ -100,9 +100,9 @@ private:
     llvm::MDString *mdStr(StringRef str) { return llvm::MDString::get(ctx, str); }
     llvm::MDNode *mdNode(llvm::Metadata *m) { return llvm::MDNode::get(ctx, {m}); }
     llvm::MDNode *mdNode(ArrayRef<llvm::Metadata *> m) { return llvm::MDNode::get(ctx, m); }
-    void addModule(StringRef source_file, StringRef ModuleID = "main") {
-        module = new llvm::Module(ModuleID, ctx);
-        module->setSourceFileName(source_file);
+    void createModule() {
+        module.reset(new llvm::Module(options.mainFileName, ctx));
+        module->setSourceFileName(options.mainFileName);
         module->setDataLayout(*layout);
         module->setTargetTriple(options.triple.str());
 
@@ -136,13 +136,13 @@ private:
         case 3: return llvm::OptimizationLevel::O3;
         }
     }
-    CodeGenOpt::Level getCGOptLevel() const {
+    llvm::CodeGenOpt::Level getCGOptLevel() const {
         switch (options.OptimizationLevel) {
         default: llvm_unreachable("Invalid optimization level!");
-        case 0: return CodeGenOpt::None;
-        case 1: return CodeGenOpt::Less;
-        case 2: return CodeGenOpt::Default; // O2/Os/Oz
-        case 3: return CodeGenOpt::Aggressive;
+        case 0: return llvm::CodeGenOpt::None;
+        case 1: return llvm::CodeGenOpt::Less;
+        case 2: return llvm::CodeGenOpt::Default; // O2/Os/Oz
+        case 3: return llvm::CodeGenOpt::Aggressive;
         }
     }
     // clang::EmitAssemblyHelper::RunOptimizationPipeline
@@ -178,7 +178,7 @@ private:
         DebugInfoPerPass DebugInfoBeforePass;
         // Attempt to load pass plugins and register their callbacks with PB.
         for (auto &PluginFN : options.PassPlugins) {
-            auto PassPlugin = PassPlugin::Load(PluginFN);
+            auto PassPlugin = llvm::PassPlugin::Load(PluginFN);
             if (PassPlugin) {
                 PassPlugin->registerPassBuilderCallbacks(PB);
             } else {
@@ -208,7 +208,7 @@ private:
             MPM = PB.buildPerModuleDefaultPipeline(Level);
         }
         if (options.VerifyModule)
-            MPM.addPass(VerifierPass());
+            MPM.addPass(llvm::VerifierPass());
         {
             llvm::PrettyStackTraceString CrashInfo("Optimizer");
             llvm::TimeTraceScope TimeScope("Optimizer");
@@ -225,7 +225,7 @@ private:
         auto T = cast<llvm::StructType>(ty);
         if (!currentfunction)
             return llvm::ConstantStruct::get(T, {cast<llvm::Constant>(a), cast<llvm::Constant>(b)});
-        return B.CreateInsertValue(B.CreateInsertValue(PoisonValue::get(T), a, {0}), b, {1});
+        return B.CreateInsertValue(B.CreateInsertValue(llvm::PoisonValue::get(T), a, {0}), b, {1});
     }
     llvm::Value *make_complex_pair(CType ty, llvm::Value *a, llvm::Value *b) {
         return make_complex_pair(wrapComplex(ty), a, b);
@@ -1123,7 +1123,7 @@ BINOP_SHIFT:
         i32_0 = llvm::ConstantInt::get(i32Ty, 0);
         i1_0 = llvm::ConstantInt::getFalse(ctx);
         i1_1 = llvm::ConstantInt::getTrue(ctx);
-        addModule("main");
+        createModule();
     }
     uint64_t getsizeof(llvm::Type *ty) { return layout->getTypeStoreSize(ty); }
     uint64_t getsizeof(CType ty) {
@@ -1145,12 +1145,16 @@ BINOP_SHIFT:
         return getAlignof(wrap(ty));
     }
     uint64_t getAlignof(Expr e) { return getAlignof(e->ty); }
-    void run(Stmt s, size_t num_typedefs, size_t num_tags, LLVMTypeConsumer *type_cache) {
-        assert(type_cache);
-        type_cache->reset(num_tags);
-        vars = new llvm::Value *[num_typedefs]; 
-        this->type_cache = type_cache;
-        runCodeGenTranslationUnit(s);
+    std::unique_ptr<llvm::Module> run(const TranslationUnit &TU, LLVMTypeConsumer &type_cache) {
+        this->type_cache = &type_cache;
+        assert(this->type_cache);
+        this->type_cache->reset(TU.max_tags_scope);
+        vars = new llvm::Value *[TU.max_typedef_scope];
+        runCodeGenTranslationUnit(TU.ast);
         RunOptimizationPipeline();
+        return std::move(module);
+    }
+    void setTypeConsumer(LLVMTypeConsumer &C) {
+        this->type_cache = &C;
     }
 };

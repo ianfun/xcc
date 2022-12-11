@@ -1,4 +1,4 @@
-// the main program include file
+#define XCC_JIT
 
 #include "../src/xcc.h"
 #include "../src/xInitLLVM.cpp"
@@ -82,7 +82,7 @@ int main(int argc_, const char **argv_)
 
     // now, parsing source files ...
     size_t num_typedefs, num_tags;
-    auto ast = parser.run(num_typedefs, num_tags);
+    xcc::Stmt ast = parser.run(num_typedefs, num_tags);
     printer.finalize();
     if (engine.getNumErrors())
         return 1;
@@ -106,7 +106,7 @@ int main(int argc_, const char **argv_)
     llvm::cl::TokenizeWindowsCommandLineFull(cmdline, string_Saver, newArgvs);
 #endif
 
-    auto JITE = xcc::JITRunner::Create();
+    auto JITE = xcc::jit::JITRunner::Create();
     if (!JITE)
         return llvm::errs() << "cannot create JIT compiler and session:\n" << JITE.takeError(), 1;
     std::unique_ptr<xcc::JITRunner> TheJIT = std::move(*JITE);

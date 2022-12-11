@@ -16,6 +16,7 @@
 #include <llvm/Analysis/AliasAnalysis.h>
 #include <llvm/Analysis/GlobalsModRef.h>
 #include <llvm/Analysis/StackSafetyAnalysis.h>
+#include <llvm/Analysis/ConstantFolding.h>
 #include <llvm/Analysis/TargetLibraryInfo.h>
 #include <llvm/Analysis/TargetTransformInfo.h>
 #include <llvm/ADT/APFloat.h>
@@ -169,6 +170,7 @@
 #include <string>
 #include <vector>
 #include <map>
+#include <memory>
 #include <cctype>
 
 #if CC_DEBUG
@@ -898,6 +900,11 @@ struct GNUSwitchCase : public SwitchCase {
         return (*CaseStart + range).ule(*G.CaseStart);
     }
 };
+struct TranslationUnit {
+    Stmt ast; // A HeadStmt
+    unsigned max_tags_scope;
+    unsigned max_typedef_scope;
+};
 #include "ctypes.inc"
 #include "expressions.inc"
 #include "statements.inc"
@@ -1246,7 +1253,9 @@ static unsigned scalarRank(const_CType ty) {
 }
 
 #include "Diagnostic.cpp"
+#ifdef XCC_JIT
 #include "JIT.cpp"
+#endif
 #include "LLVMDiagnosticHandler.cpp"
 #include "Scope.cpp"
 #include "State.cpp"
@@ -1254,15 +1263,18 @@ static unsigned scalarRank(const_CType ty) {
 #include "TextDiagnosticPrinter.cpp"
 #include "LLVMTypeConsumer.cpp"
 #include "codegen.cpp"
-#include "lexer.h"
+#include "lexer.cpp"
 #include "output.cpp"
 #include "StringPool.cpp"
 #include "StmtVisitor.cpp"
 #include "parser.cpp"
-#include "lexer.cpp"
-#include "interpreter/interpreter.cpp"
-#ifdef XCC_MAIN
+#include "lexerDefinition.cpp"
+#ifdef XCC_TARGET
 #include "Target/TargetInfo.h"
+#endif
+#include "CompilerInstance.cpp"
+#include "interpreter/interpreter.cpp"
+#ifdef XCC_TOOLCHAIN
 #include "toolchains/ToolChain.cpp"
 #endif
 } // namespace xcc

@@ -40,11 +40,16 @@ COMPOUND:
 };
 
 struct StmtEndMap {
-    DenseMap<Stmt, Stmt> map;
+    DenseMap<Stmt, Stmt> endMap;
+    Stmt *labelMap;
     StmtEndMap(Stmt s) {
         assert(s->k == SFunction);
+        labelMap = new Stmt[s->numLabels];
         for (Stmt ptr = s->next;ptr;ptr = ptr->next)
             Visit(ptr);
+    }
+    ~StmtEndMap() {
+        delete [] labelMap;
     }
     void Visit(Stmt s) {
         switch (s->k) {
@@ -56,16 +61,19 @@ struct StmtEndMap {
                 Visit(ptr);
             }
             if (lastPtr && s->next)
-                map[lastPtr] = s->next;
+                endMap[lastPtr] = s->next;
         } break;
         default:
             break;
         }
     }
     Stmt getNext(Stmt s) const {
-        auto it = map.find(s);
-        if (it != map.end())
+        auto it = endMap.find(s);
+        if (it != endMap.end())
             return it->second;
         return nullptr;
+    }
+    Stmt getLabel(size_t i) const {
+        return labelMap[i];
     }
 };

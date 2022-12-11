@@ -63,7 +63,13 @@ int main(int argc_, const char **argv_)
     // preparing target information and ready for code generation to LLVM IR
     xcc::IRGen ig(ctx, engine, SM, llvmcontext, options);
 
+    // create xcc's type cache for LLVM
+    xcc::LLVMTypeConsumer type_cache(ctx, llvmcontext, options.g);
+
+    // configure IRGen to use it
+    ig.setTypeConsumer(type_cache);
+
     // create parser
-    xcc::Parser parser(SM, ig, engine, ctx);
+    xcc::Parser parser(SM, ig, engine, ctx, type_cache);
 
     // now, parsing source files ...

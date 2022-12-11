@@ -174,7 +174,7 @@ struct LLVMTypeConsumer
             this->num_tags_allocated = num_tags;
         }
     }
-    LLVMTypeConsumer(xcc_context &context, LLVMContext &ctx, bool debug = false): context{context}, ctx{ctx}, g{debug}, alloc{} {
+    LLVMTypeConsumer(xcc_context &context, LLVMContext &ctx, bool debug = false): context{context}, ctx{ctx}, alloc{}, g{debug} {
         pointer_type = llvm::PointerType::get(ctx, 0);
         void_type = llvm::Type::getVoidTy(ctx);
         integer_types[0] = llvm::Type::getInt1Ty(ctx);

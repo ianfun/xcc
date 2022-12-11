@@ -19,29 +19,28 @@ struct Options {
     std::vector<std::string> PassPlugins;
     llvm::Reloc::Model RelocationModel;
     Optional<llvm::CodeModel::Model> CodeModel;
-    Options() { llvm::sys::fs::current_path(CWD); }
-    void resetToDefault() {
-        g = false;
-        trigraphs = false;
-        UnrollLoops = false;
-        RerollLoops = false;
-        MergeFunctions = false;
-        VectorizeLoop = false;
-        VectorizeSLP = false;
-        DisableIntegratedAS = false;
-        VerifyModule = false;
-        TimeTrace = false;
-
-        OptimizationLevel = 0;
-        OptimizeSize = 0;
-        RelocationModel = llvm::Reloc::PIC_;
-        theTarget = nullptr;
-        triple = llvm::Triple();
-        TimeTraceGranularity = 500;
-        MergeFunctions = false;
-        PassPlugins.clear();
-        CWD.clear();
-        llvm::sys::fs::current_path(CWD);
-        mainFileName = StringRef();
-    }
+    Options(): 
+        mainFileName{},
+        triple{},
+        CWD{},
+        theTarget{nullptr},
+        g{false}, 
+        trigraphs{false}, 
+        UnrollLoops{false},
+        RerollLoops{false},
+        MergeFunctions{false},
+        VectorizeLoop{false},
+        VectorizeSLP{false},
+        DisableIntegratedAS{false},
+        VerifyModule{false},
+        TimeTrace {false},
+        OptimizationLevel{0},
+        OptimizeSize{0},
+        TimeTraceGranularity{500},
+        PassPlugins{},
+        RelocationModel{llvm::Reloc::PIC_},
+        CodeModel{}
+         {
+            llvm::sys::fs::current_path(CWD);
+        }
 };

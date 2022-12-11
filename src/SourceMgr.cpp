@@ -203,7 +203,7 @@ PUSH:
             fileSize = sb.st_size;
         }
 #endif
-        ErrorOr<std::unique_ptr<MemoryBuffer>> MemberBufferOrErr = llvm::MemoryBuffer::getOpenFile(fd, path, fileSize);
+        llvm::ErrorOr<std::unique_ptr<llvm::MemoryBuffer>> MemberBufferOrErr = llvm::MemoryBuffer::getOpenFile(fd, path, fileSize);
         if (!MemberBufferOrErr) {
 #if WINDOWS
             CloseHandle(fd);
@@ -454,7 +454,7 @@ public:
     }
     // this function does not save the string, so the called must pass as constant global string or alloced somewhere.
     void addStdin(StringRef Name = "<stdin>", location_t includePos = 0) {
-        ErrorOr<std::unique_ptr<MemoryBuffer>> MemberBufferOrErr = llvm::MemoryBuffer::getSTDIN();
+        llvm::ErrorOr<std::unique_ptr<llvm::MemoryBuffer>> MemberBufferOrErr = llvm::MemoryBuffer::getSTDIN();
         if (!MemberBufferOrErr) {
             std::string msg = MemberBufferOrErr.getError().message();
             StringRef msgStr(msg);

@@ -198,7 +198,8 @@ stmts = {
 		"unsigned numLabels", 
 		"xvector<unsigned> args",
 		"label_t *indirectBrs",
-		"unsigned localStart"
+		"unsigned localStart",
+		"unsigned localSize"
 	),
 }
 exprs = {

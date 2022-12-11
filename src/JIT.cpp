@@ -1,4 +1,4 @@
-namespace {
+namespace jit {
 using namespace llvm;
 using namespace llvm::orc;
 struct JITRunner {

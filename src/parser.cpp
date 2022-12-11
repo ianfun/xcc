@@ -137,7 +137,7 @@ struct Parser : public EvalHelper {
     }
     Expr complex_get_real(Expr e) {
         if (e->k == EConstant) {
-            if (const auto AZ = dyn_cast<ConstantAggregateZero>(e->C))
+            if (const auto AZ = dyn_cast<llvm::ConstantAggregateZero>(e->C))
                 return wrap(e->ty, AZ->getElementValue((unsigned)0), e->getBeginLoc(), e->getEndLoc());
             if (const auto CS = dyn_cast<llvm::ConstantStruct>(e->C))
                 return wrap(e->ty, CS->getOperand(0), e->getBeginLoc(), e->getEndLoc());
@@ -149,7 +149,7 @@ struct Parser : public EvalHelper {
     }
     Expr complex_get_imag(Expr e) {
         if (e->k == EConstant) {
-            if (const auto AZ = dyn_cast<ConstantAggregateZero>(e->C))
+            if (const auto AZ = dyn_cast<llvm::ConstantAggregateZero>(e->C))
                 return wrap(e->ty, AZ->getElementValue((unsigned)1), e->getBeginLoc(), e->getEndLoc());
             if (const auto CS = dyn_cast<llvm::ConstantStruct>(e->C))
                 return wrap(e->ty, CS->getOperand(1), e->getBeginLoc(), e->getEndLoc());
@@ -1207,9 +1207,9 @@ SIDE_EFFECT:
         checkSpec(result, r);
         if (result->ty->isComplex()) {
             if (result->k == EConstant && r->k == EConstant) {
-                if (isa<ConstantAggregateZero>(result->C))
+                if (isa<llvm::ConstantAggregateZero>(result->C))
                     return (void)(result = r);
-                if (isa<ConstantAggregateZero>(r->C))
+                if (isa<llvm::ConstantAggregateZero>(r->C))
                     return;
             }
             if (result->ty->isFloating()) {
@@ -1239,9 +1239,9 @@ SIDE_EFFECT:
                 return;
             }
             if (result->k == EConstant && r->k == EConstant) {
-                if (isa<ConstantAggregateZero>(result->C))
+                if (isa<llvm::ConstantAggregateZero>(result->C))
                     return (void)(result = r);
-                if (isa<ConstantAggregateZero>(r->C))
+                if (isa<llvm::ConstantAggregateZero>(r->C))
                     return /* (void)(result = result) */;
 
                 if (auto X = dyn_cast<llvm::ConstantStruct>(result->C)) {
@@ -1373,11 +1373,11 @@ SIDE_EFFECT:
         checkSpec(result, r);
         if (result->ty->isComplex()) {
             if (result->k == EConstant && r->k == EConstant) {
-                if (isa<ConstantAggregateZero>(result->C)) {
-                    if (isa<ConstantAggregateZero>(r->C))
+                if (isa<llvm::ConstantAggregateZero>(result->C)) {
+                    if (isa<llvm::ConstantAggregateZero>(r->C))
                         // zero - zero => zero
                         return (void)(result = complex_zero(result->ty, result->getBeginLoc(), r->getEndLoc()));
-                    const auto CS = cast<ConstantStruct>(r->C);
+                    const auto CS = cast<llvm::ConstantStruct>(r->C);
                     if (auto CI = dyn_cast<ConstantInt>(CS->getOperand(0))) {
                         auto CI2 = cast<ConstantInt>(CS->getOperand(1));
                         return (void)(result = wrap(
@@ -1396,7 +1396,7 @@ SIDE_EFFECT:
                                                                       ConstantFP::get(llvmTypeCache.ctx, -CF2->getValue())}),
                                            result->getBeginLoc(), result->getEndLoc()));
                 }
-                if (isa<ConstantAggregateZero>(r->C))
+                if (isa<llvm::ConstantAggregateZero>(r->C))
                     return /* (void)(result = result) */;
             }
             if (result->ty->isFloating()) {
@@ -1682,9 +1682,9 @@ ONE : {
         conv(result, r);
         if (result->ty->isComplex()) {
             if (result->k == EConstant && r->k == EConstant) {
-                if (isa<ConstantAggregateZero>(result->C))
+                if (isa<llvm::ConstantAggregateZero>(result->C))
                     return (void)(result = complex_zero(r->ty, result->getBeginLoc(), r->getEndLoc()));
-                if (isa<ConstantAggregateZero>(r->C))
+                if (isa<llvm::ConstantAggregateZero>(r->C))
                     return (void)(result = complex_zero(r->ty, result->getBeginLoc(), r->getEndLoc()));
             }
             if (result->ty->isFloating()) {
@@ -1812,8 +1812,8 @@ ZERO:
             // if the first operand is a nonzero finite number or an infinity and the second operand is a zero then the
             // result of the / operator is an infinity.
             if (result->k == EConstant && r->k == EConstant) {
-                if (isa<ConstantAggregateZero>(result->C)) {
-                    if (isa<ConstantAggregateZero>(r->C)) {
+                if (isa<llvm::ConstantAggregateZero>(result->C)) {
+                    if (isa<llvm::ConstantAggregateZero>(r->C)) {
                         if (r->ty->isFloating())
                             return (void)(result =
                                               complex_neg_nan_pair(result->ty, result->getBeginLoc(), r->getEndLoc()));
@@ -1821,7 +1821,7 @@ ZERO:
                     }
                     goto NEXT_NEXT;
                 }
-                if (isa<ConstantAggregateZero>(r->C)) {
+                if (isa<llvm::ConstantAggregateZero>(r->C)) {
                     if (r->ty->isFloating())
                         return (void)(result = complex_inf_pair(r->ty, result->getBeginLoc(), r->getEndLoc()));
                     goto CINT_ZERO;
@@ -2022,12 +2022,12 @@ NOT_CONSTANT:
                 return;
             }
             if (result->ty->isComplex()) {
-                if (isa<ConstantAggregateZero>(result->C)) {
-                    if (isa<ConstantAggregateZero>(r->C))
+                if (isa<llvm::ConstantAggregateZero>(result->C)) {
+                    if (isa<llvm::ConstantAggregateZero>(r->C))
                         return (void)(result = getBool(tok == TEq)); // equal!
                     return (void)(result = getBool(tok != TEq));     // not equal!
                 }
-                if (isa<ConstantAggregateZero>(r->C)) // not equal!
+                if (isa<llvm::ConstantAggregateZero>(r->C)) // not equal!
                     return (void)(result = getBool(tok != TEq));
                 if (auto X = dyn_cast<llvm::ConstantStruct>(result->C)) {
                     if (auto Y = dyn_cast<llvm::ConstantStruct>(r->C)) {
@@ -2834,7 +2834,7 @@ BREAK:
         return ok;
     }
     void checkAlign(uint64_t &a) {
-        if (isPowerOf2_64(a))
+        if (llvm::isPowerOf2_64(a))
             a = llvm::Log2_64(a);
         else
             type_error(getLoc(), "requested alignment is not a power of 2");
@@ -3213,7 +3213,7 @@ ARGV_OK:;
                         return wrap(e->ty, llvm::ConstantStruct::get(wrapComplexForInteger(e->ty), {REAL, IMAG}),
                                     e->getBeginLoc(), e->getEndLoc());
                     }
-                    if (isa<ConstantAggregateZero>(e->C)) {
+                    if (isa<llvm::ConstantAggregateZero>(e->C)) {
                         return e->ty->isFloating() ? complex_pos_neg_zero(e->ty, e->getBeginLoc(), e->getEndLoc())
                                                    : complex_zero(e->ty, e->getBeginLoc(), e->getEndLoc());
                     }
@@ -3246,7 +3246,7 @@ ARGV_OK:;
                 if (auto CA = dyn_cast<llvm::ConstantDataArray>(e->array)) {
                     e->ty = context.getPointerType(context.getFixArrayType(e->ty->p, CA->getType()->getNumElements()));
                 } else {
-                    auto AZ = cast<ConstantAggregateZero>(e->C);
+                    auto AZ = cast<llvm::ConstantAggregateZero>(e->C);
                     e->ty = context.getPointerType(
                         context.getFixArrayType(e->ty->p, cast<llvm::ArrayType>(AZ->getType())->getNumElements()));
                 }
@@ -3276,7 +3276,7 @@ ARGV_OK:;
             integer_promotions(e);
             if (e->k == EConstant) { // fold simple negate numbers, e.g, -10
                 if (e->ty->isComplex()) {
-                    if (isa<ConstantAggregateZero>(e->C))
+                    if (isa<llvm::ConstantAggregateZero>(e->C))
                         return e->ty->isFloating() ? complex_neg_zero(e->ty, e->getBeginLoc(), e->getEndLoc())
                                                    : complex_zero(e->ty, e->getBeginLoc(), e->getEndLoc());
                     if (auto CS = dyn_cast<llvm::ConstantStruct>(e->C)) {
@@ -5327,18 +5327,18 @@ ONE_CASE:
     // used by Lexer
     Expr constant_expression() { return conditional_expression(); }
     // the main entry to run parser
-    Stmt run(size_t &num_typedefs, size_t &num_tags) {
+    void run(TranslationUnit &TU) {
         Stmt ast;
         consume();
-        enterBlock(); // the global scope!
+        enterBlock(); // file scope(global)
         ast = translation_unit();
         ast = leaveTopLevelBlock(ast);
         statics("Parse scope statics\n");
         statics("  Max typedef scope size: %u\n", sema.typedefs.maxSyms);
         statics("  Max tags scope size: %u\n", sema.tags.maxSyms);
         endStatics();
-        num_typedefs = sema.typedefs.maxSyms;
-        num_tags = sema.tags.maxSyms;
-        return ast;
+        TU.max_tags_scope = sema.typedefs.maxSyms;
+        TU.max_typedef_scope = sema.tags.maxSyms;
+        TU.ast = ast;
     }
 }; // end class Parser
