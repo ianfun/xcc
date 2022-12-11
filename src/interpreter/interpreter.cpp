@@ -7,8 +7,11 @@ using llvm::ConstantExpr;
 
 struct ExecutionSession {
 	SmallVector<Value> globals;
-    llvm::DataLayout &DL;
-	ExecutionSession(llvm::DataLayout &DL, unsigned num_globals_init): globals{num_globals_init, nullptr}, DL{DL} {}
+    llvm::DataLayout DL;
+    void resetNumGlobal(size_t num) {
+        globals.resize_for_overwrite(num);
+    }
+	ExecutionSession(const llvm::DataLayout &DL): globals{}, DL{DL} {}
 };
 struct CallFrame {
 	Value* locals;
@@ -495,49 +498,88 @@ BINOP_FCMP:
            llvm_unreachable("invalid ExprKind");
     }
 };
-struct PartialTranslationUnit {
-    Stmt ast;
-    llvm::Module *M;
-};
-/*
-// parse code, line by line(like a interpreter)
-struct IncrementalParser: public DiagnosticHelper {
-    IncrementalParser(DiagnosticsEngine &engine): DiagnosticHelper{engine} {}
-    unsigned InputCount = 0;
-    PartialTranslationUnit Parse(StringRef input_line);
 
-} 
-struct IncrementalExecutor: public DiagnosticHelper
+// parse code, line by line(like a interpreter)
+struct IncrementalParser {
+    CompilerInstance &CI;
+    IncrementalParser(CompilerInstance &CI): CI{CI} {
+        CI.createParser();
+    }
+    unsigned InputCount = 0;
+    // this function does not copy the input string
+    // return true on sucess, false if error occurred
+    bool Parse(StringRef input_line, TranslationUnit &TU) {
+        SourceMgr &SM = CI.getSourceManager();
+        char file_name[20];
+        int N = snprintf(file_name, sizeof(file_name), "input_line_%u", InputCount++);
+        SM.addString(input_line, StringRef(file_name, N));
+        CI.Parse(TU);
+        unsigned errs = CI.getDiags().getNumErrors();
+        CI.getDiags().reset();
+        return errs != 0;
+    }
+};
+struct IncrementalExecutor
 {
-	IncrementalExecutor(
-        DiagnosticsEngine &engine,
-        llvm::DataLayout &DL,
-        unsigned num_tags,
-        unsigned num_globals_init,
-        LLVMTypeConsumer &type_cache
-    ): DiagnosticHelper{engine}, session{DL, num_globals_init}, type_cache{type_cache} {
-		type_cache.reset(num_tags);
-	}
-	ExecutionSession session;
-	LLVMTypeConsumer &type_cache;
+    CompilerInstance &CI;
+    ExecutionSession session;
+    IncrementalExecutor(CompilerInstance &CI, const llvm::DataLayout &DL): CI{CI}, session{DL} {
+        CI.createCodeGen();
+    }
+    IncrementalExecutor(CompilerInstance &CI, std::string triple): CI{CI}, session{llvm::DataLayout("")} {
+        std::string Error;
+        llvm::TargetOptions opt;
+        llvm::TargetMachine *machine;
+        const llvm::Target *Target = llvm::TargetRegistry::lookupTarget(triple, Error);
+        if (!Target) {
+            goto G_ERROR;
+        }
+        machine = Target->createTargetMachine(triple, "generic", "", opt, llvm::None);
+        if (!machine) {
+            goto G_ERROR;
+        }
+        session.DL = machine->createDataLayout();
+        return;
+        G_ERROR: ;
+        {
+            DiagnosticHelper helper{CI.getDiags()};
+            helper.error("failed to lookupTarget for triple %R: %R, fallback to default DataLayout", triple, Error);
+        }
+    }
 	const ExecutionSession &getExecutionSession() const {
 		return session;
 	}
 	std::unique_ptr<Function> compile(Stmt s) {
-		return std::make_unique<Function>(engine, session, s, type_cache);
+		return std::make_unique<Function>(CI.getDiags(), session, s, CI.getTypeCache());
 	}
 	llvm::Constant *runFunction(Stmt s, const ArrayRef<Value> &args) {
-		Function F(engine, session, s, type_cache);
+		Function F(CI.getDiags(), session, s, CI.getTypeCache());
 		return F(args);
 	}
 };
-// see python's code modeule for details.
-struct InteractiveInterpreter: public AstInterpreter {
-    InteractiveInterpreter(
-        DiagnosticsEngine &engine,
-        llvm::DataLayout &DL,
-        )
-}
-struct InteractiveConsole: public 
-*/
+
+struct InteractiveInterpreter {
+    IncrementalParser parser;
+    IncrementalExecutor exe;
+    InteractiveInterpreter(CompilerInstance &CI, std::string triple = llvm::sys::getDefaultTargetTriple()): parser{CI}, exe{CI, triple} {}
+    InteractiveInterpreter(CompilerInstance &CI, const llvm::DataLayout &DL): parser{CI}, exe{CI, DL} {}
+    bool Parse(StringRef input_line, TranslationUnit &TU) {
+        return parser.Parse(input_line, TU);
+    }
+    void Execute(TranslationUnit &TU) {
+        // ???
+    }
+    void ParseAndExecute(StringRef input_line) {
+        TranslationUnit TU;
+        if (Parse(input_line, TU)) {
+            // exe.runFunction(nullptr, {});
+            llvm::errs() << "compile a function!";
+            Execute(TU);
+        }
+    }
+};
+struct InteractiveConsole: public InteractiveInterpreter {
+
+};
+
 }

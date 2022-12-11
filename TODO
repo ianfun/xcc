@@ -1,0 +1,11 @@
+* use std::aligned_union or llvm::AlignedCharArrayUnion for unions?
+* implements clang's toolchains?
+* linker invocation
+* assembler invocation
+* terminal history/color/tab completion
+* terminal input: WebAssembly server?Jupyter?
+* language server(LSP)?
+* recover parse error
+* macro argument stringfy
+* macro token paste
+* macro expansion location

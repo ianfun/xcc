@@ -166,6 +166,7 @@
 #include <cstdio>
 #include <ctime>
 #include <deque>
+#include <optional>
 #include <cassert>
 #include <string>
 #include <vector>

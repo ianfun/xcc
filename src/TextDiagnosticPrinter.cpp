@@ -66,7 +66,7 @@ NO_LOC:
     {
         StringRef msgtype;
         switch (Diag.level) {
-        case Ignored: llvm_unreachable("");
+        default: llvm_unreachable("Invalid diagnostic type");
         case Note: msgtype = "note: "; break;
         case Remark: msgtype = "remark: "; break;
         case Warning: msgtype = "warning: "; break;

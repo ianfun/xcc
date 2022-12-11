@@ -1,6 +1,8 @@
 struct CompilerInstance
 {
     CompilerInstance() {}
+    CompilerInstance(const CompilerInstance &) = delete;
+    void operator=(const CompilerInstance &) = delete;
     ~CompilerInstance() {
         // note: It's safe to delete nullptr!
         delete SM;
@@ -27,21 +29,22 @@ struct CompilerInstance
     Options *options;
 
     void addPrinter(struct DiagnosticConsumer *C) {
-        createDiag();
+        createDiags();
+        engine->addConsumer(C);
     }
     struct Options &createOptions() {
         if (!options)
             options = new Options();
         return *options;
     }
-    DiagnosticsEngine &createDiag() {
+    DiagnosticsEngine &createDiags() {
         if (!engine)
             engine = new DiagnosticsEngine();
         return *engine;
     }
     SourceMgr& createSourceManager() {
         if (!SM)
-            SM = new SourceMgr(createDiag());
+            SM = new SourceMgr(createDiags());
         return *SM;
     }
     xcc_context &createContext() {
@@ -56,7 +59,7 @@ struct CompilerInstance
     }
     IRGen &createCodeGen() {
         if (!codegen)
-            codegen = new IRGen(createContext(), createDiag(), createSourceManager(), createLLVMContext(), createOptions());
+            codegen = new IRGen(createContext(), createDiags(), createSourceManager(), createLLVMContext(), createOptions());
         return *codegen;
     }
     LLVMTypeConsumer &createTypeCache() {
@@ -66,7 +69,7 @@ struct CompilerInstance
     }
     Parser &createParser() {
         if (!parser)
-            parser = new Parser(createSourceManager(), createCodeGen(), createDiag(), createContext(), createTypeCache());
+            parser = new Parser(createSourceManager(), createCodeGen(), createDiags(), createContext(), createTypeCache());
         return *parser;
     }
 

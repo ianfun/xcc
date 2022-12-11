@@ -2,7 +2,7 @@ struct LLVMTypeConsumer
 {
     xcc_context &context;
 	LLVMContext &ctx;
-    llvm::Type **tags = nullptr;
+    SmallVector<llvm::Type*> tags;
    	llvm::StructType *_complex_float, *_complex_double;
     llvm::IntegerType *integer_types[8];
     llvm::Type *float_types[FloatKind::MAX_KIND];
@@ -11,7 +11,6 @@ struct LLVMTypeConsumer
     OnceAllocator alloc;
     DenseMap<CType, llvm::FunctionType *> function_type_cache{};
     DenseMap<Expr, llvm::Value *> vla_size_map{};
-    unsigned num_tags_allocated = 0;
     bool g = false;
     enum TypeIndex {
         voidty,
@@ -169,10 +168,7 @@ struct LLVMTypeConsumer
         return float_types[static_cast<uint64_t>(ty->getFloatKind())];
     }
     void reset(unsigned num_tags) {
-        if (num_tags != this->num_tags_allocated) {
-            this->tags = new llvm::Type *[num_tags];
-            this->num_tags_allocated = num_tags;
-        }
+        tags.resize_for_overwrite(num_tags);
     }
     LLVMTypeConsumer(xcc_context &context, LLVMContext &ctx, bool debug = false): context{context}, ctx{ctx}, alloc{}, g{debug} {
         pointer_type = llvm::PointerType::get(ctx, 0);
@@ -194,9 +190,5 @@ struct LLVMTypeConsumer
         float_types[F_PPC128] = llvm::Type::getPPC_FP128Ty(ctx);
         _complex_double = llvm::StructType::get(float_types[F_Double], float_types[F_Double]);
         _complex_float = llvm::StructType::get(float_types[F_Float], float_types[F_Float]);
-    }
-    ~LLVMTypeConsumer() {
-        if (tags)
-            delete[] tags;
     }
 };

@@ -226,29 +226,117 @@ struct TextDiagnosticPrinter : public DiagnosticConsumer {
     void printSource(source_location &loc, const ArrayRef<FixItHint> FixItHints);
     void write_loc(const source_location &loc, const struct IncludeFile *file);
 };
+struct TextDiagnosticBuffer : public DiagnosticConsumer {
+    using DiagList = std::vector<std::pair<location_t, std::string>>;
+    using iterator = DiagList::iterator;
+    using const_iterator = DiagList::const_iterator;
+
+    DiagList Errors, Warnings, Remarks, Notes;
+
+    SmallVector<std::pair<enum DiagnosticLevel, size_t>> All;
+
+    const_iterator err_begin() const { return Errors.begin(); }
+    const_iterator err_end() const { return Errors.end(); }
+    
+    const_iterator warn_begin() const { return Warnings.begin(); }
+    const_iterator warn_end() const { return Warnings.end(); }
+    
+    const_iterator remark_begin() const { return Remarks.begin(); }
+    const_iterator remark_end() const { return Remarks.end(); }
+    
+    const_iterator note_begin() const { return Notes.begin(); }
+    const_iterator note_end() const { return Notes.end(); }
+
+    auto all_begin() const { return All.begin(); }
+    auto all_end() const { return All.end(); }
+   
+    static void HandleDiagnosticImpl(void *self, const Diagnostic &Info) {
+        return reinterpret_cast<TextDiagnosticBuffer *>(self)->realHandleDiagnostic(Info);
+    }
+    void realHandleDiagnostic(const Diagnostic &Info) {
+        SmallString<100> Buf;
+        switch (Info.level) {
+            default:
+            case Ignored: llvm_unreachable("Diagnostic not handled during diagnostic buffering!");
+            case Note:
+                All.emplace_back(Info.level, Notes.size());
+                Notes.emplace_back(Info.loc, std::string(Buf.str()));
+                break;
+            case Remark:
+                All.emplace_back(Info.level, Remarks.size());
+                Remarks.emplace_back(Info.loc, std::string(Buf.str()));
+                break;
+            case Warning:
+                All.emplace_back(Info.level, Warnings.size());
+                Warnings.emplace_back(Info.loc, std::string(Buf.str()));
+                break;
+            case Error:
+            case PPError:
+            case LexError:
+            case ParseError:
+            case EvalError:
+            case TypeError:
+            case Fatal:
+                All.emplace_back(Info.level, Errors.size());
+                Errors.emplace_back(Info.loc, std::string(Buf.str()));
+                break;
+        }
+    }
+    TextDiagnosticBuffer(): DiagnosticConsumer{&HandleDiagnosticImpl} {}
+};
+struct DiagnosticBuffer: public DiagnosticConsumer {
+
+   using DiagList = std::vector<std::pair<location_t, std::string>>;
+   using iterator = DiagList::iterator;
+   using const_iterator = DiagList::const_iterator;
+
+   DiagList Errors, Warnings, Remarks, Notes;
+
+   std::vector<std::pair<enum DiagnosticLevel, size_t>> All;
+
+   const_iterator err_begin() const { return Errors.begin(); }
+   const_iterator err_end() const { return Errors.end(); }
+  
+   const_iterator warn_begin() const { return Warnings.begin(); }
+   const_iterator warn_end() const { return Warnings.end(); }
+  
+   const_iterator remark_begin() const { return Remarks.begin(); }
+   const_iterator remark_end() const { return Remarks.end(); }
+  
+   const_iterator note_begin() const { return Notes.begin(); }
+   const_iterator note_end() const { return Notes.end(); }
+   void FlushDiagnostics(struct DiagnosticsEngine &) const;
+};
 struct DiagnosticsEngine {
     unsigned ErrorLimit = 0;
     Diagnostic CurrentDiagnostic;
-    SmallVector<DiagnosticConsumer *, 1> consumers;
+    SmallVector<DiagnosticConsumer *, 2> consumers;
     void addConsumer(DiagnosticConsumer *C) { consumers.push_back(C); }
     unsigned getNumConsumers() { return consumers.size(); }
     DiagnosticConsumer *getFirstConsumer() { return consumers.front(); }
     DiagnosticConsumer *getLastConsumer() { return consumers.back(); }
-    void EmitCurrentDiagnostic() {
+    void Emit(const Diagnostic &Diag) {
         for (const auto C : consumers)
-            C->HandleDiagnostic(CurrentDiagnostic);
+            C->HandleDiagnostic(Diag);
+    }
+    void EmitCurrentDiagnostic() {
+        return Emit(CurrentDiagnostic);
     }
     unsigned getNumWarnings() const {
         unsigned total = 0;
-        for (const auto C : consumers)
+        for (const DiagnosticConsumer *C : consumers)
             total += C->getNumWarnings();
         return total;
     }
     unsigned getNumErrors() const {
         unsigned total = 0;
-        for (const auto C : consumers)
+        for (const DiagnosticConsumer *C : consumers)
             total += C->getNumErrors();
         return total;
+    }
+    void reset() {
+        for (DiagnosticConsumer *C : consumers)
+            C->clear();
     }
 };
 struct DiagnosticBuilder {
@@ -269,6 +357,9 @@ struct DiagnosticBuilder {
     template <typename T> const DiagnosticBuilder &operator<<(const T &V) const {
         engine.CurrentDiagnostic.write_impl(V);
         return *this;
+    }
+    void setLoc(location_t loc) {
+        engine.CurrentDiagnostic.loc = loc;
     }
 };
 // A helper class to emit Diagnostics
@@ -353,3 +444,36 @@ struct EvalHelper : public DiagnosticHelper {
         return false;
     }
 };
+void
+DiagnosticBuffer::FlushDiagnostics(struct DiagnosticsEngine &engine) const {
+    for (const auto &I: All) {
+        engine.CurrentDiagnostic.reset("%R", I.first);
+        DiagnosticBuilder Diag = DiagnosticBuilder(engine);
+        switch (I.second) {
+            default:
+                llvm_unreachable("Diagnostic not handled during diagnostic flushing!");
+            case Note:
+                Diag << Notes[I.second].second;
+                Diag.setLoc(Notes[I.second].first);
+                break;
+            case Remark:
+                Diag << Remarks[I.second].second;
+                Diag.setLoc(Remarks[I.second].first);
+                break;
+            case Warning:
+                Diag << Warnings[I.second].second;
+                Diag.setLoc(Warnings[I.second].first);
+                break;
+            case Error:
+            case PPError:
+            case LexError:
+            case ParseError:
+            case EvalError:
+            case TypeError:
+            case Fatal:
+                Diag << Errors[I.second].second;
+                Diag.setLoc(Errors[I.second].first);
+                break;
+        }
+    }
+}
