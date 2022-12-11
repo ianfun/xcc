@@ -2061,10 +2061,10 @@ NOT_CONSTANT:
                       context.getBool()));
     }
     Expr boolToInt(Expr e) { return ENEW(CastExpr){.ty = context.getInt(), .castop = ZExt, .castval = e}; }
-    enum DeclaratorFlags {
-        Direct = 0,
-        Abstract = 1,
-        Function = 2
+    enum DeclaratorFlags: unsigned char {
+        D_Direct = 0,
+        D_Abstract = 1,
+        D_Function = 2
     };
     CType declaration_specifiers() { return specifier_qualifier_list(); }
     void consume() {
@@ -2413,7 +2413,7 @@ BREAK:
         eat_typedef->addTags(tags);
         return eat_typedef;
     }
-    Declator declarator(CType base, enum DeclaratorFlags flags = Direct) {
+    Declator declarator(CType base, enum DeclaratorFlags flags = D_Direct) {
         CType ty = base;
         while (l.tok.tok == TMul)
             consume(), ty = context.getPointerType(ty), type_qualifier_list(ty);
@@ -2531,7 +2531,7 @@ BREAK:
         return result;
     }
 
-    Declator direct_declarator(CType base, enum DeclaratorFlags flags = Direct) {
+    Declator direct_declarator(CType base, enum DeclaratorFlags flags = D_Direct) {
         switch (l.tok.tok) {
         case TIdentifier: {
             current_declator_loc = getLoc();
@@ -2805,7 +2805,7 @@ BREAK:
             if (!base)
                 return expect(getLoc(), "declaration-specifiers"), false;
             current_declator_loc = getLoc();
-            Declator nt = declarator(base, Function);
+            Declator nt = declarator(base, D_Function);
             if (!nt.ty)
                 return expect(current_declator_loc, "abstract-declarator"), false;
             params.push_back(nt);
@@ -2974,7 +2974,7 @@ BREAK:
         result = SNEW(VarDeclStmt){.vars = xvector<VarDecl>::get()};
         for (;;) {
             current_declator_loc = getLoc();
-            Declator st = declarator(base, Direct);
+            Declator st = declarator(base, D_Direct);
             if (!st.ty)
                 return;
             st.ty->noralize();
@@ -3168,7 +3168,7 @@ ARGV_OK:;
         if (!(base = declaration_specifiers()) || l.tok.tok == TRbracket)
             return base;
         current_declator_loc = getLoc();
-        return declarator(base, Abstract).ty;
+        return declarator(base, D_Abstract).ty;
     }
     // https://learn.microsoft.com/en-us/cpp/c-language/c-unary-operators?view=msvc-170
     Expr unary_expression() {

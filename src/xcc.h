@@ -1252,6 +1252,7 @@ static unsigned scalarRank(const_CType ty) {
 #include "State.cpp"
 #include "SourceMgr.cpp"
 #include "TextDiagnosticPrinter.cpp"
+#include "LLVMTypeConsumer.cpp"
 #include "codegen.cpp"
 #include "lexer.h"
 #include "output.cpp"
@@ -1259,6 +1260,7 @@ static unsigned scalarRank(const_CType ty) {
 #include "StmtVisitor.cpp"
 #include "parser.cpp"
 #include "lexer.cpp"
+#include "interpreter/interpreter.cpp"
 #ifdef XCC_MAIN
 #include "Target/TargetInfo.h"
 #include "toolchains/ToolChain.cpp"

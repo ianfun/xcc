@@ -1,5 +1,6 @@
 struct LLVMTypeConsumer
 {
+    xcc_context &context;
 	LLVMContext &ctx;
     llvm::Type **tags = nullptr;
    	llvm::StructType *_complex_float, *_complex_double;
@@ -10,6 +11,7 @@ struct LLVMTypeConsumer
     OnceAllocator alloc;
     DenseMap<CType, llvm::FunctionType *> function_type_cache{};
     DenseMap<Expr, llvm::Value *> vla_size_map{};
+    unsigned num_tags_allocated = 0;
     bool g = false;
     enum TypeIndex {
         voidty,
@@ -76,15 +78,6 @@ struct LLVMTypeConsumer
         }
         llvm_unreachable("invalid FloatKind");
     }
-    CodeGenOpt::Level getCGOptLevel() const {
-        switch (options.OptimizationLevel) {
-        default: llvm_unreachable("Invalid optimization level!");
-        case 0: return CodeGenOpt::None;
-        case 1: return CodeGenOpt::Less;
-        case 2: return CodeGenOpt::Default; // O2/Os/Oz
-        case 3: return CodeGenOpt::Aggressive;
-        }
-    }
     llvm::Type *wrapFloating(CType ty) { return float_types[static_cast<uint64_t>(ty->getFloatKind())]; }
     llvm::StructType *wrapComplex(const_CType ty) {
         if (ty->isFloating()) {
@@ -103,10 +96,10 @@ struct LLVMTypeConsumer
         return llvm::StructType::get(T, T);
     }
     void handleDecl(Stmt s) {
-    	assert(s->getKind() == SDecl);
+    	assert(s->k == SDecl);
     	CType ty = s->decl_ty;
         if (ty->isEnum())
-            break;
+            return;
         IdentRef Name = ty->getTagName();
         RecordDecl *RD = ty->getRecord();
         if (!RD) {
@@ -115,7 +108,7 @@ struct LLVMTypeConsumer
                 tags[s->decl_idx] = llvm::StructType::create(ctx, ty->getTagName()->getKey());
             else
                 tags[s->decl_idx] = llvm::StructType::create(ctx);
-            break;
+            return;
         }
         const auto &fields = RD->fields;
         size_t l = fields.size();
@@ -175,10 +168,13 @@ struct LLVMTypeConsumer
         }
         return float_types[static_cast<uint64_t>(ty->getFloatKind())];
     }
-    LLVMTypeConsumer(LLVMContext &ctx, bool debug): ctx{ctx}, g{debug}, alloc{} {
-        vars = new llvm::Value *[num_typedefs]; // not initialized!
-        tags = new llvm::Type *[num_tags];      // not initialized!
-
+    void reset(unsigned num_tags) {
+        if (num_tags != this->num_tags_allocated) {
+            this->tags = new llvm::Type *[num_tags];
+            this->num_tags_allocated = num_tags;
+        }
+    }
+    LLVMTypeConsumer(xcc_context &ctx, LLVMContext &ctx, bool debug = false): context{ctx}, ctx{ctx}, g{debug}, alloc{} {
         pointer_type = llvm::PointerType::get(ctx, 0);
         void_type = llvm::Type::getVoidTy(ctx);
         integer_types[0] = llvm::Type::getInt1Ty(ctx);
@@ -200,6 +196,7 @@ struct LLVMTypeConsumer
         _complex_float = llvm::StructType::get(float_types[F_Float], float_types[F_Float]);
     }
     ~LLVMTypeConsumer() {
-        delete[] dtags;
+        if (tags)
+            delete[] tags;
     }
 };

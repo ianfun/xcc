@@ -110,6 +110,9 @@ union alignas(void*) {
         unsigned numLabels;
         xvector<unsigned> args;
         label_t *indirectBrs;
+        llvm::MutableArrayRef<Stmt> labelMap;
+        unsigned localStart;
+        unsigned localSize;
     };
 };
 };
@@ -253,6 +256,9 @@ struct FunctionStmt {
         unsigned numLabels;
         xvector<unsigned> args;
         label_t *indirectBrs;
+        llvm::MutableArrayRef<Stmt> labelMap;
+        unsigned localStart;
+        unsigned localSize;
     };
 };
 static uint8_t stmt_size_map[] = {

@@ -136,6 +136,15 @@ private:
         case 3: return llvm::OptimizationLevel::O3;
         }
     }
+    CodeGenOpt::Level getCGOptLevel() const {
+        switch (options.OptimizationLevel) {
+        default: llvm_unreachable("Invalid optimization level!");
+        case 0: return CodeGenOpt::None;
+        case 1: return CodeGenOpt::Less;
+        case 2: return CodeGenOpt::Default; // O2/Os/Oz
+        case 3: return CodeGenOpt::Aggressive;
+        }
+    }
     // clang::EmitAssemblyHelper::RunOptimizationPipeline
     void RunOptimizationPipeline() {
         llvm::Optional<llvm::PGOOptions> PGOOpt;
@@ -1135,6 +1144,8 @@ BINOP_SHIFT:
     uint64_t getAlignof(Expr e) { return getAlignof(e->ty); }
     void run(Stmt s, size_t num_typedefs, size_t num_tags, LLVMTypeConsumer *type_cache) {
         assert(type_cache);
+        type_cache.reset(num_tags);
+        vars = new llvm::Value *[num_typedefs]; 
         this->type_cache = type_cache;
         runCodeGenTranslationUnit(s);
         RunOptimizationPipeline();
