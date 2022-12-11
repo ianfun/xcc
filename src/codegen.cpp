@@ -73,7 +73,7 @@ private:
     }
     const llvm::Instruction *getTerminator() { return B.GetInsertBlock()->getTerminator(); }
     llvm::ValueAsMetadata *mdNum(uint64_t num) {
-        llvm::Value *v = llvm::ConstantInt::get(integer_types[context.getIntLog2()], num);
+        llvm::Value *v = llvm::ConstantInt::get(llvm::Type::getInt32Ty(ctx), num);
         return llvm::ValueAsMetadata::get(v);
     }
     void append(llvm::BasicBlock *theBB) {
@@ -89,7 +89,7 @@ private:
             // module level asm
             module->appendModuleInlineAsm(s);
         else {
-            auto ty = llvm::FunctionType::get(void_type, false);
+            auto ty = llvm::FunctionType::get(type_cache->void_type, false);
             auto f = llvm::InlineAsm::get(ty, s, StringRef(), true);
             B.CreateCall(ty, f);
         }
@@ -268,7 +268,7 @@ private:
         B.CreateBr(phiBB);
 
         append(phiBB);
-        auto phi = B.CreatePHI(integer_types[0], 2);
+        auto phi = B.CreatePHI(type_cache->integer_types[0], 2);
         phi->addIncoming(R, leftBB);
         phi->addIncoming(L, rightBB);
         return phi;
@@ -308,7 +308,6 @@ private:
         return "";
     }
     void gen(Stmt s) {
-        emitDebugLocation(s);
         switch (s->k) {
         case SSwitch: {
             auto cond = gen(s->itest);
@@ -392,17 +391,11 @@ private:
                     B.CreateRet(llvm::UndefValue::get(retTy));
                 }
             }
-            if (options.g) {
-                lexBlocks.pop_back();
-                di->finalizeSubprogram(sp);
-            }
             this->labels.clear();
             this->currentfunction = nullptr;
         } break;
         case SReturn: B.CreateRet(s->ret ? gen(s->ret) : nullptr); break;
         case SDeclOnly:
-            if (options.g)
-                (void)wrap3Noqualified(s->decl);
             break;
         case SNamedLabel:
         case SLabel: {
@@ -430,7 +423,7 @@ private:
             if (currentfunction)
                 module->appendModuleInlineAsm(s->asms);
             else {
-                auto ty = llvm::FunctionType::get(void_type, false);
+                auto ty = llvm::FunctionType::get(type_cache->void_type, false);
                 auto f = llvm::InlineAsm::get(ty, s->asms, StringRef(), true);
                 B.CreateCall(ty, f);
             }
@@ -544,6 +537,14 @@ private:
         assert(type_cache);
         return type_cache->wrap(ty);
     }
+    llvm::StructType *wrapComplex(const_CType ty) {
+        assert(type_cache);
+        return type_cache->wrapComplex(ty);
+    }
+    llvm::StructType *wrapComplexForInteger(const_CType ty) {
+        assert(type_cache);
+        return type_cache->wrapComplexForInteger(ty);
+    }
     llvm::Value *getAddress(Expr e) {
         switch (e->k) {
         case EVar: return vars[e->sval];
@@ -593,7 +594,7 @@ private:
         }
     }
     llvm::Value *genVLANumelements(Expr e) {
-        auto it = vla_size_map.insert(std::make_pair(e, nullptr));
+        auto it = type_cache->vla_size_map.insert(std::make_pair(e, nullptr));
         if (it.second)
             it.first->second = gen(e);
         return it.first->second;
@@ -651,7 +652,7 @@ private:
             auto base = isVar ? getAddress(e->obj) : gen(e->obj);
             if (isVar || e->obj->ty->getKind() == TYPOINTER) {
                 auto pMember = B.CreateInBoundsGEP(
-                    ty, base, {llvm::ConstantInt::get(integer_types[context.getIntLog2()], e->idx)});
+                    ty, base, {llvm::ConstantInt::get(type_cache->integer_types[context.getIntLog2()], e->idx)});
                 return load(pMember, wrap(e->ty), e->obj->ty->getAlignAsMaybeAlign());
             }
             return B.CreateExtractValue(load(base, ty, e->obj->ty->getAlignAsMaybeAlign()), e->idx);
@@ -660,6 +661,7 @@ private:
         case EBin: {
             unsigned pop = 0;
             switch (e->bop) {
+            default: break;
             case LogicalAnd:
                 return gen_logical(e->lhs, e->rhs, true);
             case LogicalOr:
@@ -668,7 +670,7 @@ private:
             {
                 llvm::Value *basep = getAddress(e->lhs),
                             *rhs = gen(e->rhs);
-                            *s = B.CreateAlignedStore(rhs, basep, e->lhs->ty->getAlignAsMaybeAlign());
+                llvm::StoreInst *s = B.CreateAlignedStore(rhs, basep, e->lhs->ty->getAlignAsMaybeAlign());
                 if (e->lhs->ty->hasTag(TYVOLATILE))
                     s->setVolatile(true);
                 if (e->lhs->ty->hasTag(TYATOMIC))
@@ -687,6 +689,7 @@ BINOP_ATOMIC_RMW:
                 llvm::Value *addr = getAddress(e->lhs), *rhs = gen(e->rhs);
                 return B.CreateAtomicRMW(static_cast<llvm::AtomicRMWInst::BinOp>(pop), addr, rhs, llvm::None,
                                          llvm::AtomicOrdering::SequentiallyConsistent);
+
 }
             }
             llvm::Value *lhs = gen(e->lhs);
@@ -1144,11 +1147,10 @@ BINOP_SHIFT:
     uint64_t getAlignof(Expr e) { return getAlignof(e->ty); }
     void run(Stmt s, size_t num_typedefs, size_t num_tags, LLVMTypeConsumer *type_cache) {
         assert(type_cache);
-        type_cache.reset(num_tags);
+        type_cache->reset(num_tags);
         vars = new llvm::Value *[num_typedefs]; 
         this->type_cache = type_cache;
         runCodeGenTranslationUnit(s);
         RunOptimizationPipeline();
-        finalsizeCodeGen();
     }
 };

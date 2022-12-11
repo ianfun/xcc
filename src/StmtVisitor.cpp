@@ -41,14 +41,15 @@ COMPOUND:
 
 struct StmtEndMap {
     DenseMap<Stmt, Stmt> map;
-    StmtEndMap(Stmt func) {
-        assert(func->getKind() == SFunction);
+    StmtEndMap(Stmt s) {
+        assert(s->k == SFunction);
         for (Stmt ptr = s->next;ptr;ptr = ptr->next)
             Visit(ptr);
     }
     void Visit(Stmt s) {
         switch (s->k) {
         case SCompound:
+        {
             Stmt lastPtr = nullptr;
             for (Stmt ptr = s->inner; ptr; ptr = ptr->next) {
                 lastPtr = ptr;
@@ -56,7 +57,7 @@ struct StmtEndMap {
             }
             if (lastPtr && s->next)
                 map[lastPtr] = s->next;
-            break;
+        } break;
         default:
             break;
         }

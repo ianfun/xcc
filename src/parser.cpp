@@ -222,7 +222,7 @@ struct Parser : public EvalHelper {
         }
         return ref.idx;
     }
-    label_t putLable(IdentRef Name, location_t loc, Stmt s) {
+    label_t putLable(IdentRef Name, location_t loc) {
         assert(Name && "expect a Name to put");
         Label_Info &ref = jumper.lookupLabel(Name);
         switch (ref.flags) {
@@ -230,11 +230,9 @@ struct Parser : public EvalHelper {
             ref.flags = LBL_DECLARED;
             ref.idx = jumper.createLabel();
             ref.loc = loc;
-            ref.s = s;
             break;
         case LBL_FORWARD: // used, and defined => ok!
             ref.flags = LBL_OK;
-            ref.s = s;
             break;
         case LBL_DECLARED: // declared => declared twice!
             type_error(loc, "duplicate label: %I", Name) << SourceRange(loc, Name);
@@ -306,7 +304,7 @@ struct Parser : public EvalHelper {
         }
         sema.typedefs.putSym(Name, Variable_Info{
                                        .ty = context.getConstInt(),
-                                       .val = ConstantInt::get(integer_types[5], val),
+                                       .val = ConstantInt::get(llvmTypeCache.integer_types[5], val),
                                        .tags = ASSIGNED | USED, // enums are used by default ignore warnings
                                    });
     }
@@ -917,7 +915,7 @@ SIDE_EFFECT:
                 e = (e->k == EConstant
                          ? wrap(context.getInt(),
                                 (e->ty->isSigned() ? &llvm::ConstantExpr::getSExt
-                                                   : &llvm::ConstantExpr::getZExt)(e->C, integer_types[4], false),
+                                                   : &llvm::ConstantExpr::getZExt)(e->C, llvmTypeCache.integer_types[4], false),
                                 e->getBeginLoc(), e->getEndLoc())
                          : make_cast(e, e->ty->isSigned() ? SExt : ZExt, context.getInt()));
             }
@@ -2536,7 +2534,7 @@ BREAK:
         case TIdentifier: {
             current_declator_loc = getLoc();
             IdentRef name;
-            if (flags == Abstract)
+            if (flags == D_Abstract)
                 return Declator();
             name = l.tok.s, consume();
             return direct_declarator_end(base, name);
@@ -2559,7 +2557,7 @@ BREAK:
             return st;
         }
         default:
-            if (flags == Direct)
+            if (flags == D_Direct)
                 return Declator();
             return direct_declarator_end(base, nullptr);
         }
@@ -2646,7 +2644,7 @@ BREAK:
             res.ty->setKind(TYBITFIELD);
             return res;
         }
-        d = declarator(base, Direct);
+        d = declarator(base, D_Direct);
         if (!d.ty)
             return Declator();
         if (l.tok.tok == TColon) {
@@ -3019,17 +3017,16 @@ ARGV_OK:;
                                               .functy = st.ty,
                                               .args = xvector<unsigned>::get_with_length(st.ty->params.size()),
                                               .indirectBrs = nullptr,
-                                              .labelMap = llvm::MutableArrayRef<Stmt>(),
-                                              .localStart = sema.typedefs.data.size(),
-                                              .localSize = 0
+                                              .localStart = static_cast<unsigned>(sema.typedefs.data.size())
                                           };
                 sema.currentfunction = st.ty;
                 sema.pfunc = st.name;
-                res->funcbody = function_body(st.ty->params, res->args, loc, st->labelMap);
+                res->localSize = res->localStart;
+                res->funcbody = function_body(st.ty->params, res->args, loc, res->localSize);
                 sema.pfunc = nullptr;
                 sema.currentfunction = nullptr;
                 res->numLabels = jumper.cur;
-                res->local = sema.typedefs._current_function_offset;
+                res->localStart = sema.typedefs._current_function_offset;
                 if (hasFlag(Flag_IndirectBr_used)) {
                     size_t Size = jumper.indirectBrs.size();
                     if (!Size) {
@@ -3982,11 +3979,11 @@ GENERIC_END:
                 return getFunctionNameExpr(loc, endLoc);
             case K__builtin_LINE:
                 return wrap(context.getInt(),
-                            ConstantInt::get(integer_types[context.getIntLog2()], SM().getLineNumber(loc)), loc,
+                            ConstantInt::get(llvmTypeCache.integer_types[context.getIntLog2()], SM().getLineNumber(loc)), loc,
                             endLoc);
             case K__builtin_COLUMN:
                 return wrap(context.getInt(),
-                            ConstantInt::get(integer_types[context.getIntLog2()], SM().getColumnNumber(loc)), loc,
+                            ConstantInt::get(llvmTypeCache.integer_types[context.getIntLog2()], SM().getColumnNumber(loc)), loc,
                             endLoc);
             case K__builtin_FILE:
                 return ENEW(ConstantArrayExpr){.ty = context.stringty,
@@ -4481,7 +4478,7 @@ ONE_CASE:
                 if (!sema.currentfunction->ret->isVoid()) {
                     type_error(loc, "function should not return void in a function return %T",
                                sema.currentfunction->ret);
-                    ret = wrap(sema.currentfunction->ret, llvm::UndefValue::get(wrap(sema.currentfunction->ret)),
+                    ret = wrap(sema.currentfunction->ret, llvm::UndefValue::get(llvmTypeCache.wrap(sema.currentfunction->ret)),
                                loc, loc);
                 }
                 insertStmt(SNEW(ReturnStmt) {.ret = ret, .ret_loc = loc});
@@ -4762,10 +4759,8 @@ ONE_CASE:
                 if (hasFlag(Flag_this_scope_has_vla)) {
                     jumper.vla_forbidden_labels.push_back(L);
                 }
-                Stmt o = getInsertPoint();
                 statement();
-                Stmt n = getInsertPoint();
-                insertLabel(L, tok.s, loc, o == n ? nullptr : n);
+                insertLabel(L, tok.s, loc);
             }
             l.tokenq.push_back(l.tok), l.tok = tok;
             // not a labeled-statement, now put the token back and try to parse a expression
@@ -5238,7 +5233,7 @@ ONE_CASE:
                 note(loc, "jump bypasses initialization of variable length array");
         }
     };
-    Stmt function_body(const xvector<Param> params, xvector<unsigned> &args, location_t loc, llvm::MutableArrayRef<Stmt> &labelMap) {
+    Stmt function_body(const xvector<Param> params, xvector<unsigned> &args, location_t loc, unsigned &num_locals) {
         consume();
         Stmt head = SNEW(HeadStmt){};
         sema.typedefs.push_function();
@@ -5270,8 +5265,6 @@ ONE_CASE:
             }
             insertStmtEnd();
         }
-        size_t numLabels = jumper.labels.size();
-        labelMap = llvm::MutableArrayRef(new (getAllocator())Stmt[numLabels], numLabels);
         for (const auto &it : jumper.labels) {
             IdentRef name = it.first;
             switch (it.second.flags) {
@@ -5280,7 +5273,6 @@ ONE_CASE:
             case LBL_OK: break;
             default: llvm_unreachable("");
             }
-            labelMap[it.idx] = it.s;
         }
         if (hasFlag(Flag_this_function_has_vla)) {
             std::sort(jumper.vla_forbidden_labels.begin(), jumper.vla_forbidden_labels.end());
@@ -5294,6 +5286,7 @@ ONE_CASE:
         removeUnusedVariables(head, head->next, nullptr, num);
         if (!head->next)
             head->next = old_next ? old_next->next : nullptr;
+        num_locals = num_locals - sema.typedefs.data.size();
         sema.typedefs.pop_function();
         consume();
         return head;
@@ -5322,8 +5315,8 @@ ONE_CASE:
      */
   public:
     // constructor
-    Parser(SourceMgr &SM, IRGen &irgen, DiagnosticsEngine &Diag, xcc_context &theContext, LLVMTypeConsumer llvmTypeCache)
-        : EvalHelper{Diag}, l(SM, this, theContext, Diag), context{theContext}, irgen{irgen}, llvmTypeCache{llvmTypeCache}
+    Parser(SourceMgr &SM, IRGen &irgen, DiagnosticsEngine &Diag, xcc_context &theContext, LLVMTypeConsumer &llvmTypeCache)
+        : EvalHelper{Diag}, l(SM, this, theContext, Diag), context{theContext}, irgen{irgen}, llvmTypeCache{llvmTypeCache},
           intzero{wrap(context.getInt(), ConstantInt::get(llvmTypeCache.ctx, APInt::getZero(context.getInt()->getBitWidth())),
                        0, 0)},
           intone{wrap(context.getInt(), ConstantInt::get(llvmTypeCache.ctx, APInt(context.getInt()->getBitWidth(), 1)), 0, 0)},

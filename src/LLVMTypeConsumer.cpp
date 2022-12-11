@@ -131,7 +131,7 @@ struct LLVMTypeConsumer
             size_t L = fields.size();
             llvm::Type **buf = alloc.Allocate<llvm::Type *>(L);
             for (size_t i = 0; i < L; ++i)
-                buf[i] = wrap2(fields[i].ty);
+                buf[i] = wrap(fields[i].ty);
             return llvm::StructType::create(ctx, ArrayRef<llvm::Type *>(buf, L));
         }
         case TYFUNCTION: {
@@ -174,7 +174,7 @@ struct LLVMTypeConsumer
             this->num_tags_allocated = num_tags;
         }
     }
-    LLVMTypeConsumer(xcc_context &ctx, LLVMContext &ctx, bool debug = false): context{ctx}, ctx{ctx}, g{debug}, alloc{} {
+    LLVMTypeConsumer(xcc_context &context, LLVMContext &ctx, bool debug = false): context{context}, ctx{ctx}, g{debug}, alloc{} {
         pointer_type = llvm::PointerType::get(ctx, 0);
         void_type = llvm::Type::getVoidTy(ctx);
         integer_types[0] = llvm::Type::getInt1Ty(ctx);

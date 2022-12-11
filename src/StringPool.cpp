@@ -13,11 +13,11 @@ struct StringPool {
     GV getEmptyString() {
         auto it = interns.insert(std::make_pair(StringRef("", 1), nullptr));
         if (it.second) {
-            auto str = llvm::ConstantAggregateZero::get(llvm::ArrayType::get(irgen.integer_types[3], 1));
+            auto str = llvm::ConstantAggregateZero::get(llvm::ArrayType::get(irgen.type_cache->integer_types[3], 1));
             auto GV =
                 new llvm::GlobalVariable(*irgen.module, str->getType(), true, IRGen::PrivateLinkage, str, ".cstr");
             GV->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
-            GV->setAlignment(irgen.layout->getPrefTypeAlign(irgen.integer_types[3]));
+            GV->setAlignment(irgen.layout->getPrefTypeAlign(irgen.type_cache->integer_types[3]));
             GV->setConstant(true);
             it.first->second = GV;
         }
@@ -30,7 +30,7 @@ struct StringPool {
             auto GV =
                 new llvm::GlobalVariable(*irgen.module, str->getType(), true, IRGen::PrivateLinkage, str, ".cstr");
             GV->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
-            GV->setAlignment(irgen.layout->getPrefTypeAlign(irgen.integer_types[3]));
+            GV->setAlignment(irgen.layout->getPrefTypeAlign(irgen.type_cache->integer_types[3]));
             GV->setConstant(true);
             it.first->second = GV;
         }
@@ -58,7 +58,7 @@ struct StringPool {
                 auto GV =
                     new llvm::GlobalVariable(*irgen.module, str->getType(), true, IRGen::PrivateLinkage, str, ".cstr");
                 GV->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
-                GV->setAlignment(irgen.layout->getPrefTypeAlign(irgen.integer_types[5]));
+                GV->setAlignment(irgen.layout->getPrefTypeAlign(irgen.type_cache->integer_types[5]));
                 GV->setConstant(true);
                 it.first->second = GV;
             }
@@ -84,7 +84,7 @@ struct StringPool {
             auto GV =
                 new llvm::GlobalVariable(*irgen.module, str->getType(), true, IRGen::PrivateLinkage, str, ".cstr");
             GV->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
-            GV->setAlignment(irgen.layout->getPrefTypeAlign(irgen.integer_types[4]));
+            GV->setAlignment(irgen.layout->getPrefTypeAlign(irgen.type_cache->integer_types[4]));
             GV->setConstant(true);
             it.first->second = GV;
         }
@@ -104,7 +104,7 @@ struct StringPool {
             auto GV =
                 new llvm::GlobalVariable(*irgen.module, str->getType(), true, IRGen::PrivateLinkage, str, ".cstr");
             GV->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
-            GV->setAlignment(irgen.layout->getPrefTypeAlign(irgen.integer_types[5]));
+            GV->setAlignment(irgen.layout->getPrefTypeAlign(irgen.type_cache->integer_types[5]));
             GV->setConstant(true);
             it.first->second = GV;
         }

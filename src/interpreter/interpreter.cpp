@@ -7,7 +7,7 @@ using llvm::ConstantExpr;
 struct ExecutionSession {
 	Value *globals;
 	ExecutionSession(unsigned num_vars): globals{new Value[num_vars]} {}
-	~ExecutionSession() { delete globals; }
+	~ExecutionSession() { delete [] globals; }
 };
 struct CallFrame {
 	Value* locals;
@@ -20,11 +20,11 @@ struct Function: public DiagnosticHelper {
 	ExecutionSession &session;
 	Stmt function_stmt;
 	Value retVal = nullptr;
-	CallFrame &frame;
 	LLVMTypeConsumer &type_cache;
 	const StmtEndMap stmt_map;
+	CallFrame frame;
 	enum StmtKind opCode;
-	Fucntion(DiagnosticsEngine &engine, ExecutionSession &session, Stmt s, LLVMTypeConsumer &type_cache): DiagnosticHelper{engine}, session{session}, function_stmt{s}, type_cache{type_cache}, stmt_map{s} {}
+	Fucntion(DiagnosticsEngine &engine, ExecutionSession &session, Stmt s, LLVMTypeConsumer &type_cache): DiagnosticHelper{engine}, session{session}, function_stmt{s}, type_cache{type_cache}, stmt_map{s}, frame{s->localSize} {}
 	const ExecutionSession &getExecutionSession() const {
 		return session;
 	}
@@ -62,23 +62,16 @@ struct Function: public DiagnosticHelper {
 			return getLocalAddr(idx);
 		return getGlobalAddr(idx);
 	}
-	Value operator()(const ArrayRef<Value> args, CallFrame &frame) {
+	Value operator()(const ArrayRef<Value> args) {
 		for (size_t i = 0;i < args.size();++i)
-			session.values[i] = args[i];
-		pc = s;
+			session.setLocal(i, args[i]);
+		pc = function_stmt;
         loop();
         return retVal;
 	}
-	Value operator()(const ArrayRef<Value> args) {
-		CallFrame frame(function_stmt->localSize);
-		(*this)(args);
-	}
-	void warning(const StringRef &msg) {
-		llvm::errs() << "intepreter warning: " << s << '\n';
-	}
 	// https://github.com/python/cpython/blob/main/Python/ceval.c
 	// https://en.wikipedia.org/wiki/Instruction_cycle
-	void loop(Stmt s) {
+	void loop() {
 		for (;;) {
 			// fetch
 			fetch();
@@ -155,7 +148,7 @@ struct Function: public DiagnosticHelper {
 		}
 	}
 	Stmt *getLabel(unsigned idx) const {
-		return function_stmt->labelMap[idx];
+		return stmt_map[idx];
 	}
 	Address getAddress(Expr e) {
         case EVar: return getVarAddress[e->sval];
