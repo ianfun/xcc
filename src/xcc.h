@@ -407,6 +407,23 @@ enum CastOp {
     IntToPtr,
     BitCast
 };
+static llvm::Instruction::CastOps getCastOp(CastOp a) {
+    switch (a) {
+    case Trunc: return llvm::Instruction::Trunc;
+    case ZExt: return llvm::Instruction::ZExt;
+    case SExt: return llvm::Instruction::SExt;
+    case FPToUI: return llvm::Instruction::FPToUI;
+    case FPToSI: return llvm::Instruction::FPToSI;
+    case UIToFP: return llvm::Instruction::UIToFP;
+    case SIToFP: return llvm::Instruction::SIToFP;
+    case FPTrunc: return llvm::Instruction::FPTrunc;
+    case FPExt: return llvm::Instruction::FPExt;
+    case PtrToInt: return llvm::Instruction::PtrToInt;
+    case IntToPtr: return llvm::Instruction::IntToPtr;
+    case BitCast: return llvm::Instruction::BitCast;
+    default: llvm_unreachable("bad cast operator");
+    }
+}
 static const char *show(enum BinOp op) {
 #define BINOP3(two, r)                                                                                                 \
     case U##two:                                                                                                       \

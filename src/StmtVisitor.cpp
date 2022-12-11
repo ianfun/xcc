@@ -38,3 +38,33 @@ COMPOUND:
         }
     }
 };
+
+struct StmtEndMap {
+    DenseMap<Stmt, Stmt> map;
+    StmtEndMap(Stmt func) {
+        assert(func->getKind() == SFunction);
+        for (Stmt ptr = s->next;ptr;ptr = ptr->next)
+            Visit(ptr);
+    }
+    void Visit(Stmt s) {
+        switch (s->k) {
+        case SCompound:
+            Stmt lastPtr = nullptr;
+            for (Stmt ptr = s->inner; ptr; ptr = ptr->next) {
+                lastPtr = ptr;
+                Visit(ptr);
+            }
+            if (lastPtr && s->next)
+                map[lastPtr] = s->next;
+            break;
+        default:
+            break;
+        }
+    }
+    Stmt getNext(Stmt s) const {
+        auto it = map.find(s);
+        if (it != map.end())
+            return it->second;
+        return nullptr;
+    }
+};

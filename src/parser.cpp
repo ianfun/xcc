@@ -24,6 +24,7 @@ struct Parser : public EvalHelper {
         location_t loc = 0;
     };
     struct Label_Info {
+        Stmt s = nullptr;
         label_t idx = 0;
         uint8_t flags = LBL_UNDEFINED;
         location_t loc = 0;
@@ -78,6 +79,7 @@ struct Parser : public EvalHelper {
     };
     unsigned parse_flags = 0;
     IRGen &irgen;
+    LLVMTypeConsumer &llvmTypeCache;
     Stmt InsertPt = nullptr;
     bool sreachable;
     enum UnreachableReason unreachable_reason;
@@ -88,6 +90,10 @@ struct Parser : public EvalHelper {
     Expr null_ptr_expr;
 
   private:
+    llvm::Type *wrapFloating(CType ty) { return llvmTypeCache.wrapFloating(ty); }
+    llvm::StructType *wrapComplexForInteger(const_CType ty) { return llvmTypeCache.wrapComplexForInteger(ty); }
+    llvm::StructType *wrapComplex(const_CType ty) { return llvmTypeCache.wrapComplex(ty); }
+    llvm::Type *wrapNoComplexScalar(CType ty) { return llvmTypeCache.wrapNoComplexScalar(ty); }
     uint64_t getsizeof(CType ty) { return irgen.getsizeof(ty); }
     uint64_t getAlignof(CType ty) { return irgen.getAlignof(ty); }
     uint64_t getAlignof(Expr e) { return getAlignof(e->ty); }
@@ -99,7 +105,7 @@ struct Parser : public EvalHelper {
                     .ty = context.getSize_t(), .theType = ty, .sizeof_loc_begin = begin, .sizeof_loc_end = end};
         }
         return wrap(context.getSize_t(),
-                    ConstantInt::get(irgen.ctx, APInt(context.getSize_tBitWidth(), getsizeof(e->ty))), begin, end);
+                    ConstantInt::get(llvmTypeCache.ctx, APInt(context.getSize_tBitWidth(), getsizeof(e->ty))), begin, end);
     }
     [[nodiscard]] Expr binop(Expr a, BinOp op, Expr b, CType ty) {
         return ENEW(BinExpr){.ty = ty, .lhs = a, .bop = op, .rhs = b};
@@ -109,23 +115,23 @@ struct Parser : public EvalHelper {
     }
     Expr complex_from_real(Expr real, CType ty) {
         ty = context.tryGetComplexTypeFromNonComplex(ty);
-        auto zero = llvm::Constant::getNullValue(irgen.wrapNoComplexScalar(ty));
+        auto zero = llvm::Constant::getNullValue(wrapNoComplexScalar(ty));
         if (real->k == EConstant)
-            return wrap(ty, llvm::ConstantStruct::get(irgen.wrapComplex(ty), {real->C, zero}), real->getBeginLoc(),
+            return wrap(ty, llvm::ConstantStruct::get(wrapComplex(ty), {real->C, zero}), real->getBeginLoc(),
                         real->getEndLoc());
         return binop(real, Complex_CMPLX, wrap(ty, zero, real->getBeginLoc(), real->getEndLoc()), ty);
     }
     Expr complex_from_imag(Expr imag, CType ty) {
         ty = context.tryGetComplexTypeFromNonComplex(ty);
-        auto zero = ConstantFP::getZero(irgen.wrapNoComplexScalar(ty));
+        auto zero = ConstantFP::getZero(wrapNoComplexScalar(ty));
         if (imag->k == EConstant)
-            return wrap(ty, llvm::ConstantStruct::get(irgen.wrapComplex(ty), {zero, imag->C}), imag->getBeginLoc(),
+            return wrap(ty, llvm::ConstantStruct::get(wrapComplex(ty), {zero, imag->C}), imag->getBeginLoc(),
                         imag->getEndLoc());
         return binop(wrap(ty, zero, imag->getBeginLoc(), imag->getEndLoc()), Complex_CMPLX, imag, ty);
     }
     Expr complex_pair(Expr a, Expr b, CType ty) {
         return (a->k == EConstant && b->k == EConstant)
-                   ? wrap(ty, llvm::ConstantStruct::get(irgen.wrapComplex(ty), {a->C, b->C}), a->getBeginLoc(),
+                   ? wrap(ty, llvm::ConstantStruct::get(wrapComplex(ty), {a->C, b->C}), a->getBeginLoc(),
                           b->getEndLoc())
                    : binop(a, Complex_CMPLX, b, ty);
     }
@@ -159,19 +165,19 @@ struct Parser : public EvalHelper {
     }
     Expr complex_zero(CType ty, location_t startLoc, location_t endLoc) {
         assert(ty->isComplex());
-        auto T = irgen.wrapComplex(ty);
+        auto T = wrapComplex(ty);
         auto zero = llvm::Constant::getNullValue(T->getTypeAtIndex((unsigned)0));
         return wrap(ty, llvm::ConstantStruct::get(T, {zero, zero}), startLoc, endLoc);
     }
     Expr complex_neg_zero(CType ty, location_t startLoc, location_t endLoc) {
         assert(ty->isComplex());
-        auto T = irgen.wrapComplex(ty);
+        auto T = wrapComplex(ty);
         auto neg_zero = ConstantFP::getNegativeZero(T->getTypeAtIndex((unsigned)0));
         return wrap(ty, llvm::ConstantStruct::get(T, {neg_zero, neg_zero}), startLoc, endLoc);
     }
     Expr complex_pos_neg_zero(CType ty, location_t startLoc, location_t endLoc) {
         assert(ty->isComplex());
-        auto T = irgen.wrapComplex(ty);
+        auto T = wrapComplex(ty);
         auto TY = T->getTypeAtIndex((unsigned)0);
         auto zero = ConstantFP::getZero(TY);
         auto neg_zero = ConstantFP::getNegativeZero(TY);
@@ -179,7 +185,7 @@ struct Parser : public EvalHelper {
     }
     Expr complex_neg_nan_pair(CType ty, location_t startLoc, location_t endLoc) {
         assert(ty->isComplex());
-        auto T = irgen.wrapComplex(ty);
+        auto T = wrapComplex(ty);
         auto TY = T->getTypeAtIndex((unsigned)0);
         auto neg_zero = ConstantFP::getNegativeZero(TY);
         auto qnan = ConstantFP::getQNaN(TY, true);
@@ -187,7 +193,7 @@ struct Parser : public EvalHelper {
     }
     Expr complex_inf_pair(CType ty, location_t startLoc, location_t endLoc) {
         assert(ty->isComplex());
-        auto T = irgen.wrapComplex(ty);
+        auto T = wrapComplex(ty);
         auto inf = ConstantFP::getInfinity(T->getTypeAtIndex((unsigned)0));
         return wrap(ty, llvm::ConstantStruct::get(T, {inf, inf}), startLoc, endLoc);
     }
@@ -216,7 +222,7 @@ struct Parser : public EvalHelper {
         }
         return ref.idx;
     }
-    label_t putLable(IdentRef Name, location_t loc) {
+    label_t putLable(IdentRef Name, location_t loc, Stmt s) {
         assert(Name && "expect a Name to put");
         Label_Info &ref = jumper.lookupLabel(Name);
         switch (ref.flags) {
@@ -224,9 +230,11 @@ struct Parser : public EvalHelper {
             ref.flags = LBL_DECLARED;
             ref.idx = jumper.createLabel();
             ref.loc = loc;
+            ref.s = s;
             break;
         case LBL_FORWARD: // used, and defined => ok!
             ref.flags = LBL_OK;
+            ref.s = s;
             break;
         case LBL_DECLARED: // declared => declared twice!
             type_error(loc, "duplicate label: %I", Name) << SourceRange(loc, Name);
@@ -298,7 +306,7 @@ struct Parser : public EvalHelper {
         }
         sema.typedefs.putSym(Name, Variable_Info{
                                        .ty = context.getConstInt(),
-                                       .val = ConstantInt::get(irgen.integer_types[5], val),
+                                       .val = ConstantInt::get(integer_types[5], val),
                                        .tags = ASSIGNED | USED, // enums are used by default ignore warnings
                                    });
     }
@@ -464,11 +472,11 @@ PUT:
         const unsigned rA = k1, rB = k2;
         auto k3 = rA > rB ? k1 : k2;
         if (rA > rB)
-            return e->k == EConstant ? wrap(to, llvm::ConstantExpr::getFPExtend(e->C, irgen.wrapNoComplexScalar(to)),
+            return e->k == EConstant ? wrap(to, llvm::ConstantExpr::getFPExtend(e->C, wrapNoComplexScalar(to)),
                                             e->getBeginLoc(), e->getEndLoc())
                                      : make_cast(e, FPExt, to);
         if (rA < rB)
-            return e->k == EConstant ? wrap(to, llvm::ConstantExpr::getFPTrunc(e->C, irgen.wrapNoComplexScalar(to)),
+            return e->k == EConstant ? wrap(to, llvm::ConstantExpr::getFPTrunc(e->C, wrapNoComplexScalar(to)),
                                             e->getBeginLoc(), e->getEndLoc())
                                      : make_cast(e, FPTrunc, to);
         if ((k3 >= F_Decimal32 && k3 <= F_Decimal128) || k3 == F_PPC128 || k3 == F_BFloat)
@@ -480,7 +488,7 @@ PUT:
         return e->k == EConstant
                    ? wrap(to,
                           (e->ty->isSigned() ? &llvm::ConstantExpr::getSExt : &llvm::ConstantExpr::getZExt)(
-                              e->C, irgen.wrapNoComplexScalar(to), false),
+                              e->C, wrapNoComplexScalar(to), false),
                           e->getBeginLoc(), e->getEndLoc())
                    : make_cast(e, e->ty->isSigned() ? SExt : ZExt, to);
     }
@@ -494,11 +502,11 @@ PUT:
                 return e->k == EConstant
                            ? wrap(to,
                                   (e->ty->isSigned() ? &llvm::ConstantExpr::getSExt : &llvm::ConstantExpr::getZExt)(
-                                      e->C, irgen.wrapNoComplexScalar(to), false),
+                                      e->C, wrapNoComplexScalar(to), false),
                                   e->getBeginLoc(), e->getEndLoc())
                            : make_cast(e, e->ty->isSigned() ? SExt : ZExt, to);
             if (rA < rB)
-                return e->k == EConstant ? wrap(to, llvm::ConstantExpr::getTrunc(e->C, irgen.wrapNoComplexScalar(to)),
+                return e->k == EConstant ? wrap(to, llvm::ConstantExpr::getTrunc(e->C, wrapNoComplexScalar(to)),
                                                 e->getBeginLoc(), e->getEndLoc())
                                          : make_cast(e, Trunc, to);
             return bit_cast(e, to);
@@ -514,7 +522,7 @@ PUT:
             auto CI = cast<ConstantInt>(e->C);
             if (CI->isZero()) // A interger constant expression with the value 0 is a *null pointer constant*
                 return wrap(to, null_ptr, e->getBeginLoc(), e->getEndLoc());
-            return wrap(to, llvm::ConstantExpr::getIntToPtr(CI, irgen.pointer_type), e->getBeginLoc(), e->getEndLoc());
+            return wrap(to, llvm::ConstantExpr::getIntToPtr(CI, llvmTypeCache.pointer_type), e->getBeginLoc(), e->getEndLoc());
         }
         if (implict != Implict_Cast) {
             CType arg1 = e->ty;
@@ -573,7 +581,7 @@ PUT:
             warning(e->getBeginLoc(), "cast to smaller integer type %T from %T", to, e->ty);
         }
         if (e->k == EConstant)
-            return wrap(to, llvm::ConstantExpr::getPtrToInt(e->C, irgen.wrapNoComplexScalar(to)), e->getBeginLoc(),
+            return wrap(to, llvm::ConstantExpr::getPtrToInt(e->C, wrapNoComplexScalar(to)), e->getBeginLoc(),
                         e->getEndLoc());
         return make_cast(e, PtrToInt, to);
     }
@@ -583,12 +591,12 @@ PUT:
         assert((e->ty->isInteger()) && "bad call to integer_to_float()");
         if (e->ty->isSigned()) {
             if (e->k == EConstant)
-                return wrap(to, llvm::ConstantExpr::getSIToFP(e->C, irgen.wrapNoComplexScalar(to)), e->getBeginLoc(),
+                return wrap(to, llvm::ConstantExpr::getSIToFP(e->C, wrapNoComplexScalar(to)), e->getBeginLoc(),
                             e->getEndLoc());
             return make_cast(e, SIToFP, to);
         }
         if (e->k == EConstant)
-            return wrap(to, llvm::ConstantExpr::getUIToFP(e->C, irgen.wrapNoComplexScalar(to)), e->getBeginLoc(),
+            return wrap(to, llvm::ConstantExpr::getUIToFP(e->C, wrapNoComplexScalar(to)), e->getBeginLoc(),
                         e->getEndLoc());
         return make_cast(e, UIToFP, to);
     }
@@ -598,12 +606,12 @@ PUT:
         assert((to->isInteger()) && "bad call to float_to_integer()");
         if (to->isSigned()) {
             if (e->k == EConstant)
-                return wrap(to, llvm::ConstantExpr::getFPToSI(e->C, irgen.wrapNoComplexScalar(to)), e->getBeginLoc(),
+                return wrap(to, llvm::ConstantExpr::getFPToSI(e->C, wrapNoComplexScalar(to)), e->getBeginLoc(),
                             e->getEndLoc());
             return make_cast(e, FPToSI, to);
         }
         if (e->k == EConstant)
-            return wrap(to, llvm::ConstantExpr::getFPToUI(e->C, irgen.wrapNoComplexScalar(to)), e->getBeginLoc(),
+            return wrap(to, llvm::ConstantExpr::getFPToUI(e->C, wrapNoComplexScalar(to)), e->getBeginLoc(),
                         e->getEndLoc());
         return make_cast(e, FPToUI, to);
     }
@@ -712,21 +720,21 @@ PTR_CAST:
         // conversion rules for the corresponding real types.
         if (e->ty->isImaginary()) {
             if (!(to->isComplex() || to->isImaginary()))
-                return wrap(to, llvm::Constant::getNullValue(irgen.wrapNoComplexScalar(to)), e->getBeginLoc(),
+                return wrap(to, llvm::Constant::getNullValue(wrapNoComplexScalar(to)), e->getBeginLoc(),
                             e->getEndLoc());
             CType ty = context.make_cached(e->ty->del(TYIMAGINARY | TYCOMPLEX));
             CType ty2 = context.make_cached(to->del(TYCOMPLEX | TYIMAGINARY));
             Expr res = castto(bit_cast(e, ty), ty2);
             if (to->isImaginary())
                 return res;
-            return complex_pair(wrap(to, llvm::Constant::getNullValue(irgen.wrapNoComplexScalar(ty2)), e->getBeginLoc(),
+            return complex_pair(wrap(to, llvm::Constant::getNullValue(wrapNoComplexScalar(ty2)), e->getBeginLoc(),
                                      e->getEndLoc()),
                                 res, to);
         }
         if (to->isImaginary()) {
             if (e->ty->isComplex())
                 return bit_cast(complex_get_imag(e), to);
-            return wrap(to, llvm::Constant::getNullValue(irgen.wrapNoComplexScalar(to)), e->getBeginLoc(),
+            return wrap(to, llvm::Constant::getNullValue(wrapNoComplexScalar(to)), e->getBeginLoc(),
                         e->getEndLoc());
         }
         // if e is a complex number
@@ -909,7 +917,7 @@ SIDE_EFFECT:
                 e = (e->k == EConstant
                          ? wrap(context.getInt(),
                                 (e->ty->isSigned() ? &llvm::ConstantExpr::getSExt
-                                                   : &llvm::ConstantExpr::getZExt)(e->C, irgen.integer_types[4], false),
+                                                   : &llvm::ConstantExpr::getZExt)(e->C, integer_types[4], false),
                                 e->getBeginLoc(), e->getEndLoc())
                          : make_cast(e, e->ty->isSigned() ? SExt : ZExt, context.getInt()));
             }
@@ -1221,9 +1229,9 @@ SIDE_EFFECT:
                             handleOpStatus(IMAG.add(d, APFloat::rmNearestTiesToEven));
 
                             result = wrap(r->ty,
-                                          llvm::ConstantStruct::get(irgen.wrapComplex(r->ty),
-                                                                    ConstantFP::get(irgen.ctx, REAL),
-                                                                    ConstantFP::get(irgen.ctx, IMAG)),
+                                          llvm::ConstantStruct::get(wrapComplex(r->ty),
+                                                                    ConstantFP::get(llvmTypeCache.ctx, REAL),
+                                                                    ConstantFP::get(llvmTypeCache.ctx, IMAG)),
                                           result->getBeginLoc(), result->getEndLoc());
                             return;
                         }
@@ -1247,8 +1255,8 @@ SIDE_EFFECT:
 
                         result =
                             wrap(r->ty,
-                                 llvm::ConstantStruct::get(irgen.wrapComplex(r->ty), ConstantInt::get(irgen.ctx, a + c),
-                                                           ConstantInt::get(irgen.ctx, b + d)),
+                                 llvm::ConstantStruct::get(wrapComplex(r->ty), ConstantInt::get(llvmTypeCache.ctx, a + c),
+                                                           ConstantInt::get(llvmTypeCache.ctx, b + d)),
                                  result->getBeginLoc(), result->getEndLoc());
                         return;
                     }
@@ -1263,7 +1271,7 @@ SIDE_EFFECT:
                 auto CF2 = cast<ConstantFP>(r->C);
                 APFloat F = CF1->getValue();
                 handleOpStatus(F.add(CF2->getValue(), APFloat::rmNearestTiesToEven));
-                result = wrap(r->ty, ConstantFP::get(irgen.ctx, F), r->getBeginLoc(), r->getEndLoc());
+                result = wrap(r->ty, ConstantFP::get(llvmTypeCache.ctx, F), r->getBeginLoc(), r->getEndLoc());
                 return;
             }
             result = binop(result, FAdd, r, r->ty);
@@ -1278,7 +1286,7 @@ SIDE_EFFECT:
                         return;
                     bool overflow = false;
                     result = wrap(result->ty,
-                                  ConstantInt::get(irgen.ctx, result->ty->isSigned()
+                                  ConstantInt::get(llvmTypeCache.ctx, result->ty->isSigned()
                                                                   ? CI->getValue().sadd_ov(CI2->getValue(), overflow)
                                                                   : CI->getValue().uadd_ov(CI2->getValue(), overflow)),
                                   result->getBeginLoc(), r->getEndLoc());
@@ -1376,18 +1384,18 @@ SIDE_EFFECT:
                         auto CI2 = cast<ConstantInt>(CS->getOperand(1));
                         return (void)(result = wrap(
                                           r->ty,
-                                          llvm::ConstantStruct::get(irgen.wrapComplexForInteger(r->ty),
-                                                                    {ConstantInt::get(irgen.ctx, -CI->getValue()),
-                                                                     ConstantInt::get(irgen.ctx, -CI2->getValue())}),
+                                          llvm::ConstantStruct::get(wrapComplexForInteger(r->ty),
+                                                                    {ConstantInt::get(llvmTypeCache.ctx, -CI->getValue()),
+                                                                     ConstantInt::get(llvmTypeCache.ctx, -CI2->getValue())}),
                                           result->getBeginLoc(), result->getEndLoc()));
                     }
                     auto CF = cast<ConstantFP>(CS->getOperand(0));
                     auto CF2 = cast<ConstantFP>(CS->getOperand(1));
                     return (void)(result =
                                       wrap(r->ty,
-                                           llvm::ConstantStruct::get(irgen.wrapComplex(r->ty),
-                                                                     {ConstantFP::get(irgen.ctx, -CF->getValue()),
-                                                                      ConstantFP::get(irgen.ctx, -CF2->getValue())}),
+                                           llvm::ConstantStruct::get(wrapComplex(r->ty),
+                                                                     {ConstantFP::get(llvmTypeCache.ctx, -CF->getValue()),
+                                                                      ConstantFP::get(llvmTypeCache.ctx, -CF2->getValue())}),
                                            result->getBeginLoc(), result->getEndLoc()));
                 }
                 if (isa<ConstantAggregateZero>(r->C))
@@ -1409,8 +1417,8 @@ SIDE_EFFECT:
 
                             result = wrap(
                                 r->ty,
-                                llvm::ConstantStruct::get(irgen.wrapComplex(r->ty), {ConstantFP::get(irgen.ctx, REAL),
-                                                                                     ConstantFP::get(irgen.ctx, IMAG)}),
+                                llvm::ConstantStruct::get(wrapComplex(r->ty), {ConstantFP::get(llvmTypeCache.ctx, REAL),
+                                                                                     ConstantFP::get(llvmTypeCache.ctx, IMAG)}),
                                 result->getBeginLoc(), result->getEndLoc());
                             return;
                         }
@@ -1429,8 +1437,8 @@ SIDE_EFFECT:
 
                         result =
                             wrap(r->ty,
-                                 llvm::ConstantStruct::get(irgen.wrapComplex(r->ty), ConstantInt::get(irgen.ctx, a - c),
-                                                           ConstantInt::get(irgen.ctx, b - d)),
+                                 llvm::ConstantStruct::get(wrapComplex(r->ty), ConstantInt::get(llvmTypeCache.ctx, a - c),
+                                                           ConstantInt::get(llvmTypeCache.ctx, b - d)),
                                  result->getBeginLoc(), result->getEndLoc());
                         return;
                     }
@@ -1445,7 +1453,7 @@ SIDE_EFFECT:
                 auto CF2 = cast<ConstantFP>(r->C);
                 APFloat F = CF1->getValue();
                 handleOpStatus(F.subtract(CF2->getValue(), APFloat::rmNearestTiesToEven));
-                result = wrap(r->ty, ConstantFP::get(irgen.ctx, F), r->getBeginLoc(), r->getEndLoc());
+                result = wrap(r->ty, ConstantFP::get(llvmTypeCache.ctx, F), r->getBeginLoc(), r->getEndLoc());
                 return;
             }
             conv(result, r);
@@ -1461,7 +1469,7 @@ SIDE_EFFECT:
                         return;
                     bool overflow = false;
                     result = wrap(result->ty,
-                                  ConstantInt::get(irgen.ctx, result->ty->isSigned()
+                                  ConstantInt::get(llvmTypeCache.ctx, result->ty->isSigned()
                                                                   ? CI->getValue().ssub_ov(CI2->getValue(), overflow)
                                                                   : CI->getValue().usub_ov(CI2->getValue(), overflow)),
                                   result->getBeginLoc(), r->getEndLoc());
@@ -1505,7 +1513,7 @@ SIDE_EFFECT:
                     warning(opLoc, "shifting a negative signed value is undefined");
                 result = wrap(
                     result->ty,
-                    ConstantInt::get(irgen.ctx, result->ty->isSigned() ? obj.sshl_ov(shift, overflow) : obj << shift),
+                    ConstantInt::get(llvmTypeCache.ctx, result->ty->isSigned() ? obj.sshl_ov(shift, overflow) : obj << shift),
                     result->getBeginLoc(), result->getEndLoc());
                 if (overflow)
                     warning(opLoc, "shift-left overflow, result is %A", &cast<ConstantInt>(result->C)->getValue())
@@ -1513,7 +1521,7 @@ SIDE_EFFECT:
                 return;
             }
 BAD:
-            result = wrap(result->ty, ConstantInt::get(irgen.ctx, APInt::getZero(width)), result->getBeginLoc(),
+            result = wrap(result->ty, ConstantInt::get(llvmTypeCache.ctx, APInt::getZero(width)), result->getBeginLoc(),
                           result->getEndLoc());
             return;
         }
@@ -1550,11 +1558,11 @@ NOT_CONSTANT:
                     obj.ashrInPlace((unsigned)shift.getZExtValue());
                 else
                     obj.lshrInPlace((unsigned)shift.getZExtValue());
-                result = wrap(result->ty, ConstantInt::get(irgen.ctx, obj), result->getBeginLoc(), result->getEndLoc());
+                result = wrap(result->ty, ConstantInt::get(llvmTypeCache.ctx, obj), result->getBeginLoc(), result->getEndLoc());
                 return;
             }
 BAD:
-            result = wrap(result->ty, ConstantInt::get(irgen.ctx, APInt::getZero(width)), result->getBeginLoc(),
+            result = wrap(result->ty, ConstantInt::get(llvmTypeCache.ctx, APInt::getZero(width)), result->getBeginLoc(),
                           result->getEndLoc());
             return;
         }
@@ -1588,7 +1596,7 @@ NOT_CONSTANT:
                         case Xor: val ^= CI2->getValue(); break;
                         default: llvm_unreachable("");
                         }
-                        result = wrap(result->ty, ConstantInt::get(irgen.ctx, val), result->getBeginLoc(),
+                        result = wrap(result->ty, ConstantInt::get(llvmTypeCache.ctx, val), result->getBeginLoc(),
                                       result->getEndLoc());
                         return;
                     }
@@ -1613,7 +1621,7 @@ ZERO : {
     else
         msg = "'bitwise xor' to zero is always itself";
     warning(opLoc, msg) << result->getSourceRange() << r->getSourceRange();
-    result = wrap(result->ty, ConstantInt::get(irgen.ctx, result->ty->getIntegerKind().getZero()),
+    result = wrap(result->ty, ConstantInt::get(llvmTypeCache.ctx, result->ty->getIntegerKind().getZero()),
                   result->getBeginLoc(), getEndLoc());
     return;
 }
@@ -1623,7 +1631,7 @@ ONE : {
         warning(opLoc, "'bitsize or' to %r is always all ones", allOnes)
             << result->getSourceRange() << r->getSourceRange();
         result = result =
-            wrap(result->ty, ConstantInt::get(irgen.ctx, APInt::getAllOnes(result->ty->getIntegerKind().getBitWidth())),
+            wrap(result->ty, ConstantInt::get(llvmTypeCache.ctx, APInt::getAllOnes(result->ty->getIntegerKind().getBitWidth())),
                  result->getBeginLoc(), result->getEndLoc());
         return;
     }
@@ -1690,9 +1698,9 @@ ONE : {
                             const auto &c = cast<ConstantFP>(Y->getOperand(0))->getValue();
                             const auto &d = cast<ConstantFP>(Y->getOperand(1))->getValue();
                             result = wrap(r->ty,
-                                          llvm::ConstantStruct::get(irgen.wrapComplex(r->ty),
-                                                                    ConstantFP::get(irgen.ctx, a * c - b * d),
-                                                                    ConstantFP::get(irgen.ctx, b * c + a * d)),
+                                          llvm::ConstantStruct::get(wrapComplex(r->ty),
+                                                                    ConstantFP::get(llvmTypeCache.ctx, a * c - b * d),
+                                                                    ConstantFP::get(llvmTypeCache.ctx, b * c + a * d)),
                                           result->getBeginLoc(), result->getEndLoc());
                             return;
                         }
@@ -1710,9 +1718,9 @@ ONE : {
                         const auto &d = cast<ConstantInt>(Y->getOperand(1))->getValue();
 
                         result = wrap(r->ty,
-                                      llvm::ConstantStruct::get(irgen.wrapComplex(r->ty),
-                                                                ConstantInt::get(irgen.ctx, a * c - b * d),
-                                                                ConstantInt::get(irgen.ctx, b * c + a * d)),
+                                      llvm::ConstantStruct::get(wrapComplex(r->ty),
+                                                                ConstantInt::get(llvmTypeCache.ctx, a * c - b * d),
+                                                                ConstantInt::get(llvmTypeCache.ctx, b * c + a * d)),
                                       result->getBeginLoc(), result->getEndLoc());
                         return;
                     }
@@ -1733,7 +1741,7 @@ ONE : {
                 if (rhs->isZero())
                     goto ZERO;
                 result = wrap(r->ty,
-                              ConstantInt::get(irgen.ctx, r->ty->isSigned()
+                              ConstantInt::get(llvmTypeCache.ctx, r->ty->isSigned()
                                                               ? lhs->getValue().smul_ov(rhs->getValue(), overflow)
                                                               : lhs->getValue().umul_ov(rhs->getValue(), overflow)),
                               result->getBeginLoc(), result->getEndLoc());
@@ -1747,7 +1755,7 @@ ONE : {
             if (const auto rhs = dyn_cast<ConstantFP>(result->C)) {
                 APFloat F = lhs->getValue();
                 handleOpStatus(F.multiply(rhs->getValue(), APFloat::rmNearestTiesToEven));
-                result = wrap(r->ty, ConstantFP::get(irgen.ctx, F), result->getBeginLoc(), result->getEndLoc());
+                result = wrap(r->ty, ConstantFP::get(llvmTypeCache.ctx, F), result->getBeginLoc(), result->getEndLoc());
                 return;
             }
             result =
@@ -1838,9 +1846,9 @@ NEXT_NEXT:
                             const auto &d = cast<ConstantFP>(Y->getOperand(1))->getValue();
                             APFloat tmp = c * c + d * d;
                             result = wrap(r->ty,
-                                          llvm::ConstantStruct::get(irgen.wrapComplex(r->ty),
-                                                                    ConstantFP::get(irgen.ctx, (a * c + b * d) / tmp),
-                                                                    ConstantFP::get(irgen.ctx, (b * c - a * d) / tmp)),
+                                          llvm::ConstantStruct::get(wrapComplex(r->ty),
+                                                                    ConstantFP::get(llvmTypeCache.ctx, (a * c + b * d) / tmp),
+                                                                    ConstantFP::get(llvmTypeCache.ctx, (b * c - a * d) / tmp)),
                                           result->getBeginLoc(), result->getEndLoc());
                             return;
                         }
@@ -1862,9 +1870,9 @@ NEXT_NEXT:
                         APInt tmp2 = b * c - a * d;
                         result = wrap(r->ty,
                                       llvm::ConstantStruct::get(
-                                          irgen.wrapComplex(r->ty),
-                                          ConstantInt::get(irgen.ctx, isSigned ? tmp1.sdiv(tmp0) : tmp1.udiv(tmp0)),
-                                          ConstantInt::get(irgen.ctx, isSigned ? tmp2.sdiv(tmp0) : tmp2.udiv(tmp0))),
+                                          wrapComplex(r->ty),
+                                          ConstantInt::get(llvmTypeCache.ctx, isSigned ? tmp1.sdiv(tmp0) : tmp1.udiv(tmp0)),
+                                          ConstantInt::get(llvmTypeCache.ctx, isSigned ? tmp2.sdiv(tmp0) : tmp2.udiv(tmp0))),
                                       result->getBeginLoc(), result->getEndLoc());
                         return;
                     }
@@ -2441,23 +2449,23 @@ BREAK:
                         type_error(loc1, "initializing %T array with string literal", ty->arrtype);
                     return wrap(context.getFixArrayType(enc == Prefix_none ? context.getChar() : context.getChar8_t(),
                                                         s.size() + 1),
-                                enc::getUTF8(s, irgen.ctx), loc1, endLoc);
+                                enc::getUTF8(s, llvmTypeCache.ctx), loc1, endLoc);
                 case Prefix_L:
                     if (!(ty->arrtype->isInteger() && ty->arrtype->getIntegerKind().asLog2() == 5))
                         type_error(loc1, "initializing %T array with wide string literal", ty->arrtype);
                     return wrap(context.getFixArrayType(context.getWChar(), s.size() + 1),
-                                context.getWCharLog2() == 5 ? enc::getUTF16As32Bit(s, irgen.ctx)
-                                                            : enc::getUTF16As16Bit(s, irgen.ctx),
+                                context.getWCharLog2() == 5 ? enc::getUTF16As32Bit(s, llvmTypeCache.ctx)
+                                                            : enc::getUTF16As16Bit(s, llvmTypeCache.ctx),
                                 loc1, endLoc);
                 case Prefix_u:
                     if (!(ty->arrtype->isInteger() && ty->arrtype->getIntegerKind().asLog2() == 5))
                         type_error(loc1, "initializing %T array with UTF-16 string literal", ty->arrtype);
                     return wrap(context.getFixArrayType(context.getChar16_t(), s.size() + 1),
-                                enc::getUTF16As16Bit(s, irgen.ctx), loc1, endLoc);
+                                enc::getUTF16As16Bit(s, llvmTypeCache.ctx), loc1, endLoc);
                 case Prefix_U:
                     if (!(ty->arrtype->isInteger() && ty->arrtype->getIntegerKind().asLog2() == 5))
                         type_error(loc1, "initializing %T array with UTF-32 string literal", ty->arrtype);
-                    return wrap(context.getFixArrayType(context.getUChar(), s.size() + 1), enc::getUTF32(s, irgen.ctx),
+                    return wrap(context.getFixArrayType(context.getUChar(), s.size() + 1), enc::getUTF32(s, llvmTypeCache.ctx),
                                 loc1, endLoc);
                 default: llvm_unreachable("bad string encoding");
                 }
@@ -3010,14 +3018,18 @@ ARGV_OK:;
                                               .funcname = st.name,
                                               .functy = st.ty,
                                               .args = xvector<unsigned>::get_with_length(st.ty->params.size()),
-                                              .indirectBrs = nullptr
+                                              .indirectBrs = nullptr,
+                                              .labelMap = llvm::MutableArrayRef<Stmt>(),
+                                              .localStart = sema.typedefs.data.size(),
+                                              .localSize = 0
                                           };
                 sema.currentfunction = st.ty;
                 sema.pfunc = st.name;
-                res->funcbody = function_body(st.ty->params, res->args, loc);
+                res->funcbody = function_body(st.ty->params, res->args, loc, st->labelMap);
                 sema.pfunc = nullptr;
                 sema.currentfunction = nullptr;
                 res->numLabels = jumper.cur;
+                res->local = sema.typedefs._current_function_offset;
                 if (hasFlag(Flag_IndirectBr_used)) {
                     size_t Size = jumper.indirectBrs.size();
                     if (!Size) {
@@ -3194,14 +3206,14 @@ ARGV_OK:;
                     if (auto CS = dyn_cast<llvm::ConstantStruct>(e->C)) {
                         if (auto REAL = dyn_cast<ConstantFP>(CS->getOperand(0))) {
                             const auto &i = cast<ConstantFP>(CS->getOperand(1))->getValue();
-                            auto IMAG = ConstantFP::get(irgen.ctx, -i);
-                            return wrap(e->ty, llvm::ConstantStruct::get(irgen.wrapComplex(e->ty), {REAL, IMAG}),
+                            auto IMAG = ConstantFP::get(llvmTypeCache.ctx, -i);
+                            return wrap(e->ty, llvm::ConstantStruct::get(wrapComplex(e->ty), {REAL, IMAG}),
                                         e->getBeginLoc(), e->getEndLoc());
                         }
                         const auto REAL = cast<ConstantInt>(CS->getOperand(0));
                         const auto &i = cast<ConstantInt>(CS->getOperand(1))->getValue();
-                        auto IMAG = ConstantInt::get(irgen.ctx, -i);
-                        return wrap(e->ty, llvm::ConstantStruct::get(irgen.wrapComplexForInteger(e->ty), {REAL, IMAG}),
+                        auto IMAG = ConstantInt::get(llvmTypeCache.ctx, -i);
+                        return wrap(e->ty, llvm::ConstantStruct::get(wrapComplexForInteger(e->ty), {REAL, IMAG}),
                                     e->getBeginLoc(), e->getEndLoc());
                     }
                     if (isa<ConstantAggregateZero>(e->C)) {
@@ -3274,16 +3286,16 @@ ARGV_OK:;
                         if (auto CF = dyn_cast<ConstantFP>(CS->getOperand(0))) {
                             const auto &r = CF->getValue();
                             const auto &i = cast<ConstantFP>(CS->getOperand(1))->getValue();
-                            auto REAL = ConstantFP::get(irgen.ctx, -r);
-                            auto IMAG = ConstantFP::get(irgen.ctx, -i);
-                            return wrap(e->ty, llvm::ConstantStruct::get(irgen.wrapComplex(e->ty), {REAL, IMAG}),
+                            auto REAL = ConstantFP::get(llvmTypeCache.ctx, -r);
+                            auto IMAG = ConstantFP::get(llvmTypeCache.ctx, -i);
+                            return wrap(e->ty, llvm::ConstantStruct::get(wrapComplex(e->ty), {REAL, IMAG}),
                                         e->getBeginLoc(), e->getEndLoc());
                         }
                         const auto &r = cast<ConstantInt>(CS->getOperand(0))->getValue();
                         const auto &i = cast<ConstantInt>(CS->getOperand(1))->getValue();
-                        auto REAL = ConstantInt::get(irgen.ctx, -r);
-                        auto IMAG = ConstantInt::get(irgen.ctx, -i);
-                        return wrap(e->ty, llvm::ConstantStruct::get(irgen.wrapComplexForInteger(e->ty), {REAL, IMAG}),
+                        auto REAL = ConstantInt::get(llvmTypeCache.ctx, -r);
+                        auto IMAG = ConstantInt::get(llvmTypeCache.ctx, -i);
+                        return wrap(e->ty, llvm::ConstantStruct::get(wrapComplexForInteger(e->ty), {REAL, IMAG}),
                                     e->getBeginLoc(), e->getEndLoc());
                     }
                 } else {
@@ -3321,8 +3333,8 @@ ARGV_OK:;
             CType ty = e->ty->getKind() == TYPOINTER ? context.getSize_t() : e->ty;
             Expr obj = e;
             Expr one = e->ty->isFloating()
-                           ? wrap(ty, ConstantFP::get(irgen.wrapFloating(ty), 1.0), e->getBeginLoc(), e->getEndLoc())
-                           : wrap(ty, ConstantInt::get(irgen.ctx, APInt(ty->getBitWidth(), 1)), e->getBeginLoc(),
+                           ? wrap(ty, ConstantFP::get(wrapFloating(ty), 1.0), e->getBeginLoc(), e->getEndLoc())
+                           : wrap(ty, ConstantInt::get(llvmTypeCache.ctx, APInt(ty->getBitWidth(), 1)), e->getBeginLoc(),
                                   e->getEndLoc());
             (tok == TAddAdd) ? make_add(e, one, opLoc) : make_sub(e, one, opLoc);
             return binop(obj, Assign, e, e->ty);
@@ -3341,7 +3353,7 @@ ARGV_OK:;
                     location_t endLoc = getLoc();
                     consume();
                     return wrap(context.getSize_t(),
-                                ConstantInt::get(irgen.ctx, APInt(context.getSize_tBitWidth(), getsizeof(ty))), loc,
+                                ConstantInt::get(llvmTypeCache.ctx, APInt(context.getSize_tBitWidth(), getsizeof(ty))), loc,
                                 endLoc);
                 }
                 if (!(e = unary_expression()))
@@ -3368,7 +3380,7 @@ ARGV_OK:;
                 if (!ty)
                     return expect(getLoc(), "type-name"), nullptr;
                 result = wrap(context.getSize_t(),
-                              ConstantInt::get(irgen.ctx, APInt(context.getSize_tBitWidth(), getAlignof(ty))), loc,
+                              ConstantInt::get(llvmTypeCache.ctx, APInt(context.getSize_tBitWidth(), getAlignof(ty))), loc,
                               getLoc());
             } else {
                 Expr e = unary_expression();
@@ -3376,7 +3388,7 @@ ARGV_OK:;
                     return nullptr;
                 result =
                     wrap(context.getSize_t(),
-                         ConstantInt::get(irgen.ctx, APInt(context.getSize_tBitWidth(), getAlignof(e))), loc, getLoc());
+                         ConstantInt::get(llvmTypeCache.ctx, APInt(context.getSize_tBitWidth(), getAlignof(e))), loc, getLoc());
             }
             if (l.tok.tok != TRbracket)
                 return expectRB(getLoc()), nullptr;
@@ -3396,11 +3408,11 @@ ARGV_OK:;
             if (e->ty->isComplex())
                 return unary(e, tok == K__imag ? C__imag__ : C__real__, ty);
             if (e->ty->isImaginary())
-                return tok == K__real ? wrap(ty, llvm::Constant::getNullValue(irgen.wrapNoComplexScalar(ty)),
+                return tok == K__real ? wrap(ty, llvm::Constant::getNullValue(wrapNoComplexScalar(ty)),
                                              e->getBeginLoc(), e->getEndLoc())
                                       : e;
             return tok == K__real ? e
-                                  : wrap(ty, llvm::Constant::getNullValue(irgen.wrapNoComplexScalar(ty)),
+                                  : wrap(ty, llvm::Constant::getNullValue(wrapNoComplexScalar(ty)),
                                          e->getBeginLoc(), e->getEndLoc());
         }
         case K__extension__: {
@@ -3433,7 +3445,7 @@ ARGV_OK:;
         if (str.size() == 2) {
             if (!llvm::isDigit(str.front()))
                 return lex_error(loc, "expect one digit"), nullptr;
-            return wrap(context.getInt(), ConstantInt::get(irgen.ctx, APInt(32, static_cast<uint64_t>(*s) - '0')), 0,
+            return wrap(context.getInt(), ConstantInt::get(llvmTypeCache.ctx, APInt(32, static_cast<uint64_t>(*s) - '0')), 0,
                         0);
         }
         if (*s == '0') {
@@ -3597,7 +3609,7 @@ NEXT:
             }
             if (su.isImaginary)
                 ty->addTag(TYIMAGINARY);
-            return wrap(ty, ConstantFP::get(irgen.ctx, F), 0, 0);
+            return wrap(ty, ConstantFP::get(llvmTypeCache.ctx, F), 0, 0);
         }
         bool overflow = false;
         xint128_t bigVal = xint128_t::getZero();
@@ -3648,8 +3660,8 @@ NEXT:
             }
         }
         auto bit_width = ty->getIntegerKind().getBitWidth();
-        ConstantInt *CI = H ? ConstantInt::get(irgen.ctx, APInt(bit_width, {H, L}))
-                            : ConstantInt::get(irgen.ctx, APInt(bit_width, L));
+        ConstantInt *CI = H ? ConstantInt::get(llvmTypeCache.ctx, APInt(bit_width, {H, L}))
+                            : ConstantInt::get(llvmTypeCache.ctx, APInt(bit_width, L));
         if (su.isImaginary)
             ty = context.tryGetImaginaryTypeFromNonImaginary(ty);
         return wrap(ty, CI, 0, 0);
@@ -3728,7 +3740,7 @@ NEXT:
             case Prefix_U: ty = context.getChar32_t(); break;
             default: llvm_unreachable("bad encoding");
             }
-            result = wrap(ty, ConstantInt::get(irgen.ctx, APInt(ty->getIntegerKind().getBitWidth(), l.tok.i)), loc,
+            result = wrap(ty, ConstantInt::get(llvmTypeCache.ctx, APInt(ty->getIntegerKind().getBitWidth(), l.tok.i)), loc,
                           getEndLoc());
             consume();
         } break;
@@ -3970,11 +3982,11 @@ GENERIC_END:
                 return getFunctionNameExpr(loc, endLoc);
             case K__builtin_LINE:
                 return wrap(context.getInt(),
-                            ConstantInt::get(irgen.integer_types[context.getIntLog2()], SM().getLineNumber(loc)), loc,
+                            ConstantInt::get(integer_types[context.getIntLog2()], SM().getLineNumber(loc)), loc,
                             endLoc);
             case K__builtin_COLUMN:
                 return wrap(context.getInt(),
-                            ConstantInt::get(irgen.integer_types[context.getIntLog2()], SM().getColumnNumber(loc)), loc,
+                            ConstantInt::get(integer_types[context.getIntLog2()], SM().getColumnNumber(loc)), loc,
                             endLoc);
             case K__builtin_FILE:
                 return ENEW(ConstantArrayExpr){.ty = context.stringty,
@@ -4233,13 +4245,13 @@ CONTINUE:;
             auto rA = to->getIntegerKind().getBitWidth();
             auto rB = e->ty->getIntegerKind().getBitWidth();
             if (rA < rB) {
-                auto NEW_CI = ConstantInt::get(irgen.ctx, CI->getValue().trunc(rA));
+                auto NEW_CI = ConstantInt::get(llvmTypeCache.ctx, CI->getValue().trunc(rA));
                 if (NEW_CI->getValue() != CI->getValue())
                     warning(loc, "overflow converting case value to switch condition type (%A to %A)", &CI->getValue(),
                             &NEW_CI->getValue());
                 CI = NEW_CI;
             } else if (rA > rB) {
-                CI = ConstantInt::get(irgen.ctx, e->ty->isSigned() ? CI->getValue().sext(rA) : CI->getValue().zext(rA));
+                CI = ConstantInt::get(llvmTypeCache.ctx, e->ty->isSigned() ? CI->getValue().sext(rA) : CI->getValue().zext(rA));
             }
             return &CI->getValue();
         }
@@ -4469,7 +4481,7 @@ ONE_CASE:
                 if (!sema.currentfunction->ret->isVoid()) {
                     type_error(loc, "function should not return void in a function return %T",
                                sema.currentfunction->ret);
-                    ret = wrap(sema.currentfunction->ret, llvm::UndefValue::get(irgen.wrap2(sema.currentfunction->ret)),
+                    ret = wrap(sema.currentfunction->ret, llvm::UndefValue::get(wrap(sema.currentfunction->ret)),
                                loc, loc);
                 }
                 insertStmt(SNEW(ReturnStmt) {.ret = ret, .ret_loc = loc});
@@ -4743,7 +4755,6 @@ ONE_CASE:
             if (l.tok.tok == TColon) { // labeled-statement
                 consume();
                 label_t L = putLable(tok.s, full_loc);
-                insertLabel(L, tok.s, loc);
                 if (l.tok.tok == TRcurlyBracket) {
                     warning(full_loc, "missing statement after label, adding ';' for you");
                     return;
@@ -4751,7 +4762,10 @@ ONE_CASE:
                 if (hasFlag(Flag_this_scope_has_vla)) {
                     jumper.vla_forbidden_labels.push_back(L);
                 }
-                return statement();
+                Stmt o = getInsertPoint();
+                statement();
+                Stmt n = getInsertPoint();
+                insertLabel(L, tok.s, loc, o == n ? nullptr : n);
             }
             l.tokenq.push_back(l.tok), l.tok = tok;
             // not a labeled-statement, now put the token back and try to parse a expression
@@ -5224,7 +5238,7 @@ ONE_CASE:
                 note(loc, "jump bypasses initialization of variable length array");
         }
     };
-    Stmt function_body(const xvector<Param> params, xvector<unsigned> &args, location_t loc) {
+    Stmt function_body(const xvector<Param> params, xvector<unsigned> &args, location_t loc, llvm::MutableArrayRef<Stmt> &labelMap) {
         consume();
         Stmt head = SNEW(HeadStmt){};
         sema.typedefs.push_function();
@@ -5256,6 +5270,8 @@ ONE_CASE:
             }
             insertStmtEnd();
         }
+        size_t numLabels = jumper.labels.size();
+        labelMap = llvm::MutableArrayRef(new (getAllocator())Stmt[numLabels], numLabels);
         for (const auto &it : jumper.labels) {
             IdentRef name = it.first;
             switch (it.second.flags) {
@@ -5264,6 +5280,7 @@ ONE_CASE:
             case LBL_OK: break;
             default: llvm_unreachable("");
             }
+            labelMap[it.idx] = it.s;
         }
         if (hasFlag(Flag_this_function_has_vla)) {
             std::sort(jumper.vla_forbidden_labels.begin(), jumper.vla_forbidden_labels.end());
@@ -5305,14 +5322,14 @@ ONE_CASE:
      */
   public:
     // constructor
-    Parser(SourceMgr &SM, IRGen &irgen, DiagnosticsEngine &Diag, xcc_context &theContext)
-        : EvalHelper{Diag}, l(SM, this, theContext, Diag), context{theContext}, irgen{irgen},
-          intzero{wrap(context.getInt(), ConstantInt::get(irgen.ctx, APInt::getZero(context.getInt()->getBitWidth())),
+    Parser(SourceMgr &SM, IRGen &irgen, DiagnosticsEngine &Diag, xcc_context &theContext, LLVMTypeConsumer llvmTypeCache)
+        : EvalHelper{Diag}, l(SM, this, theContext, Diag), context{theContext}, irgen{irgen}, llvmTypeCache{llvmTypeCache}
+          intzero{wrap(context.getInt(), ConstantInt::get(llvmTypeCache.ctx, APInt::getZero(context.getInt()->getBitWidth())),
                        0, 0)},
-          intone{wrap(context.getInt(), ConstantInt::get(irgen.ctx, APInt(context.getInt()->getBitWidth(), 1)), 0, 0)},
-          cfalse{wrap(context.getBool(), ConstantInt::getFalse(irgen.ctx), 0, 0)},
-          ctrue{wrap(context.getBool(), ConstantInt::getTrue(irgen.ctx), 0, 0)}, string_pool{irgen},
-          null_ptr{llvm::ConstantPointerNull::get(irgen.pointer_type)}, null_ptr_expr{wrap(context.getNullPtr_t(),
+          intone{wrap(context.getInt(), ConstantInt::get(llvmTypeCache.ctx, APInt(context.getInt()->getBitWidth(), 1)), 0, 0)},
+          cfalse{wrap(context.getBool(), ConstantInt::getFalse(llvmTypeCache.ctx), 0, 0)},
+          ctrue{wrap(context.getBool(), ConstantInt::getTrue(llvmTypeCache.ctx), 0, 0)}, string_pool{irgen},
+          null_ptr{llvm::ConstantPointerNull::get(llvmTypeCache.pointer_type)}, null_ptr_expr{wrap(context.getNullPtr_t(),
                                                                                            null_ptr, 0, 0)} { }
     // used by Lexer
     Expr constant_expression() { return conditional_expression(); }

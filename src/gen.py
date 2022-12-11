@@ -197,7 +197,10 @@ stmts = {
 		"Stmt funcbody", 
 		"unsigned numLabels", 
 		"xvector<unsigned> args",
-		"label_t *indirectBrs"
+		"label_t *indirectBrs",
+		"llvm::MutableArrayRef<Stmt> labelMap",
+		"unsigned localStart",
+		"unsigned localSize",
 	),
 }
 exprs = {
