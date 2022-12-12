@@ -86,11 +86,13 @@ struct ContentCache {
 };
 struct IncludeFile {
     ContentCache *cache;
+private:
     const char *buffer_start;
     location_t where_I_included;
     location_t startLoc;
     location_t loc;
     location_t endLoc;
+public:
     location_t getFileSize() const { return endLoc - startLoc; }
     location_t getStartLoc() const { return startLoc; }
     location_t getEndLoc() const { return startLoc + cache->getFileSize(); }
@@ -102,9 +104,14 @@ struct IncludeFile {
         endLoc = startLoc + cache->getFileSize();
         loc = 0;
     }
-    inline char read() { 
-        if (loc >= endLoc)
-            return '\0';
+    bool isEOF() const {
+        printf("loc = %u!!!!!!\n", this->loc);
+        getchar();
+        return loc >= cache->getFileSize();
+    }
+    char read() {
+        printf("read(%u)\n", loc);
+        getchar();
         return buffer_start[loc++];
     }
     location_t getLoc() const { return startLoc + loc; }
@@ -136,6 +143,7 @@ struct SourceMgr : public DiagnosticHelper {
         }
     }
     void setFileName(StringRef Name) { includeStack[grow_include_stack.back()].cache->setName(Name); }
+    bool isFileEOF() const { return includeStack[grow_include_stack.back()].isEOF(); }
     location_t getLoc() const { return includeStack[grow_include_stack.back()].getLoc(); }
     inline LocTree *getLocTree() const { return tree; }
     void beginExpandMacro(PPMacroDef *M, xcc_context &context) {
@@ -158,7 +166,7 @@ struct SourceMgr : public DiagnosticHelper {
     location_t getInsertPos() const {
         if (includeStack.empty())
             return 0;
-        return includeStack.back().endLoc + 1;
+        return includeStack.back().getEndLoc();
     }
     bool addFile(StringRef path, bool verbose = true, location_t includePos = 0) {
         auto it = cached_files.insert({path, static_cast<ContentCache *>(nullptr)});
@@ -211,11 +219,6 @@ PUSH:
 #endif
         llvm::ErrorOr<std::unique_ptr<llvm::MemoryBuffer>> MemberBufferOrErr = llvm::MemoryBuffer::getOpenFile(fd, path, fileSize);
         if (!MemberBufferOrErr) {
-#if WINDOWS
-            CloseHandle(fd);
-#else
-            close(fd);
-#endif
             std::string msg = MemberBufferOrErr.getError().message();
             error("error reading file contents %R: %R", path, msg);
             return false;
@@ -227,17 +230,12 @@ PUSH:
         lastDir = llvm::sys::path::parent_path(path, llvm::sys::path::Style::native);
         if (lastDir.empty())
             lastDir = ".";
-#if WINDOWS
-        CloseHandle(fd);
-#else
-        close(fd);
-#endif
         goto PUSH;
     }
     const IncludeFile *searchIncludeFile(location_t loc, location_t &offset) const {
         for (const auto &entry : includeStack) {
-            if (loc < entry.endLoc) {
-                offset = loc - entry.startLoc;
+            if (loc < entry.getEndLoc()) {
+                offset = loc - entry.getStartLoc();
                 return &entry;
             }
         }
@@ -491,7 +489,7 @@ private:
         cur_include_file = &includeStack[grow_include_stack.back()];
     }
     uint16_t lastc = 256, lastc2 = 256;
-    char advance_next() { return cur_include_file->read(); }
+    inline char advance_next() { return cur_include_file->read(); }
     // Translation phases 1
     char stream_read() {
         // for support '\r' end-of-lines
@@ -508,16 +506,9 @@ private:
         if (grow_include_stack.empty()) {
             return '\0';
         } else {
-            CONTINUE:
             char c = advance_next();
             switch (c) {
             default: return c;
-            case '\0':
-                grow_include_stack.pop_back();
-                if (grow_include_stack.empty())
-                    return '\0';
-                cur_include_file = &includeStack[grow_include_stack.back()];
-                goto CONTINUE;
             case '\n': current_line++; return '\n';
             case '\r': {
                 char c2;
@@ -545,6 +536,14 @@ private:
         }
     }
 public:
+    bool nextFile() {
+        grow_include_stack.pop_back();
+        if (grow_include_stack.empty())
+            return true;
+        cur_include_file = &includeStack[grow_include_stack.back()];
+        lastc = lastc2 = 0;
+        return false;
+    }
     char skip_read() {
         char c = stream_read();
         if (c == '/') {

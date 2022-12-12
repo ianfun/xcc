@@ -1,11 +1,14 @@
 struct IRModuleOutputFileHelper : public DiagnosticHelper {
-    llvm::Module *M;
+    std::unique_ptr<llvm::Module> M;
     StringRef outputPath;
     std::error_code EC;
     raw_fd_ostream OS;
     // the outputPath may be '-', will print to stdout
-    IRModuleOutputFileHelper(DiagnosticsEngine &Diag, llvm::Module *M, StringRef outputPath)
-        : DiagnosticHelper{Diag}, M{M}, outputPath{outputPath}, EC{}, OS{outputPath, EC} {
+    IRModuleOutputFileHelper(
+        DiagnosticsEngine &Diag, 
+        std::unique_ptr<llvm::Module> M, 
+        StringRef outputPath)
+        : DiagnosticHelper{Diag}, M{std::move(M)}, outputPath{outputPath}, EC{}, OS{outputPath, EC} {
         if (EC) {
             error("open output(%R): %R", outputPath, StringRef(EC.message()));
         }
@@ -21,9 +24,7 @@ struct IRModuleOutputFileHelper : public DiagnosticHelper {
     }
     // the function will delete the module when finished linking(take the ownership)!
     bool link(llvm::Module &dst) {
-        std::unique_ptr<llvm::Module> ptr;
-        ptr.reset(M);
-        return llvm::Linker::linkModules(dst, std::move(ptr));
+        return llvm::Linker::linkModules(dst, std::move(M));
     }
     bool verify() { return llvm::verifyModule(*M, &llvm::errs()); }
     // output functions

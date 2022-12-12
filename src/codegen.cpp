@@ -370,7 +370,7 @@ private:
                 newFunction(ty, s->funcname, s->functy->getFunctionAttrTy()->getTags(), s->func_idx, true);
             llvm::BasicBlock *entry = llvm::BasicBlock::Create(ctx, "entry");
             append(entry);
-            statics("%u labels in function\n", s->numLabels);
+            statics("# %u labels in function\n", s->numLabels);
             for (unsigned i = 0; i < s->numLabels; i++)
                 this->labels.push_back(llvm::BasicBlock::Create(ctx));
             unsigned arg_no = 0;
@@ -1101,11 +1101,20 @@ BINOP_SHIFT:
     }
 
   public:
+    [[nodiscard]] std::unique_ptr<llvm::Module> takeModule() {
+        return std::move(module);
+    }
+    ~IRGen() {
+        delete machine;
+        delete layout;
+    }
     IRGen(xcc_context &context, DiagnosticsEngine &Diag, SourceMgr &SM, LLVMContext &ctx, const Options &options)
         : DiagnosticHelper{Diag}, context{context}, SM{SM}, ctx{ctx}, B{ctx}, options{options} {
         auto CPU = "generic";
         auto Features = "";
         llvm::TargetOptions opt;
+        if (!options.theTarget)
+            options.createTarget();
         // rustc: Could not create LLVM TargetMachine for triple: ...
         machine = options.theTarget->createTargetMachine(options.triple.str(), CPU, Features, opt,
                                                          options.RelocationModel, options.CodeModel, getCGOptLevel());
@@ -1145,13 +1154,15 @@ BINOP_SHIFT:
         return getAlignof(wrap(ty));
     }
     uint64_t getAlignof(Expr e) { return getAlignof(e->ty); }
-    std::unique_ptr<llvm::Module> run(const TranslationUnit &TU, LLVMTypeConsumer &type_cache) {
+    [[nodiscard]] std::unique_ptr<llvm::Module> run(const TranslationUnit &TU, LLVMTypeConsumer &type_cache) {
         this->type_cache = &type_cache;
         assert(this->type_cache);
         this->type_cache->reset(TU.max_tags_scope);
         vars = new llvm::Value *[TU.max_typedef_scope];
+
         runCodeGenTranslationUnit(TU.ast);
         RunOptimizationPipeline();
+        delete [] vars;
         return std::move(module);
     }
     void setTypeConsumer(LLVMTypeConsumer &C) {

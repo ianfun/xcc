@@ -77,3 +77,38 @@ struct StmtEndMap {
         return labelMap[i];
     }
 };
+
+template <typename T>
+struct StmtVisitor {
+    void Visit(Stmt s) {
+        switch (s->k) {
+            static_cast<T*>(this)->ActOnStmt(s);
+            case SHead:
+                for (Stmt ptr = s->next; ptr; ptr = ptr->next)
+                    Visit(ptr);
+                break;
+            case SCompound:
+                for (Stmt ptr = s->inner; ptr; ptr = ptr->next)
+                    Visit(ptr);
+                break;
+            default: break;
+        }
+    }
+};
+struct StmtReleaser: public StmtVisitor<StmtReleaser> {
+    void ActOnStmt(Stmt s) {
+        switch (s->k) {
+        case SSwitch:
+            s->switchs.free();
+            s->gnu_switchs.free();
+            break;
+        case SVarDecl:
+            s->vars.free();
+            break;
+        case SFunction:
+            s->args.free();
+            break;
+        default: break;
+        }
+    }
+};

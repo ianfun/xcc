@@ -22,7 +22,7 @@ void Terminal::move(int x, int y) {
 	moveTo(cur_line, cur_col);
 }
 // https://www.ditig.com/256-colors-cheat-sheet
-void Terminal::setColor(const Color &c, bool bold, bool underline, bool reverse) {
+void Terminal::changeColor(const Color &c, bool bold, bool underline, bool reverse) {
 	SmallString<12> str;
 	raw_svector_ostream OS(str);
 	OS << "\33[38;2;" << unsigned(c.R) << ';' << unsigned(c.G) << ';' << unsigned(c.B) << 'm';
@@ -83,7 +83,7 @@ void Terminal::signal_handler(int signo, siginfo_t *info, void *context) {
 	}
 }
 void Terminal::installSignalHandlers() {
-    struct sigaction act = { 0 };
+    struct sigaction act{};
 
     act.sa_flags = 0;
 

@@ -97,6 +97,9 @@ struct Parser : public EvalHelper {
     uint64_t getsizeof(CType ty) { return irgen.getsizeof(ty); }
     uint64_t getAlignof(CType ty) { return irgen.getAlignof(ty); }
     uint64_t getAlignof(Expr e) { return getAlignof(e->ty); }
+    void skip(Token tok) {
+        
+    }
     Expr getsizeofEx(Expr e, location_t begin, location_t end) {
         if (e->k == EArrToAddress) {
             CType ty = e->arr3->ty;
@@ -3780,6 +3783,7 @@ NEXT:
         } break;
         case PPNumber: {
             result = parse_pp_number(l.tok.str);
+            l.tok.str.free();
             result->constantLoc = loc;
             result->constantEndLoc = getEndLoc();
             consume();
@@ -5253,12 +5257,12 @@ ONE_CASE:
                     insertStmt(SNEW(ReturnStmt){.ret = getIntZero()});
                 } else {
                     if (!(sema.currentfunction->ret->isVoid())) {
-                        if (s->k != SLabel) {
+                        if (s->k == SNamedLabel) {
+                            warning(loc2, "control reaches end of non-void function(label at end of function)");
+                            note(s->labelLoc, "in label %I of function %I", s->labelName, sema.pfunc);
+                        } else if (s->k != SLabel) {
                             warning(loc2, "control reaches end of non-void function");
                             note("in the definition of function %I", sema.pfunc);
-                        } else if (s->labelName != nullptr) {
-                            warning(loc2, "control reaches end of non-void function");
-                            note("in label %I of function %I", s->labelName, sema.pfunc);
                         }
                     }
                 }
@@ -5321,11 +5325,14 @@ ONE_CASE:
                        0, 0)},
           intone{wrap(context.getInt(), ConstantInt::get(llvmTypeCache.ctx, APInt(context.getInt()->getBitWidth(), 1)), 0, 0)},
           cfalse{wrap(context.getBool(), ConstantInt::getFalse(llvmTypeCache.ctx), 0, 0)},
-          ctrue{wrap(context.getBool(), ConstantInt::getTrue(llvmTypeCache.ctx), 0, 0)}, string_pool{irgen},
+          ctrue{wrap(context.getBool(), ConstantInt::getTrue(llvmTypeCache.ctx), 0, 0)}, string_pool{irgen, llvmTypeCache},
           null_ptr{llvm::ConstantPointerNull::get(llvmTypeCache.pointer_type)}, null_ptr_expr{wrap(context.getNullPtr_t(),
                                                                                            null_ptr, 0, 0)} { }
     // used by Lexer
     Expr constant_expression() { return conditional_expression(); }
+    void startParse() {
+        l.startLex();
+    }
     // the main entry to run parser
     void run(TranslationUnit &TU) {
         Stmt ast;
@@ -5337,8 +5344,8 @@ ONE_CASE:
         statics("  Max typedef scope size: %u\n", sema.typedefs.maxSyms);
         statics("  Max tags scope size: %u\n", sema.tags.maxSyms);
         endStatics();
-        TU.max_tags_scope = sema.typedefs.maxSyms;
-        TU.max_typedef_scope = sema.tags.maxSyms;
+        TU.max_typedef_scope = sema.typedefs.maxSyms;
+        TU.max_tags_scope = sema.tags.maxSyms;
         TU.ast = ast;
     }
 }; // end class Parser

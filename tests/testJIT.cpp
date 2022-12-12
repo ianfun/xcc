@@ -74,20 +74,23 @@ int main(int argc_, const char **argv_)
     // set our DiagnosticHandler
     llvmcontext->setDiagnosticHandler(std::make_unique<xcc::XCCDiagnosticHandler>()); 
 
+    xcc::LLVMTypeConsumer type_cache(ctx, llvmcontext, options.g);
+
     // preparing target information and ready for code generation to LLVM IR
     xcc::IRGen ig(ctx, engine, SM, *llvmcontext, options);
+
+    ig.setTypeConsumer(type_cache);
 
     // create parser
     xcc::Parser parser(SM, ig, engine, ctx);
 
-    // now, parsing source files ...
-    size_t num_typedefs, num_tags;
-    xcc::Stmt ast = parser.run(num_typedefs, num_tags);
+    xcc::TranslationUnit TU;
+    parser.run(TU);
     printer.finalize();
     if (engine.getNumErrors())
         return 1;
 
-    ig.run(ast, num_typedefs, num_tags);
+    ig.run(TU, type_cache);
     std::unique_ptr<llvm::Module> M;
     M.reset(ig.module);
 

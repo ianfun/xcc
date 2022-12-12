@@ -62,7 +62,7 @@ testJit:
 	$(CC) $(CXXINCS) testJit.cpp $(DEBUG) $(CXXFLAGS) -o jit $(LDFLAGS)
 
 # make all, you may run with -j to make it faster
-all: testLexer testCpp testParser testCodeGen testJit main mainNoLLD
+all: testLexer testCpp testParser testCodeGen testJit main mainNoLLD testInter
 
 runTest: testCpp testCodeGen
 	./codegen complex.c

@@ -12,6 +12,7 @@ struct CompilerInstance
 #ifdef XCC_TARGET
         delete Target;
 #endif
+        delete codegen;
         delete engine;
         delete llvm_context;
         delete options;

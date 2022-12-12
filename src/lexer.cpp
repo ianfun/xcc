@@ -7,14 +7,15 @@ struct Lexer : public EvalHelper {
         PFNormal = 1,
         PFPP = 2
     };
-    static const char months[12][4];
     TokenV tok = TNul;
     bool want_expr = false;
     bool isPPMode = false;
     bool isDisableSpace = false;
+    bool lexRawEnabled = false;
     llvm::SmallVector<uint8_t, 4> ppstack;
     bool ok = true;
     char c;
+    static const char months[12][4];
     DenseMap<IdentRef, PPMacroDef *> macros;
     Parser *parser;
     SourceMgr &SM;
@@ -25,6 +26,9 @@ struct Lexer : public EvalHelper {
     location_t loc = 0, endLoc = 0;
     xcc_context &context;
 
+    ~Lexer() {
+        lexIdnetBuffer.free();
+    }
     Lexer(SourceMgr &SM, Parser *parser, xcc_context &context, DiagnosticsEngine &Diag)
         : EvalHelper{Diag}, parser{parser}, SM{SM}, context{context} { initC(); }
     void initC() { c = ' '; }
@@ -32,9 +36,8 @@ private:
     location_t getLoc() const { return loc; }
     location_t getEndLoc() const { return endLoc; }
     Expr constant_expression();
-    void updateLoc() { 
-        loc = SM.getLoc() - 1; 
-        endLoc = loc;
+    void updateLoc() {
+        endLoc = loc = SM.getLoc() - 1;
     }
     static bool isCSkip(char c) {
         // space, tab, new line, form feed are translate into ' '
@@ -435,23 +438,27 @@ public:
         it.setEndLoc(endLoc);
         return it;
     }
+    void setLexRawMode(bool enable) {
+        lexRawEnabled = enable;
+    }
+    bool isLexRawEnabled() const {
+        return lexRawEnabled;
+    }
+    void startLex() {
+        eat();
+    }
     // lex and retrun a token without expanding macros
     TokenV lex() {
         for (;;) {
-            if (c == '\0') {
-                return isPPMode = false, TEOF;
-            }
-            if (isCSkip(c)) {
-                for (;;) {
+            if (c == '\0' || c == 26) {
+                if (SM.nextFile())
+                    return isPPMode = false, TEOF;
+                if (!SM.isFileEOF()) {
+                    warning(loc, "null character ignored");
                     eat();
-                    if (!isCSkip(c))
-                        break;
-                }
-                if (isDisableSpace || want_expr)
                     continue;
-                if (isPPMode)
-                    return TSpace;
-                continue;
+                }
+                return isPPMode = false, TEOF;
             }
             updateLoc();
             if (c == '#') {
@@ -460,7 +467,7 @@ public:
 BAD_RET:
                 return isPPMode = false, lex();
 RUN:
-                if (isPPMode) {
+                if (isPPMode || isLexRawEnabled()) {
                     if (c == '#')
                         return eat(), PPSharpSharp;
                     return PPSharp;
@@ -668,17 +675,16 @@ STD_INCLUDE:
                                     if (c == '\0') {
                                         break;
                                     }
-                                    if (c == '\n' || c == '\r')
+                                    if (c == '\n')
                                         break;
                                 }
                                 if (path.empty()) {
                                     pp_error("%s", "empty filename in #include");
-                                    path.free();
                                 } else {
                                     path.make_eos();
                                     SM.addIncludeFile(path, is_std == '>', loc);
-                                    path.free();
                                 }
+                                path.free();
                                 break;
                             }
                             if (c == '\0' || c == '\n') {
@@ -691,7 +697,10 @@ STD_INCLUDE:
                         isPPMode = false;
                         continue;
                     case '<': is_std = '>'; goto STD_INCLUDE;
-                    default: pp_error(loc, "%s", "expect \"FILENAME\" or <FILENAME>"); goto BAD_RET;
+                    default: 
+                        pp_error(loc, "%s", "expect \"FILENAME\" or <FILENAME>");
+                        path.free();
+                        goto BAD_RET;
                     }
                 } break;
                 case PPline: {
@@ -787,6 +796,21 @@ STD_INCLUDE:
                 }
             }
             switch (c) {
+            case ' ':
+            case '\t':
+            case '\v':
+            case '\f':
+                for (;;) {
+                    eat();
+                    if (!isCSkip(c))
+                        break;
+                }
+                if (isPPMode) {
+                    if (want_expr || isDisableSpace)
+                        continue;
+                    return TSpace;
+                }
+                continue;
             case '\n':
                 if (isPPMode) {
                     return isPPMode = false, TNewLine;

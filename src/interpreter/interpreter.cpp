@@ -565,13 +565,14 @@ struct IncrementalExecutor
     }
 };
 
-struct InteractiveInterpreter {
+struct Interpreter {
     IncrementalParser parser;
     IncrementalExecutor exe;
-    InteractiveInterpreter(CompilerInstance &CI): parser{CI}, exe{CI} {}
-    InteractiveInterpreter(CompilerInstance &CI, const llvm::DataLayout &DL): parser{CI}, exe{CI, DL} {}
-    InteractiveInterpreter(CompilerInstance &CI, const std::string &triple): parser{CI}, exe{CI, triple} {}
-    InteractiveInterpreter(CompilerInstance &CI, const llvm::Triple &triple): parser{CI}, exe{CI, triple} {}
+    SmallVector<Stmt> asts;
+    Interpreter(CompilerInstance &CI): parser{CI}, exe{CI} {}
+    Interpreter(CompilerInstance &CI, const llvm::DataLayout &DL): parser{CI}, exe{CI, DL} {}
+    Interpreter(CompilerInstance &CI, const std::string &triple): parser{CI}, exe{CI, triple} {}
+    Interpreter(CompilerInstance &CI, const llvm::Triple &triple): parser{CI}, exe{CI, triple} {}
     bool Parse(StringRef input_line, TranslationUnit &TU) {
         return parser.Parse(input_line, TU);
     }
@@ -580,15 +581,18 @@ struct InteractiveInterpreter {
     }
     bool ParseAndExecute(StringRef input_line) {
         TranslationUnit TU;
+        bool ret;
         if (Parse(input_line, TU)) {
             // exe.runFunction(nullptr, {});
             return Execute(TU);
-        }
-        return false;
+        } else {ret = false;}
+        return ret;
     }
-};
-struct InteractiveConsole: public InteractiveInterpreter {
-
+    ~Interpreter() {
+        StmtReleaser releaser;
+        for (Stmt ast: asts)
+            releaser.Visit(ast);
+    }
 };
 
 }

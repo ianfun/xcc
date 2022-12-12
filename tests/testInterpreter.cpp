@@ -4,13 +4,24 @@
 
 #include <string>
 #include <iostream>
-#include <sstream>
 #include "../src/xcc.h"
 #include "../src/xInitLLVM.cpp"
 #include "../src/Driver/Driver.cpp"
 
+namespace xcc {
+#include "../src/terminal/terminal.h"
+}
+
 int main(int argc_, const char **argv_)
 {
+    if (!xcc::Terminal::isRealTermianl()) {
+        llvm::errs() << "fatal error: output is not a termianl.";
+        return 1;
+    }
+    xcc::Terminal terminal;
+
+    terminal.installSignalHandlers();
+
     llvm::InitializeNativeTarget();
     
     xcc::CompilerInstance XCC;
@@ -37,16 +48,32 @@ int main(int argc_, const char **argv_)
         return ret;
 */
 
-    xcc::intepreter::InteractiveInterpreter interpreter(XCC);
+    xcc::intepreter::Interpreter interpreter(XCC);
 
+    terminal.write(
+"\n"
+"~                                                                      ~\n"
+"~                                                                      ~\n"
+"~                                                                      ~\n"
+"~                       # XCC interpreter demo #                       ~\n"
+"~                                                                      ~\n"
+"~                       Press EOF(Ctrl+D) to exit.                     ~\n"
+"~                                                                      ~\n"
+"~                                                                      ~\n"
+"~                                                                      ~\n"
+"\n"
+    );
+    
     std::string line;
-
-    std::cerr
-       << "###### XCC interpreter demo ######" << std::endl 
-       << "Press EOF(Ctrl+D) to exit." << std::endl;
-
+    
     for (unsigned InputCount = 0;!std::cin.eof();InputCount++) {
-        std::cerr << "xcc [" << InputCount << "]: ";
+        char buffer[15];
+        int N = snprintf(buffer, sizeof(buffer), "%u", InputCount++);
+        terminal.write("in [");
+        terminal.changeColor(xcc::GREEN);
+        terminal.write(buffer);
+        terminal.resetColor();
+        terminal.write("]: ");
         std::getline(std::cin, line);
         bool ret = interpreter.ParseAndExecute(line);
         if (!ret) {
@@ -55,8 +82,7 @@ int main(int argc_, const char **argv_)
         }
         line.clear();
     }
-
-    std::cerr << "EOF reached.Exit." << std::endl;
+    terminal.write("Leave XCC interpreter.\n");
     printer.finalize();
     return 0;
 }

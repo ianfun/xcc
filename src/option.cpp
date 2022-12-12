@@ -2,7 +2,7 @@ struct Options {
     StringRef mainFileName;
     llvm::Triple triple;
     SmallString<256> CWD;
-    const llvm::Target *theTarget;
+    mutable const llvm::Target *theTarget;
     bool g : 1;
     bool trigraphs : 1;
     bool UnrollLoops : 1;
@@ -43,4 +43,16 @@ struct Options {
          {
             llvm::sys::fs::current_path(CWD);
         }
+    void createTarget() const {
+        std::string Error;
+        if (theTarget) return;
+        theTarget = llvm::TargetRegistry::lookupTarget(triple.str(), Error);
+        if (!theTarget) {
+            auto it = llvm::TargetRegistry::targets().begin();
+            if (it != llvm::TargetRegistry::targets().end())
+                theTarget = &*it;
+            else
+                llvm::report_fatal_error(llvm::Twine(Error));
+        }
+    }
 };

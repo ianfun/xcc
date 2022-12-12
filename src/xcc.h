@@ -3,8 +3,12 @@
 #if !WINDOWS
 #include <sys/types.h>
 #include <sys/stat.h>
+#else
+#include <windows.h>
 #endif
+
 #include <unistd.h>
+#include <signal.h>
 #include <fcntl.h>
 
 #if !CC_NO_RAEADLINE
@@ -224,6 +228,7 @@ using llvm::Optional;
 using llvm::OwningArrayRef;
 using llvm::raw_fd_ostream;
 using llvm::raw_ostream;
+using llvm::raw_svector_ostream;
 using llvm::RefCountedBase;
 using llvm::SaveAndRestore;
 using llvm::SmallString;

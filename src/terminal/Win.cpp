@@ -32,7 +32,7 @@ void Terminal::move(int x, int y) {
 void Terminal::do_move() {
 	SetConsoleCursorPosition(hStdout, cursorPos);
 }
-void Terminal::setColor(const Color &c, bool bold, bool underline, bool reverse) {
+void Terminal::changeColor(const Color &c, bool bold, bool underline, bool reverse) {
 	DWORD attrs = 0;
 	if (underline)
 		attrs |= BACKGROUND_INTENSITY | COMMON_LVB_UNDERSCORE;

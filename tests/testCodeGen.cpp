@@ -1,16 +1,18 @@
 #include "common.h"
 
-    size_t num_typedefs, num_tags;
-    xcc::Stmt ast = parser.run(num_typedefs, num_tags);
-
+    xcc::TranslationUnit TU;
+    parser.startParse();
+    parser.run(TU);
     if (engine.getNumErrors()) {
         printer.finalize();
         return 1;
     }
 
-    ig.run(ast, num_typedefs, num_tags);
+    std::unique_ptr<llvm::Module> M(ig.run(TU, type_cache));
 
-    xcc::IRModuleOutputFileHelper output(engine, ig.module, "example.ll");
+    xcc::StmtReleaser().Visit(TU.ast);
+
+    xcc::IRModuleOutputFileHelper output(engine, std::move(M), "example.ll");
 
     output.verify();
     // output.dump();
