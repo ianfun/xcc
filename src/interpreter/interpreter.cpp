@@ -506,46 +506,48 @@ struct IncrementalParser {
         CI.createParser();
     }
     unsigned InputCount = 0;
-    // this function does not copy the input string
-    // return true on sucess, false if error occurred
+    // note: this function does not copy the input string
+    // Return true on sucess, false if parsing error occurred
     bool Parse(StringRef input_line, TranslationUnit &TU) {
         SourceMgr &SM = CI.getSourceManager();
-        char file_name[20];
+        char file_name[30];
         int N = snprintf(file_name, sizeof(file_name), "input_line_%u", InputCount++);
-        SM.addString(input_line, StringRef(file_name, N));
+        
+        size_t InputSize = input_line.size();
+        std::unique_ptr<llvm::MemoryBuffer> MB(
+            llvm::WritableMemoryBuffer::getNewUninitMemBuffer(InputSize + 2, StringRef(file_name, N))
+        );
+        char *MBStart = const_cast<char*>(MB->getBufferStart());
+        memcpy(MBStart, input_line.data(), InputSize);
+        MBStart[InputSize++] = '\n';
+        MBStart[InputSize] = '\0';
+        SM.addMemoryBuffer(MB.release());
+
+        Lexer &L = CI.getParser().l;
+        if (L.tok.tok == TEOF) {
+            L.initC();
+        }
         CI.Parse(TU);
         unsigned errs = CI.getDiags().getNumErrors();
         CI.getDiags().reset();
-        return errs != 0;
+        return errs == 0;
     }
 };
 struct IncrementalExecutor
 {
     CompilerInstance &CI;
     ExecutionSession session;
-    IncrementalExecutor(CompilerInstance &CI, const llvm::DataLayout &DL): CI{CI}, session{DL} {
-        CI.createCodeGen();
-    }
-    IncrementalExecutor(CompilerInstance &CI, std::string triple): CI{CI}, session{llvm::DataLayout("")} {
-        std::string Error;
+    IncrementalExecutor(CompilerInstance &CI, const std::string &triple): CI{CI}, session{llvm::DataLayout("")} {
+        const llvm::Target *theTarget = CI.createTarget();
         llvm::TargetOptions opt;
-        llvm::TargetMachine *machine;
-        const llvm::Target *Target = llvm::TargetRegistry::lookupTarget(triple, Error);
-        if (!Target) {
-            goto G_ERROR;
-        }
-        machine = Target->createTargetMachine(triple, "generic", "", opt, llvm::None);
-        if (!machine) {
-            goto G_ERROR;
-        }
-        session.DL = machine->createDataLayout();
-        return;
-        G_ERROR: ;
-        {
-            DiagnosticHelper helper{CI.getDiags()};
-            helper.error("failed to lookupTarget for triple %R: %R, fallback to default DataLayout", triple, Error);
+        llvm::TargetMachine *machine = theTarget->createTargetMachine(triple, "generic", "", opt, llvm::None);
+        if (machine) {
+            session.DL = machine->createDataLayout();
         }
     }
+    IncrementalExecutor(CompilerInstance &CI, const llvm::Triple &triple): IncrementalExecutor{CI, triple.str()} {}
+    IncrementalExecutor(CompilerInstance &CI): IncrementalExecutor{CI, CI.getOptions().triple} {}
+    IncrementalExecutor(CompilerInstance &CI, const llvm::DataLayout &DL): CI{CI}, session{DL} {}
 	const ExecutionSession &getExecutionSession() const {
 		return session;
 	}
@@ -556,26 +558,33 @@ struct IncrementalExecutor
 		Function F(CI.getDiags(), session, s, CI.getTypeCache());
 		return F(args);
 	}
+    bool Execute(const TranslationUnit &TU) {
+        llvm::errs() << "\nExecuting...\n";
+        llvm::errs() << "\nfinished.\n";
+        return true;
+    }
 };
 
 struct InteractiveInterpreter {
     IncrementalParser parser;
     IncrementalExecutor exe;
-    InteractiveInterpreter(CompilerInstance &CI, std::string triple = llvm::sys::getDefaultTargetTriple()): parser{CI}, exe{CI, triple} {}
+    InteractiveInterpreter(CompilerInstance &CI): parser{CI}, exe{CI} {}
     InteractiveInterpreter(CompilerInstance &CI, const llvm::DataLayout &DL): parser{CI}, exe{CI, DL} {}
+    InteractiveInterpreter(CompilerInstance &CI, const std::string &triple): parser{CI}, exe{CI, triple} {}
+    InteractiveInterpreter(CompilerInstance &CI, const llvm::Triple &triple): parser{CI}, exe{CI, triple} {}
     bool Parse(StringRef input_line, TranslationUnit &TU) {
         return parser.Parse(input_line, TU);
     }
-    void Execute(TranslationUnit &TU) {
-        // ???
+    bool Execute(TranslationUnit &TU) {
+        return exe.Execute(TU);
     }
-    void ParseAndExecute(StringRef input_line) {
+    bool ParseAndExecute(StringRef input_line) {
         TranslationUnit TU;
         if (Parse(input_line, TU)) {
             // exe.runFunction(nullptr, {});
-            llvm::errs() << "compile a function!";
-            Execute(TU);
+            return Execute(TU);
         }
+        return false;
     }
 };
 struct InteractiveConsole: public InteractiveInterpreter {

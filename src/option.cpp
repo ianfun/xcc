@@ -21,7 +21,7 @@ struct Options {
     Optional<llvm::CodeModel::Model> CodeModel;
     Options(): 
         mainFileName{},
-        triple{},
+        triple{llvm::sys::getDefaultTargetTriple()},
         CWD{},
         theTarget{nullptr},
         g{false}, 

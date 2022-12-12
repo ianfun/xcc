@@ -1,3 +1,7 @@
+#define CC_STATICS 0
+#define CC_PRINT_CDECL 1
+#define CC_PRINT_CDECL_FUNCTION 1
+
 #include <string>
 #include <iostream>
 #include <sstream>
@@ -16,10 +20,12 @@ int main(int argc_, const char **argv_)
 
     XInitLLVM crashReport(XCC.createDiags(), argc_, argv_);
 
-    XCC.addPrinter(&printer);
+    xcc::DiagnosticsStore DiagStore;
+    XCC.addPrinter(&DiagStore);
 
     printer.setSourceMgr(&XCC.createSourceManager());
 
+/*
     xcc::driver::Driver theDriver(XCC.getDiags());
 
     // init args
@@ -29,6 +35,7 @@ int main(int argc_, const char **argv_)
     // parse options ...
     if (theDriver.BuildCompilation(argv, XCC.createOptions(), XCC.getSourceManager(), ret))
         return ret;
+*/
 
     xcc::intepreter::InteractiveInterpreter interpreter(XCC);
 
@@ -38,13 +45,18 @@ int main(int argc_, const char **argv_)
        << "###### XCC interpreter demo ######" << std::endl 
        << "Press EOF(Ctrl+D) to exit." << std::endl;
 
-    for (unsigned InputCount = 0;;InputCount++) {
+    for (unsigned InputCount = 0;!std::cin.eof();InputCount++) {
         std::cerr << "xcc [" << InputCount << "]: ";
         std::getline(std::cin, line);
-        line += '\n';
-        interpreter.ParseAndExecute(line);
+        bool ret = interpreter.ParseAndExecute(line);
+        if (!ret) {
+            DiagStore.FlushDiagnostics(printer);
+            DiagStore.clear();
+        }
+        line.clear();
     }
 
     std::cerr << "EOF reached.Exit." << std::endl;
+    printer.finalize();
     return 0;
 }

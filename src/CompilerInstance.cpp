@@ -16,7 +16,7 @@ struct CompilerInstance
         delete llvm_context;
         delete options;
     }
-    struct DiagnosticsEngine *engine;
+    struct DiagnosticsEngine *engine = nullptr;
     struct SourceMgr *SM = nullptr;
 #if XCC_TARGET
     struct TargetInfo *Target = nullptr;
@@ -25,12 +25,11 @@ struct CompilerInstance
     struct LLVMTypeConsumer *type_cache = nullptr;
     struct xcc_context *context = nullptr;
     struct IRGen *codegen = nullptr;
-    LLVMContext *llvm_context;
-    Options *options;
+    LLVMContext *llvm_context = nullptr;
+    Options *options = nullptr;
 
     void addPrinter(struct DiagnosticConsumer *C) {
-        createDiags();
-        engine->addConsumer(C);
+        createDiags().addConsumer(C);
     }
     struct Options &createOptions() {
         if (!options)
@@ -57,7 +56,23 @@ struct CompilerInstance
             llvm_context = new LLVMContext();
         return *llvm_context;
     }
+    const llvm::Target* createTarget() {
+        createOptions();
+        if (options->theTarget) return options->theTarget;
+        std::string Error;
+        options->theTarget = llvm::TargetRegistry::lookupTarget(options->triple.str(), Error);
+        if (!options->theTarget) {
+            DiagnosticHelper helper{createDiags()};
+            helper.error("unknown target triple %R, please use -triple or -arch", options->triple.str());
+            helper.note("%R", Error);
+            auto it = llvm::TargetRegistry::targets().begin();
+            if (it != llvm::TargetRegistry::targets().end())
+                options->theTarget = &*it;
+        }
+        return options->theTarget;
+    }
     IRGen &createCodeGen() {
+        createTarget();
         if (!codegen)
             codegen = new IRGen(createContext(), createDiags(), createSourceManager(), createLLVMContext(), createOptions());
         return *codegen;

@@ -18,17 +18,24 @@ enum DiagnosticLevel : uint8_t {
     Fatal
 };
 struct Diagnostic {
-    using storage_type = uintmax_t;
+    using storage_type = std::conditional<sizeof(uintptr_t) >= sizeof(uint64_t), uintptr_t, uint64_t>::type;
 
     const char *fmt = nullptr;
     location_t loc = 0;
-    SmallVector<SourceRange, 2> ranges;
-    SmallVector<storage_type, 5> data;
-    SmallVector<FixItHint, 0> FixItHints;
     enum DiagnosticLevel level = Ignored;
+    SmallVector<SourceRange, 2> ranges;
+    SmallVector<storage_type, 3> data;
+    SmallVector<FixItHint, 0> FixItHints;
+
     // default constructor - construct a invalid Diagnostic
+
     Diagnostic() = default;
-    Diagnostic(const char *fmt, location_t loc = 0) : fmt{fmt}, loc{loc}, ranges{}, data{}, FixItHints{} { }
+
+    Diagnostic(const char *fmt, location_t loc = 0) : fmt{fmt}, loc{loc}, level{Ignored}, ranges{}, data{}, FixItHints{} { }
+
+    // deep copy a Diagnostic object
+    Diagnostic(const Diagnostic &) = default;
+
     void write_impl(const FixItHint &Hint) { FixItHints.push_back(Hint); }
     template <typename T> void write_impl(const T *ptr) { data.push_back(reinterpret_cast<storage_type>(ptr)); }
     void write_impl(SourceRange range) { ranges.push_back(range); }
@@ -172,27 +179,19 @@ struct Diagnostic {
 };
 struct DiagnosticConsumer {
     DiagnosticConsumer(const DiagnosticConsumer &) = delete;
-    unsigned NumWarnings = 0;
-    unsigned NumErrors = 0;
+    DiagnosticConsumer(): NumWarnings{0}, NumErrors{0} {}
+    unsigned NumWarnings;
+    unsigned NumErrors;
     unsigned getNumErrors() const { return NumErrors; }
     unsigned getNumWarnings() const { return NumWarnings; }
-    void clear() { NumWarnings = NumErrors = 0; }
-    typedef void (*PHandleDiagnosticTy)(void *self, const Diagnostic &Info);
-    typedef void (*PFinalizeTy)(void *self);
-    PHandleDiagnosticTy PHandleDiagnostic;
-    PFinalizeTy PFinalize;
-    void finalize() {
-        if (PFinalize)
-            PFinalize(this);
-    }
-    void HandleDiagnostic(const Diagnostic &Diag) {
+    virtual void clear() { NumWarnings = NumErrors = 0; }
+    virtual void finalize() {}
+    virtual void HandleDiagnostic(const Diagnostic &Diag) {
         if (Diag.level == Warning)
             ++NumWarnings;
         else if (Diag.level >= Error)
             ++NumErrors;
-        PHandleDiagnostic(this, Diag);
     }
-    DiagnosticConsumer(PHandleDiagnosticTy impl, PFinalizeTy f = nullptr) : PHandleDiagnostic{impl}, PFinalize{f} {};
 };
 struct TextDiagnosticPrinter : public DiagnosticConsumer {
     static constexpr auto noteColor = raw_ostream::GREEN, remarkColor = raw_ostream::BLUE,
@@ -204,15 +203,11 @@ struct TextDiagnosticPrinter : public DiagnosticConsumer {
     bool ShowColors;
     struct SourceMgr *SM;
     TextDiagnosticPrinter(llvm::raw_ostream &OS = llvm::errs(), struct SourceMgr *SM = nullptr)
-        : DiagnosticConsumer{&HandleDiagnosticImpl, &finalizeImpl}, OS{OS}, ShowColors{OS.has_colors()}, SM{SM} { }
-    void realHandleDiagnostic(const Diagnostic &Info);
-    static void HandleDiagnosticImpl(void *self, const Diagnostic &Info) {
-        return reinterpret_cast<TextDiagnosticPrinter *>(self)->realHandleDiagnostic(Info);
-    }
+        :OS{OS}, ShowColors{OS.has_colors()}, SM{SM} { }
+    void HandleDiagnostic(const Diagnostic &Info) override;
     bool hasSourceMgr() const { return SM != nullptr; }
     void setSourceMgr(struct SourceMgr *SM) { this->SM = SM; }
-    static void finalizeImpl(void *self) { return reinterpret_cast<TextDiagnosticPrinter *>(self)->realfinalize(); }
-    void realfinalize() {
+    virtual void finalize() override {
         if (NumWarnings)
             OS << NumWarnings << (NumWarnings == 1 ? " warning" : " warnings");
         if (NumWarnings && NumErrors)
@@ -250,10 +245,16 @@ struct TextDiagnosticBuffer : public DiagnosticConsumer {
     auto all_begin() const { return All.begin(); }
     auto all_end() const { return All.end(); }
    
-    static void HandleDiagnosticImpl(void *self, const Diagnostic &Info) {
-        return reinterpret_cast<TextDiagnosticBuffer *>(self)->realHandleDiagnostic(Info);
+    virtual void clear() override {
+        DiagnosticConsumer::clear();
+        Notes.clear();
+        All.clear();
+        Remarks.clear();
+        Warnings.clear();
+        Errors.clear();
     }
-    void realHandleDiagnostic(const Diagnostic &Info) {
+    virtual void HandleDiagnostic(const Diagnostic &Info) override {
+        DiagnosticConsumer::HandleDiagnostic(Info);
         SmallString<100> Buf;
         switch (Info.level) {
             default:
@@ -282,30 +283,20 @@ struct TextDiagnosticBuffer : public DiagnosticConsumer {
                 break;
         }
     }
-    TextDiagnosticBuffer(): DiagnosticConsumer{&HandleDiagnosticImpl} {}
+    virtual void FlushDiagnostics(struct DiagnosticsEngine&) const;
+    TextDiagnosticBuffer() {}
 };
-struct DiagnosticBuffer: public DiagnosticConsumer {
-
-   using DiagList = std::vector<std::pair<location_t, std::string>>;
-   using iterator = DiagList::iterator;
-   using const_iterator = DiagList::const_iterator;
-
-   DiagList Errors, Warnings, Remarks, Notes;
-
-   std::vector<std::pair<enum DiagnosticLevel, size_t>> All;
-
-   const_iterator err_begin() const { return Errors.begin(); }
-   const_iterator err_end() const { return Errors.end(); }
-  
-   const_iterator warn_begin() const { return Warnings.begin(); }
-   const_iterator warn_end() const { return Warnings.end(); }
-  
-   const_iterator remark_begin() const { return Remarks.begin(); }
-   const_iterator remark_end() const { return Remarks.end(); }
-  
-   const_iterator note_begin() const { return Notes.begin(); }
-   const_iterator note_end() const { return Notes.end(); }
-   void FlushDiagnostics(struct DiagnosticsEngine &) const;
+struct DiagnosticsStore: public DiagnosticConsumer {
+    std::vector<Diagnostic> diagnostics;
+    virtual void HandleDiagnostic(const Diagnostic &Info) override {
+        diagnostics.push_back(Info);
+    }
+    virtual void clear() override {
+        DiagnosticConsumer::clear();
+        diagnostics.clear();
+    }
+    void FlushDiagnostics(struct DiagnosticsEngine &) const;
+    void FlushDiagnostics(DiagnosticConsumer &) const;
 };
 struct DiagnosticsEngine {
     unsigned ErrorLimit = 0;
@@ -321,6 +312,9 @@ struct DiagnosticsEngine {
     }
     void EmitCurrentDiagnostic() {
         return Emit(CurrentDiagnostic);
+    }
+    void operator <<(const Diagnostic &Diag) {
+        Emit(Diag);
     }
     unsigned getNumWarnings() const {
         unsigned total = 0;
@@ -444,8 +438,18 @@ struct EvalHelper : public DiagnosticHelper {
         return false;
     }
 };
+void DiagnosticsStore::FlushDiagnostics(struct DiagnosticsEngine &engine) const {
+    for (const Diagnostic &Diag: diagnostics)
+        engine << Diag;
+}
+void DiagnosticsStore::FlushDiagnostics(DiagnosticConsumer &C) const {
+    for (const Diagnostic &Diag: diagnostics) {
+        printf("flush %p\n", &Diag);
+        C.HandleDiagnostic(Diag);
+    }
+}
 void
-DiagnosticBuffer::FlushDiagnostics(struct DiagnosticsEngine &engine) const {
+TextDiagnosticBuffer::FlushDiagnostics(struct DiagnosticsEngine &engine) const {
     for (const auto &I: All) {
         engine.CurrentDiagnostic.reset("%R", I.first);
         DiagnosticBuilder Diag = DiagnosticBuilder(engine);

@@ -14,7 +14,7 @@ struct Lexer : public EvalHelper {
     bool isDisableSpace = false;
     llvm::SmallVector<uint8_t, 4> ppstack;
     bool ok = true;
-    char c = ' ';
+    char c;
     DenseMap<IdentRef, PPMacroDef *> macros;
     Parser *parser;
     SourceMgr &SM;
@@ -26,7 +26,8 @@ struct Lexer : public EvalHelper {
     xcc_context &context;
 
     Lexer(SourceMgr &SM, Parser *parser, xcc_context &context, DiagnosticsEngine &Diag)
-        : EvalHelper{Diag}, parser{parser}, SM{SM}, context{context} { }
+        : EvalHelper{Diag}, parser{parser}, SM{SM}, context{context} { initC(); }
+    void initC() { c = ' '; }
 private:
     location_t getLoc() const { return loc; }
     location_t getEndLoc() const { return endLoc; }
@@ -437,8 +438,9 @@ public:
     // lex and retrun a token without expanding macros
     TokenV lex() {
         for (;;) {
-            if (c == '\0')
+            if (c == '\0') {
                 return isPPMode = false, TEOF;
+            }
             if (isCSkip(c)) {
                 for (;;) {
                     eat();

@@ -28,7 +28,7 @@ void TextDiagnosticPrinter::write_loc(const source_location &loc, const struct I
     OS << file->cache->getName() << ':' << loc.line << ':' << loc.col << ": ";
     OS.changeColor(llvm::raw_ostream::Colors::SAVEDCOLOR, false);
 }
-void TextDiagnosticPrinter::realHandleDiagnostic(const Diagnostic &Diag) {
+void TextDiagnosticPrinter::HandleDiagnostic(const Diagnostic &Diag) {
     bool locValid = false;
     source_location loc;
     if (SM && Diag.loc != 0) {

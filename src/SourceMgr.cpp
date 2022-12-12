@@ -26,9 +26,11 @@ struct ContentCache {
     ContentCache() = delete;
     ContentCache(llvm::MemoryBuffer *Buffer, const StringRef &Name = StringRef())
         : Buffer{Buffer}, lineOffsetMapping{}, Name{Name} {
-        dbgprint("ContentCache(Name: %s)\n", Name.data());
     }
     ContentCache(const ContentCache &) = delete;
+    void setNameAsBufferName() {
+        this->Name = Buffer->getBufferIdentifier();
+    }
     void setName(StringRef Name) { this->Name = Name; }
     const StringRef &getName() const { return Name; }
     size_t getFileSize() { return Buffer->getBufferSize(); }
@@ -98,10 +100,14 @@ struct IncludeFile {
         : cache{cache}, where_I_included{includePos}, startLoc{startLoc} {
         buffer_start = cache->getBufferStart();
         endLoc = startLoc + cache->getFileSize();
-        loc = startLoc;
+        loc = 0;
     }
-    inline char read() { return LLVM_LIKELY(loc < endLoc) ? buffer_start[loc++] : '\0'; }
-    location_t getLoc() { return loc; }
+    inline char read() { 
+        if (loc >= endLoc)
+            return '\0';
+        return buffer_start[loc++];
+    }
+    location_t getLoc() const { return startLoc + loc; }
 };
 struct SourceMgr : public DiagnosticHelper {
     char buf[STREAM_BUFFER_SIZE];
@@ -130,7 +136,7 @@ struct SourceMgr : public DiagnosticHelper {
         }
     }
     void setFileName(StringRef Name) { includeStack[grow_include_stack.back()].cache->setName(Name); }
-    location_t getLoc() const { return includeStack[grow_include_stack.back()].loc; }
+    location_t getLoc() const { return includeStack[grow_include_stack.back()].getLoc(); }
     inline LocTree *getLocTree() const { return tree; }
     void beginExpandMacro(PPMacroDef *M, xcc_context &context) {
         location_map[getLoc()] = (tree = new (context.getAllocator()) LocTree(tree, M));
@@ -211,8 +217,7 @@ PUSH:
             close(fd);
 #endif
             std::string msg = MemberBufferOrErr.getError().message();
-            StringRef msgStr(msg);
-            error("error reading %R: %R", path, msgStr);
+            error("error reading file contents %R: %R", path, msg);
             return false;
         }
         ContentCache *cache = new ContentCache(MemberBufferOrErr->release(), it.first->getKey());
@@ -441,7 +446,7 @@ BREAK:
             Msg += it;
         }
         Msg += " ";
-        note("%r", StringRef(Msg));
+        note("%r", Msg);
     }
 public:
     // Returns true if no source file inputs
@@ -453,22 +458,29 @@ public:
         return grow_include_stack.empty();
     }
     // this function does not save the string, so the called must pass as constant global string or alloced somewhere.
-    void addStdin(StringRef Name = "<stdin>", location_t includePos = 0) {
+    void addStdin(location_t includePos = 0) {
         llvm::ErrorOr<std::unique_ptr<llvm::MemoryBuffer>> MemberBufferOrErr = llvm::MemoryBuffer::getSTDIN();
         if (!MemberBufferOrErr) {
             std::string msg = MemberBufferOrErr.getError().message();
-            StringRef msgStr(msg);
-            error("error reading from stdin: %R", Name, msgStr);
+            error("error reading from stdin: %R", msg);
             return;
         }
-        ContentCache *cache = new ContentCache(MemberBufferOrErr->release(), Name);
+        ContentCache *cache = new ContentCache(MemberBufferOrErr->release(), "<stdin>");
         cached_strings.push_back(cache);
         includeStack.emplace_back(cache, getInsertPos(), includePos);
         addBuffer();
     }
     // this function does not save the string, so the called must pass as constant global string or alloced somewhere.
     void addString(StringRef s, StringRef Name = "<string>", location_t includePos = 0) {
-        ContentCache *cache = new ContentCache(llvm::MemoryBuffer::getMemBuffer(s, Name, false).release(), Name);
+        ContentCache *cache = new ContentCache(llvm::MemoryBuffer::getMemBuffer(s, Name, false).release());
+        cache->setNameAsBufferName();
+        cached_strings.push_back(cache);
+        includeStack.emplace_back(cache, getInsertPos(), includePos);
+        addBuffer();
+    }
+    void addMemoryBuffer(llvm::MemoryBuffer *Buffer, location_t includePos = 0) {
+        ContentCache *cache = new ContentCache(Buffer);
+        cache->setNameAsBufferName();
         cached_strings.push_back(cache);
         includeStack.emplace_back(cache, getInsertPos(), includePos);
         addBuffer();

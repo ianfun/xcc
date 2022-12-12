@@ -105,9 +105,9 @@ template <unsigned long long n> static constexpr inline unsigned long long cstrl
 #endif
 
 #ifndef CC_PRINT_CDECL
-#define CC_PRINT_CDECL !XCC_MAIN
+#define CC_PRINT_CDECL 0
 #endif
 
 #ifndef CC_PRINT_CDECL_FUNCTION
-#define CC_PRINT_CDECL_FUNCTION !XCC_MAIN
+#define CC_PRINT_CDECL_FUNCTION 0
 #endif

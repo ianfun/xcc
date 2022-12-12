@@ -409,12 +409,6 @@ bool BuildCompilation(ArrayRef<const char *> Args, Options &opts, SourceMgr &SM,
     return true;
   opts.trigraphs = getArgs().hasArg(OPT_ftrigraphs);
   opts.triple = computeTargetTriple(*this, TargetTriple, getArgs());
-  std::string Error;
-  opts.theTarget = llvm::TargetRegistry::lookupTarget(opts.triple.str(), Error);;
-  if (!opts.theTarget) {
-   error("unknown target triple %R, please use -triple or -arch", opts.triple.str());
-   should_exit |= true;
-  }
 
   opts.VectorizeLoop = getArgs().hasArg(OPT_vectorize_loops);
   opts.VectorizeSLP = getArgs().hasArg(OPT_vectorize_slp);
