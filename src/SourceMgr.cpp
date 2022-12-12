@@ -86,35 +86,15 @@ struct ContentCache {
 };
 struct IncludeFile {
     ContentCache *cache;
-private:
-    const char *buffer_start;
     location_t where_I_included;
     location_t startLoc;
-    location_t loc;
-    location_t endLoc;
-public:
-    location_t getFileSize() const { return endLoc - startLoc; }
+    location_t getFileSize() const { return cache->getFileSize(); }
     location_t getStartLoc() const { return startLoc; }
-    location_t getEndLoc() const { return startLoc + cache->getFileSize(); }
+    location_t getEndLoc() const { return startLoc + getFileSize(); }
     location_t getIncludePos() const { return where_I_included; }
-    const char *getBufferStart() const { return buffer_start; }
+    const char *getBufferStart() const { return cache->getBufferStart(); }
     IncludeFile(ContentCache *cache, location_t startLoc = 0, location_t includePos = 0)
-        : cache{cache}, where_I_included{includePos}, startLoc{startLoc} {
-        buffer_start = cache->getBufferStart();
-        endLoc = startLoc + cache->getFileSize();
-        loc = 0;
-    }
-    bool isEOF() const {
-        printf("loc = %u!!!!!!\n", this->loc);
-        getchar();
-        return loc >= cache->getFileSize();
-    }
-    char read() {
-        printf("read(%u)\n", loc);
-        getchar();
-        return buffer_start[loc++];
-    }
-    location_t getLoc() const { return startLoc + loc; }
+        : cache{cache}, where_I_included{includePos}, startLoc{startLoc} {}
 };
 struct SourceMgr : public DiagnosticHelper {
     char buf[STREAM_BUFFER_SIZE];
@@ -124,13 +104,13 @@ struct SourceMgr : public DiagnosticHelper {
     SmallVector<unsigned> grow_include_stack; // the actual dynamic include stack
     llvm::StringMap<ContentCache *> cached_files;
     SmallVector<ContentCache *, 0> cached_strings;
-    IncludeFile *cur_include_file;
     LocTree *tree = nullptr;
     std::map<location_t, LocTree * /*, std::less<location_t>*/> location_map;
     StringRef lastDir = StringRef();
-    bool trigraphs;
-    bool is_tty;
+    bool trigraphs = false;
     unsigned current_line = 1;
+    location_t cur_loc = 0;
+    const char *cur_buffer_ptr = nullptr;
     void setLine(unsigned line) { current_line = line; }
     StringRef getFileName() const { return includeStack[grow_include_stack.back()].cache->getName(); }
     ~SourceMgr() {
@@ -143,21 +123,18 @@ struct SourceMgr : public DiagnosticHelper {
         }
     }
     void setFileName(StringRef Name) { includeStack[grow_include_stack.back()].cache->setName(Name); }
-    bool isFileEOF() const { return includeStack[grow_include_stack.back()].isEOF(); }
-    location_t getLoc() const { return includeStack[grow_include_stack.back()].getLoc(); }
+    bool isFileEOF() const { 
+        const IncludeFile last = includeStack[grow_include_stack.back()];
+        location_t endLoc = last.getEndLoc();
+        return cur_loc >= endLoc || (cur_loc == endLoc - 1);
+    }
+    location_t getLoc() const { return cur_loc; }
     inline LocTree *getLocTree() const { return tree; }
     void beginExpandMacro(PPMacroDef *M, xcc_context &context) {
         location_map[getLoc()] = (tree = new (context.getAllocator()) LocTree(tree, M));
     }
     void endTree() { location_map[getLoc()] = (tree = tree->getParent()); }
-    SourceMgr(DiagnosticsEngine &Diag) : DiagnosticHelper{Diag}, buf{}, trigraphs{false} {
-#if WINDOWS
-        DWORD dummy;
-        is_tty = GetConsoleMode(hStdin, &dummy) != 0;
-#else
-        is_tty = isatty(STDIN_FILENO) != 0;
-#endif
-    }
+    SourceMgr(DiagnosticsEngine &Diag) : DiagnosticHelper{Diag}, buf{}, trigraphs{false} {}
     void setTrigraphsEnabled(bool enable) { trigraphs = enable; }
     void addUsernIcludeDir(xstring path) { userPaths.push_back(path); }
     void addSysIncludeDir(xstring path) { sysPaths.push_back(path); }
@@ -224,8 +201,6 @@ PUSH:
             return false;
         }
         ContentCache *cache = new ContentCache(MemberBufferOrErr->release(), it.first->getKey());
-        includeStack.emplace_back(cache, getInsertPos(), includePos);
-        addBuffer();
         it.first->second = cache;
         lastDir = llvm::sys::path::parent_path(path, llvm::sys::path::Style::native);
         if (lastDir.empty())
@@ -484,12 +459,17 @@ public:
         addBuffer();
     }
 private:
-    void addBuffer() {
+    inline void setCurPtr() {
+        IncludeFile file = includeStack[grow_include_stack.back()];
+        cur_loc = file.getStartLoc();
+        cur_buffer_ptr = file.getBufferStart();
+    }
+    inline void addBuffer() {
         grow_include_stack.push_back(includeStack.size() - 1);
-        cur_include_file = &includeStack[grow_include_stack.back()];
+        setCurPtr();
     }
     uint16_t lastc = 256, lastc2 = 256;
-    inline char advance_next() { return cur_include_file->read(); }
+    inline char advance_next() { return cur_buffer_ptr[cur_loc++]; }
     // Translation phases 1
     char stream_read() {
         // for support '\r' end-of-lines
@@ -540,7 +520,7 @@ public:
         grow_include_stack.pop_back();
         if (grow_include_stack.empty())
             return true;
-        cur_include_file = &includeStack[grow_include_stack.back()];
+        setCurPtr();
         lastc = lastc2 = 0;
         return false;
     }
