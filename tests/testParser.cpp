@@ -1,8 +1,8 @@
 #include "common.h"
 
-    size_t num_typedefs, num_tags;
+    xcc::TranslationUnit TU;
 
-    [[maybe_unused]] ast = parser.run(num_typedefs, num_tags);
+    parser.run(TU);
 
     printer.finalize();
 

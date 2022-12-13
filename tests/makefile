@@ -57,6 +57,10 @@ testParser:
 testInter:
 	$(CC) $(CXXINCS) testInterpreter.cpp $(DEBUG) $(CXXFLAGS) -o interpreter $(LDFLAGS)
 
+# test printing Graph to dot file
+testGraph:
+	$(CC) $(CXXINCS) testGraph.cpp $(DEBUG) $(CXXFLAGS) -o graph $(LDFLAGS)
+
 # test LLVM's Just-In-Time compilation
 testJit:
 	$(CC) $(CXXINCS) testJit.cpp $(DEBUG) $(CXXFLAGS) -o jit $(LDFLAGS)

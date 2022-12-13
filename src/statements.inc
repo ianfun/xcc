@@ -23,9 +23,77 @@ struct NullStmt {
     Stmt next = nullptr;
     enum StmtKind k;
 };
+template <typename T>
+struct StmtIterator {
+	using value_type = T;
+	using difference_type = std::ptrdiff_t;
+	using size_type = std::size_t;
+	T s;
+	StmtIterator(): s{nullptr} {}
+	StmtIterator(std::nullptr_t): s{nullptr} {}
+	StmtIterator(T Node) {
+		switch (Node->k) {
+			case SCompound:
+				this->s = Node->inner;
+				break;
+			case SHead:
+				this->s = Node->next;
+				break;
+			case SFunction:
+				this->s = Node->funcbody->next;
+				break;
+    		default:
+    			this->s = nullptr;
+    	}
+	}
+	static StmtIterator get_raw(T Node) {
+		StmtIterator I;
+		I.s = Node;
+		return I;
+	}
+	T operator*() {
+		return s;
+	}
+	StmtIterator<T> &operator++();
+	T operator->() const {
+		return s;
+	}
+	bool operator !=(StmtIterator<T> other) const {
+		return this->s != other.s;
+	}
+	bool operator ==(StmtIterator<T> other) const {
+		return this->s == other.s;
+	}
+};
+} // end namespace xcc
+
+template <> struct std::iterator_traits<xcc::StmtIterator<xcc::Stmt>> {
+    using difference_type = std::ptrdiff_t;
+    using value_type = xcc::Stmt;
+    using reference = xcc::Stmt&;
+    using size_type = std::size_t;
+    using iterator_category = std::input_iterator_tag;
+};
+template <> struct std::iterator_traits<xcc::StmtIterator<xcc::const_Stmt>> {
+    using difference_type = std::ptrdiff_t;
+    using value_type = xcc::const_Stmt;
+    using reference = xcc::const_Stmt&;
+    using size_type = std::size_t;
+    using iterator_category = std::input_iterator_tag;
+};
+
+namespace xcc {
 struct OpaqueStmt {
     Stmt next = nullptr;
     StmtKind k;
+    using iterator = StmtIterator<Stmt>;
+    using const_iterator = StmtIterator<const_Stmt>;
+    iterator child_begin() { return iterator(this); }
+    const_iterator child_begin() const { return const_iterator(this); }
+	void viewAST() const;
+	raw_ostream &writeGraph(raw_ostream &, const llvm::Twine &Title = "AST") const;
+	iterator child_end() { return iterator(); }
+	const_iterator child_end() const { return const_iterator(); }
     bool isTerminator() const {
         switch (k) {
             case SGoto:
@@ -280,3 +348,9 @@ static uint8_t stmt_size_map[] = {
     sizeof(FunctionStmt)
 };
 static constexpr size_t stmt_max_size = std::max({sizeof(HeadStmt), sizeof(CompoundStmt), sizeof(LabelStmt), sizeof(NamedLabelStmt), sizeof(GotoWithLocNameStmt), sizeof(GotoWithLocStmt), sizeof(GotoStmt), sizeof(CondJumpStmt), sizeof(SwitchStmt), sizeof(IndirectBrStmt), sizeof(DeclOnlyStmt), sizeof(ReturnStmt), sizeof(ExprStmt), sizeof(NoReturnCallStmt), sizeof(AsmStmt), sizeof(VarDeclStmt), sizeof(DeclStmt), sizeof(FunctionStmt)});
+
+template <typename T>
+StmtIterator<T> &StmtIterator<T>::operator++() {
+	s = s->next;
+	return *this;
+}

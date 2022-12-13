@@ -27,7 +27,6 @@ COMPOUND:
             }
             break;
         case SVarDecl:
-            puts("SVarDecl");
             for (const VarDecl &decl: s->vars) {
                 if (!decl.ty->hasTag(TYTYPEDEF)) {
                     vla_founded.back().push_back(decl.loc);
@@ -91,6 +90,9 @@ struct StmtVisitor {
                 for (Stmt ptr = s->inner; ptr; ptr = ptr->next)
                     Visit(ptr);
                 break;
+            case SFunction:
+                for (Stmt ptr = s->funcbody->next; ptr; ptr = ptr->next)
+                    Visit(ptr);
             default: break;
         }
     }

@@ -37,6 +37,7 @@
 #include <llvm/ADT/StringSwitch.h>
 #include <llvm/ADT/Triple.h>
 #include <llvm/ADT/Twine.h>
+#include <llvm/ADT/GraphTraits.h>
 #include <llvm/Bitcode/BitcodeWriter.h>
 #include <llvm/ExecutionEngine/JITSymbol.h>
 #include <llvm/ExecutionEngine/Orc/CompileUtils.h>
@@ -80,6 +81,8 @@
 #include <llvm/Support/ConvertUTF.h>
 #include <llvm/Support/Errno.h>
 #include <llvm/Support/Host.h>
+#include <llvm/Support/DOTGraphTraits.h>
+#include <llvm/Support/GraphWriter.h>
 #include <llvm/Support/InitLLVM.h>
 #include <llvm/Support/Path.h>
 #include <llvm/Support/PrettyStackTrace.h>
@@ -172,6 +175,8 @@
 #include <deque>
 #include <optional>
 #include <cassert>
+#include <type_traits>
+#include <iterator>
 #include <string>
 #include <vector>
 #include <map>
@@ -210,6 +215,7 @@ using llvm::cast_if_present;
 using llvm::cast_or_null;
 using llvm::ConstantFP;
 using llvm::ConstantInt;
+using llvm::VersionTuple;
 using llvm::DenseMap;
 using llvm::dyn_cast;
 using llvm::dyn_cast_if_present;
@@ -916,6 +922,7 @@ struct TranslationUnit {
 #include "statements.inc"
 #include "utf8.cpp"
 #include "printer.cpp"
+#include "Graph.cpp"
 
 struct ReplacedExprParen {
     enum ExprKind k = EConstant;

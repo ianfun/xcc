@@ -149,8 +149,8 @@ int main(int argc_, const char **argv_)
 
     const auto &Args = theDriver.getArgs();
 
-    if (Args.TimeTrace) {
-        llvm::timeTraceProfilerInitialize(options.TimeTraceGranularity);
+    if (options.TimeTrace) {
+        llvm::timeTraceProfilerInitialize(options.TimeTraceGranularity, argv_[0]);
     }
 
     //auto tos = std::make_shared<xcc::TargetOptions>();
@@ -194,8 +194,12 @@ int main(int argc_, const char **argv_)
     // preparing target information and ready for code generation to LLVM IR
     xcc::IRGen ig(ctx, engine, SM, *llvmcontext, options);
 
+    xcc::LLVMTypeConsumer type_cache(ctx, *llvmcontext, options.g);
+
+    ig.setTypeConsumer(type_cache);
+
     // create parser
-    xcc::Parser parser(SM, ig, engine, ctx);
+    xcc::Parser parser(SM, ig, engine, ctx, type_cache);
 
     if (Args.hasArg(OPT_dump_tokens)) {
         auto &OS = llvm::errs();
@@ -208,8 +212,9 @@ int main(int argc_, const char **argv_)
     }
 
     // now, parsing source files ...
-    size_t num_typedefs = 0, num_tags = 0;
-    auto ast = parser.run(num_typedefs, num_tags);
+    xcc::TranslationUnit TU;
+
+    parser.run(TU);
 
     if (engine.getNumErrors())
         return xcc_exit(CC_EXIT_FAILURE);
@@ -217,9 +222,9 @@ int main(int argc_, const char **argv_)
     if (const auto *A = Args.getLastArg(OPT_ast_dump_EQ)) {
         llvm::StringRef dump = A->getValue();
         if (dump == "default") {
-            xcc::dumpAst(ast, xcc::AST_Default);
+            xcc::dumpAst(TU.ast, xcc::AST_Default);
         } else if (dump == "json") {
-            xcc::dumpAst(ast, xcc::AST_JSON);
+            xcc::dumpAst(TU.ast, xcc::AST_JSON);
         } else {
             theDriver.error("invalid value %R in '-dump-ast'", dump);
         }
@@ -227,22 +232,22 @@ int main(int argc_, const char **argv_)
     if (const auto *A = Args.getLastArg(OPT_ast_dump_all_EQ)) {
         llvm::StringRef dump = A->getValue();
         if (dump == "default") {
-            xcc::dumpAst(ast, xcc::AST_Default);
+            xcc::dumpAst(TU.ast, xcc::AST_Default);
         } else if (dump == "json") {
-            xcc::dumpAst(ast, xcc::AST_JSON);
+            xcc::dumpAst(TU.ast, xcc::AST_JSON);
         } else {
             theDriver.error("invalid value %R in '-dump-ast-all'", dump);
         }
     }
 
     if (Args.hasArg(OPT_ast_dump) || Args.hasArg(OPT_ast_dump_all)) {
-        xcc::dumpAst(ast, xcc::AST_Default);
+        xcc::dumpAst(TU.ast, xcc::AST_Default);
     }
 
     if (Args.hasArg(OPT_fsyntax_only))
         return xcc_exit(CC_EXIT_SUCCESS);
 
-    ig.run(ast, num_typedefs, num_tags);
+    std::unique_ptr<llvm::Module> llvmModule{ig.run(TU, type_cache)};
 
     if (Args.hasArg(OPT_emit_codegen_only)) 
         return xcc_exit(CC_EXIT_SUCCESS);
@@ -274,7 +279,7 @@ int main(int argc_, const char **argv_)
         if (EC)
             goto CC_ERROR;
         dbgprint("printing module to %s\n", outputFileName.data());
-        ig.module->print(OS, nullptr);
+        llvmModule->print(OS, nullptr);
         OS.close();
         return xcc_exit(CC_EXIT_SUCCESS);
     }
@@ -291,7 +296,7 @@ int main(int argc_, const char **argv_)
 
         llvm::legacy::PassManager pass;
         ig.machine->addPassesToEmitFile(pass, OS, nullptr, assembly ? llvm::CGFT_AssemblyFile : llvm::CGFT_ObjectFile);
-        pass.run(*ig.module);
+        pass.run(*llvmModule);
 
         OS.close();
 

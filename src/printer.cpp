@@ -427,6 +427,7 @@ enum AST_Dump_Format {
     AST_Default,
     AST_JSON
 };
+template <bool Recursive = true>
 struct AstDumper {
     llvm::raw_ostream &OS;
     StringRef NL;
@@ -448,33 +449,44 @@ struct AstDumper {
         OS << ty;
         OS.resetColor();
     }
-    void PrintStmt(Stmt s) {
+    void PrintStmt(const_Stmt s) {
         IndentLevel += Indentation;
         Indent();
         dump(s);
         IndentLevel -= Indentation;
     }
-    void dump(Stmt s) {
+    inline void newline() {
+        OS << NL;
+    }
+    void dump(const_Stmt s) {
         switch (s->k) {
         case SHead:
-            for (Stmt ptr = s->next; ptr; ptr = ptr->next)
-                dump(ptr);
+            if (Recursive) {
+                for (const_Stmt ptr = s->next; ptr; ptr = ptr->next)
+                    dump(ptr);
+            } else {
+                OS << "translation-unit";
+            }
             return;
         case SCompound:
-            OS << "{" << NL;
+            OS << "{";
+            newline();
             IndentLevel += Indentation;
-            for (Stmt ptr = s->inner; ptr; ptr = ptr->next)
+            for (const_Stmt ptr = s->inner; ptr; ptr = ptr->next)
                 PrintStmt(ptr);
             IndentLevel -= Indentation;
             Indent();
-            OS << "}" << NL;
+            OS << "}";
+            newline();
             return;
         case SNamedLabel:
+            OS << "%" << s->label << ':';
+            OS << " (" << s->labelName->getKey() << ")";
+            newline();
+            return;
         case SLabel:
             OS << "%" << s->label << ':';
-            if (s->labelName)
-                OS << " (" << s->labelName->getKey() << ")";
-            OS << NL;
+            newline();
             return;
         case SGotoWithLoc:
         case SGotoWithLocName:
@@ -482,21 +494,24 @@ struct AstDumper {
             OS.changeColor(raw_ostream::RED);
             OS << "goto";
             OS.resetColor();
-            OS << " %" << s->location << ';' << NL;
+            OS << " %" << s->location << ';';
+            newline();
             return;
         case SCondJump:
             OS.changeColor(raw_ostream::RED);
             OS << "branch ";
             OS.resetColor();
             printExpr(s->test);
-            OS << " %" << s->T << ", %" << s->F << ';' << NL;
+            OS << " %" << s->T << ", %" << s->F << ';';
+            newline();
             return;
         case SSwitch: {
             bool isSigned = s->itest->ty->isSigned();
             OS.changeColor(raw_ostream::RED);
             OS << "switch";
             OS.resetColor();
-            OS << s->itest << NL;
+            OS << s->itest;
+            newline();
             for (const SwitchCase &it : s->switchs) {
                 OS << raw_ostream::RED << "  case " << raw_ostream::RESET;
                 it.CaseStart->print(OS, isSigned);
@@ -509,7 +524,8 @@ struct AstDumper {
                 (*it.CaseStart + it.range).print(OS, isSigned);
                 OS << " => %" << it.label;
             }
-            OS << raw_ostream::RED << "  default" << raw_ostream::RESET << " =>" << s->sw_default << NL;
+            OS << raw_ostream::RED << "  default" << raw_ostream::RESET << " =>" << s->sw_default;
+            newline();
         }
             return;
         case SReturn:
@@ -520,16 +536,19 @@ struct AstDumper {
                 OS << ' ';
                 printExpr(s->ret);
             }
-            OS << ';' << NL;
+            OS << ';';
+            newline();
             return;
         case SExpr:
             printExpr(s->exprbody);
-            OS << ';' << NL;
+            OS << ';';
+            newline();
             return;
         case SNoReturnCall:
             OS << "(noreturn call) ";
             printExpr(s->call_expr);
-            OS << ';' << NL;
+            OS << ';';
+            newline();
             return;
         case SAsm:
             OS.changeColor(raw_ostream::RED);
@@ -537,7 +556,8 @@ struct AstDumper {
             OS.resetColor();
             OS << "(";
             printCString(OS, s->asms.str().drop_back());
-            OS << ')' << NL;
+            OS << ')';
+            newline();
             return;
         case SVarDecl: {
             size_t end = s->vars.size();
@@ -549,10 +569,14 @@ struct AstDumper {
                     OS << " = ";
                     printExpr(it.init);
                 }
-                if (i == end)
-                    OS << ";" << NL;
-                else
-                    (void)(OS << ',' << NL), Indent();
+                if (i == end) {
+                    OS << ";";
+                    newline();
+                } else {
+                    OS << ',';
+                    newline();
+                    Indent();
+                }
             }
         }
             return;
@@ -563,22 +587,152 @@ struct AstDumper {
             OS.resetColor();
             OS << ": ";
             printCType(s->functy);
-            OS << " (";
-            for (size_t i = 0; i < s->args.size(); ++i) {
-                OS << s->args[i];
-                if (i != s->args.size())
-                    OS << ", ";
+            {
+                OS << " (";
+                for (size_t i = 0; i < s->args.size(); ++i) {
+                    OS << s->args[i];
+                    if (i != s->args.size())
+                        OS << ", ";
+                }
+                OS << ")" << NL << "{" << NL;
+                OS << "{";
+                newline();
+                IndentLevel += Indentation;
+                for (const_Stmt ptr = s->funcbody->next; ptr; ptr = ptr->next)
+                    PrintStmt(ptr);
+                IndentLevel -= Indentation;
+                Indent();
+                OS << "}";
+                newline();
+                OS << NL << "}" << NL;
+            } return;
+        default: break;
+        }
+    }
+};
+struct AstJSONDumper {
+    llvm::json::OStream &JOS;
+    AstDumper(llvm::raw_ostream &OS, unsigned IndentSize = 0)
+        : JOS{OS, OS} {}
+    llvm::json::Value printExpr(Expr e, StringRef attrName = "expr") {
+        SmallString<64> str;
+        raw_svector_ostream OS{str};
+        return str;
+    }
+    llvm::json::Value printCType(CType ty, StringRef attrName = "type") {
+        SmallString<64> str;
+        raw_svector_ostream OS{str};
+        OS << ty;
+        return str;
+    }
+    void dump(const_Stmt s) {
+        switch (s->k) {
+        case SHead:
+            JOS.attributeBegin("body");
+            JOS.arrayBegin();
+            for (const_Stmt ptr = s->next; ptr; ptr = ptr->next)
+                dump(ptr);
+            JOS.arrayEnd();
+            JOS.attributeEnd();
+            return;
+        case SCompound:
+            OS << "{";
+            JOS.arrayBegin();
+            for (const_Stmt ptr = s->inner; ptr; ptr = ptr->next)
+                dump(ptr);
+            JOS.arrayEnd();
+            return;
+        case SNamedLabel:
+            JOS.value("LabelStmt", llvm::json::Object(
+                {
+                    {"label", s->label},
+                    {"labelName", s->labelName->getKey()}
+                }
+            ));
+            return;
+        case SLabel:
+            JOS.value("LabelStmt", llvm::json::Object(
+                {
+                    {"label", s->label}
+                }
+            ));
+            return;
+        case SGotoWithLoc:
+        case SGotoWithLocName:
+        case SGoto:
+            JOS.value("GotoStmt", llvm::json::Object(
+                {
+                    {"location", s->location}
+                }
+            ));
+            return;
+        case SCondJump:
+            JOS.value("CondJumpStmt", llvm::json::Object(
+                {
+                    {"test", printExpr(s->test)},
+                    {"T", s->T},
+                    {"F", s->F}
+                }
+            ));
+            return;
+        case SSwitch: {
+            return;
+        case SReturn:
+            auto V = llvm::json::Object(
+                {"kind", "ReturnStmt"}
+            );
+            if (s->ret)
+                V.insert("ret", printExpr(s->ret));
+            JOS.value(V);
+            return;
+        case SExpr:
+            JOS.value(llvm::json::Object(
+                {"kind", "ExprStmt"},
+                {"expr", printExpr(s->exprbody)}
+            ));
+            return;
+        case SNoReturnCall:
+            JOS.value(llvm::json::Object(
+                {"kind", "NoReturnCallStmt"},
+                {"expr", printExpr(s->call_expr)}
+            ));
+            return;
+        case SAsm:
+            JOS.value(llvm::json::Object(
+                {"kind", "AsmStmt"},
+                {"expr", s->asms}
+            ));
+            return;
+        case SVarDecl: 
+            return;
+        case SFunction:
+            JOS.valueBegin();
+            JOS.objectBegin();
+            JOS.objectEnd();
+            JOS.attribute("Name", s->funcname->getKey());
+            JOS.attribute("Type", printCType(s->functy));
+            {
+                JOS.attributeBegin("params");
+                for (size_t i = 0; i < s->args.size(); ++i) {
+                    OS << s->args[i];
+
+                }
+                JOS.attributeEnd();
+                JOS.attributeBegin("Bbdy");
+                JOS.arrayBegin();
+                for (const_Stmt ptr = s->funcbody->next; ptr; ptr = ptr->next)
+                    dump(ptr);
+                JOS.arrayEnd();
+                JOS.attributeEnd();
             }
-            OS << ")" << NL << "{" << NL;
-            PrintStmt(s->funcbody);
-            OS << NL << "}" << NL;
+            JOS.valueEnd(); 
             return;
         default: break;
         }
     }
 };
-void dumpAst(Stmt s, enum AST_Dump_Format format = AST_Default, llvm::raw_ostream &OS = llvm::errs()) {
+void dumpAst(const_Stmt s, enum AST_Dump_Format format = AST_Default, llvm::raw_ostream &OS = llvm::errs()) {
     if (format == AST_Default)
-        return AstDumper(OS).dump(s);
-    llvm_unreachable("json not supported now!");
+        return AstDumper<true>(OS).dump(s);
+    return AstJSONDumper(OS).dump(s);
 }

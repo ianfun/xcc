@@ -19,7 +19,7 @@ struct CompilerInstance
     }
     struct DiagnosticsEngine *engine = nullptr;
     struct SourceMgr *SM = nullptr;
-#if XCC_TARGET
+#ifdef XCC_TARGET
     struct TargetInfo *Target = nullptr;
 #endif
     struct Parser *parser = nullptr;
