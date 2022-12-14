@@ -86,7 +86,6 @@ struct Parser : public EvalHelper {
     location_t unreachable_reason_loc = 0, current_stmt_loc = 0, current_declator_loc = 0;
     Expr intzero, intone, size_t_one, cfalse, ctrue;
     StringPool string_pool;
-    llvm::ConstantPointerNull *null_ptr;
     Expr null_ptr_expr;
 
   private:
@@ -522,7 +521,7 @@ PUT:
         if (e->k == EConstant) {
             auto CI = cast<ConstantInt>(e->C);
             if (CI->isZero()) // A interger constant expression with the value 0 is a *null pointer constant*
-                return wrap(to, null_ptr, e->getBeginLoc(), e->getEndLoc());
+                return null_ptr_expr;
             return wrap(to, llvm::ConstantExpr::getIntToPtr(CI, llvmTypeCache.pointer_type), e->getBeginLoc(), e->getEndLoc());
         }
         if (implict != Implict_Cast) {
@@ -918,7 +917,7 @@ SIDE_EFFECT:
                 e = (e->k == EConstant
                          ? wrap(context.getInt(),
                                 (e->ty->isSigned() ? &llvm::ConstantExpr::getSExt
-                                                   : &llvm::ConstantExpr::getZExt)(e->C, llvmTypeCache.integer_types[4], false),
+                                                   : &llvm::ConstantExpr::getZExt)(e->C, llvmTypeCache.integer_types[5], false),
                                 e->getBeginLoc(), e->getEndLoc())
                          : make_cast(e, e->ty->isSigned() ? SExt : ZExt, context.getInt()));
             }
@@ -998,12 +997,15 @@ SIDE_EFFECT:
             a = castto(a, bt);
             return fp_conv(a, b, a->ty, bt);
         }
-        auto sizeofa = at->getIntegerKind().asLog2();
-        auto sizeofb = bt->getIntegerKind().asLog2();
+        integer_promotions(a);
+        at = a->ty;
+        integer_promotions(b);
+        bt = b->ty;
+        unsigned char sizeofa = at->getIntegerKind().asLog2();
+        unsigned char sizeofb = bt->getIntegerKind().asLog2();
         bool is_a_unsigned = at->isUnsigned();
         bool is_b_unsigned = bt->isUnsigned();
-        integer_promotions(a);
-        integer_promotions(b);
+
         if (sizeofa == sizeofb) {
             if (is_a_unsigned == is_b_unsigned)
                 return;
@@ -1013,8 +1015,9 @@ SIDE_EFFECT:
                 a = bit_cast(a, bt);
             return;
         }
-        if (sizeofa > sizeofb)
+        if (sizeofa > sizeofb) {
             return (void)(b = int_cast_promote(b, is_b_unsigned, at));
+        }
         a = int_cast_promote(a, is_a_unsigned, bt);
     }
     // clang::Sema::DefaultArgumentPromotion
@@ -2262,6 +2265,7 @@ BREAK:
             case Khalf: return context.getFPHalf();
             case Kunsigned: return context.getUInt();
             case Kshort: return context.getShort();
+            case Klong: return context.getLong();
             case K_Complex:
                 warning(loc, "plain '_Complex' requires a type specifier; assuming '_Complex double'");
                 return context.getComplexDouble();
@@ -4300,6 +4304,7 @@ CONTINUE:;
     Stmt getInsertPoint() { return InsertPt; }
     void clearInsertPoint() { InsertPt = nullptr; }
     void jumpIfTrue(Expr test, label_t dst) {
+        if (!sreachable) return;
         label_t thenBB = jumper.createLabel();
         if (test->k == EConstant) {
             if (auto CI = dyn_cast<ConstantInt>(test->C)) {
@@ -4312,6 +4317,7 @@ NEXT:
         return insertLabel(thenBB);
     }
     void jumpIfFalse(Expr test, label_t dst) {
+        if (!sreachable) return;
         label_t thenBB = jumper.createLabel();
         if (test->k == EConstant) {
             if (auto CI = dyn_cast<ConstantInt>(test->C)) {
@@ -4319,19 +4325,23 @@ NEXT:
                 goto NEXT;
             }
         }
-        insertStmt(SNEW(CondJumpStmt){.test = test, .T = thenBB, .F = dst});
+        insertStmtInternal(SNEW(CondJumpStmt){.test = test, .T = thenBB, .F = dst});
 NEXT:
         return insertLabel(thenBB);
     }
     void condJump(Expr test, label_t T, label_t F) {
-        return insertStmt(SNEW(CondJumpStmt){.test = test, .T = T, .F = F});
+        if (sreachable)
+            insertStmtInternal(SNEW(CondJumpStmt){.test = test, .T = T, .F = F});
     }
-    void insertBr(label_t L) { return insertStmt(SNEW(GotoStmt){.location = L}); }
+    void insertBr(label_t L) { 
+        if (sreachable)
+            insertStmtInternal(SNEW(GotoStmt){.location = L}); 
+    }
     void insertBr(label_t L, location_t loc) { 
         return insertStmt(SNEW(GotoWithLocStmt){.location2 = L, .goto_loc = loc}); 
     }
     void insertBr(label_t L, location_t loc, IdentRef Name) {
-        return insertStmt(SNEW(GotoWithLocNameStmt){.location3 = L, .goto_loc3 = loc, .goto_name = Name});
+        insertStmt(SNEW(GotoWithLocNameStmt){.location3 = L, .goto_loc3 = loc, .goto_name = Name});
     }
     void insertLabel(label_t L) {
         sreachable = true;
@@ -5326,8 +5336,7 @@ ONE_CASE:
           intone{wrap(context.getInt(), ConstantInt::get(llvmTypeCache.ctx, APInt(context.getInt()->getBitWidth(), 1)), 0, 0)},
           cfalse{wrap(context.getBool(), ConstantInt::getFalse(llvmTypeCache.ctx), 0, 0)},
           ctrue{wrap(context.getBool(), ConstantInt::getTrue(llvmTypeCache.ctx), 0, 0)}, string_pool{irgen, llvmTypeCache},
-          null_ptr{llvm::ConstantPointerNull::get(llvmTypeCache.pointer_type)}, null_ptr_expr{wrap(context.getNullPtr_t(),
-                                                                                           null_ptr, 0, 0)} { }
+           null_ptr_expr{wrap(context.getNullPtr_t(), llvmTypeCache.null_ptr, 0, 0)} { }
     // used by Lexer
     Expr constant_expression() { return conditional_expression(); }
     void startParse() {

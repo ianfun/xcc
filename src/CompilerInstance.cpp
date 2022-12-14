@@ -80,7 +80,7 @@ struct CompilerInstance
     }
     LLVMTypeConsumer &createTypeCache() {
         if (!type_cache)
-            type_cache = new LLVMTypeConsumer(createContext(), createLLVMContext(), createOptions().g);
+            type_cache = new LLVMTypeConsumer(createContext(), createLLVMContext());
         return *type_cache;
     }
     Parser &createParser() {

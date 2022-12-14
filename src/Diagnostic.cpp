@@ -289,6 +289,7 @@ struct TextDiagnosticBuffer : public DiagnosticConsumer {
 struct DiagnosticsStore: public DiagnosticConsumer {
     std::vector<Diagnostic> diagnostics;
     virtual void HandleDiagnostic(const Diagnostic &Info) override {
+        DiagnosticConsumer::HandleDiagnostic(Info);
         diagnostics.push_back(Info);
     }
     virtual void clear() override {

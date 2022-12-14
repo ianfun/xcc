@@ -9,3 +9,13 @@
 *.obj
 tests/xc.c
 .vscode/
+tests/codegen
+tests/parser
+tests/xcc
+tests/jit
+tests/lexer
+tests/interpreter
+tests/graph
+tests/ctype
+tests/cpp
+tests/example.ll

@@ -64,7 +64,7 @@ int main(int argc_, const char **argv_)
     xcc::IRGen ig(ctx, engine, SM, llvmcontext, options);
 
     // create xcc's type cache for LLVM
-    xcc::LLVMTypeConsumer type_cache(ctx, llvmcontext, options.g);
+    xcc::LLVMTypeConsumer type_cache(ctx, llvmcontext);
 
     // configure IRGen to use it
     ig.setTypeConsumer(type_cache);

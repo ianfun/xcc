@@ -610,6 +610,7 @@ struct AstDumper {
         }
     }
 };
+/*
 struct AstJSONDumper {
     llvm::json::OStream &JOS;
     AstDumper(llvm::raw_ostream &OS, unsigned IndentSize = 0)
@@ -731,8 +732,9 @@ struct AstJSONDumper {
         }
     }
 };
+*/
 void dumpAst(const_Stmt s, enum AST_Dump_Format format = AST_Default, llvm::raw_ostream &OS = llvm::errs()) {
     if (format == AST_Default)
         return AstDumper<true>(OS).dump(s);
-    return AstJSONDumper(OS).dump(s);
+    // return AstJSONDumper(OS).dump(s);
 }

@@ -1,17 +1,5 @@
 struct LLVMTypeConsumer
 {
-    xcc_context &context;
-	LLVMContext &ctx;
-    SmallVector<llvm::Type*> tags;
-   	llvm::StructType *_complex_float, *_complex_double;
-    llvm::IntegerType *integer_types[8];
-    llvm::Type *float_types[FloatKind::MAX_KIND];
-    llvm::PointerType *pointer_type;
-    llvm::Type *void_type;
-    OnceAllocator alloc;
-    DenseMap<CType, llvm::FunctionType *> function_type_cache{};
-    DenseMap<Expr, llvm::Value *> vla_size_map{};
-    bool g = false;
     enum TypeIndex {
         voidty,
         i1ty,
@@ -38,13 +26,26 @@ struct LLVMTypeConsumer
         ptrty,
         TypeIndexHigh
     };
+    xcc_context &context;
+	LLVMContext &ctx;
+    SmallVector<llvm::Type*, 0> tags;
+   	llvm::StructType *_complex_float, *_complex_double;
+    llvm::IntegerType *integer_types[8];
+    llvm::Type *float_types[FloatKind::MAX_KIND];
+    llvm::PointerType *pointer_type;
+    llvm::Type *void_type;
+    llvm::DIBuilder *di;
+    OnceAllocator alloc;
+    DenseMap<CType, llvm::FunctionType *> function_type_cache;
+    DenseMap<Expr, llvm::Value *> vla_size_map;
+    llvm::ConstantPointerNull *null_ptr;
     llvm::Type *wrapNoComplexScalar(CType ty) {
         assert(ty->getKind() == TYPRIM);
         if (ty->isInteger())
             return integer_types[ty->getIntegerKind().asLog2()];
         return float_types[static_cast<uint64_t>(ty->getFloatKind())];
     }
-    static enum TypeIndex getTypeIndex(CType ty) {
+    static unsigned getTypeIndex(CType ty) {
         // TODO: Complex, Imaginary
         if (ty->hasTag(TYVOID))
             return voidty;
@@ -170,9 +171,10 @@ struct LLVMTypeConsumer
     void reset(unsigned num_tags) {
         tags.resize_for_overwrite(num_tags);
     }
-    LLVMTypeConsumer(xcc_context &context, LLVMContext &ctx, bool debug = false): context{context}, ctx{ctx}, alloc{}, g{debug} {
+    LLVMTypeConsumer(xcc_context &context, LLVMContext &ctx): context{context}, ctx{ctx}, alloc{} {
         pointer_type = llvm::PointerType::get(ctx, 0);
         void_type = llvm::Type::getVoidTy(ctx);
+        null_ptr = llvm::ConstantPointerNull::get(pointer_type);
         integer_types[0] = llvm::Type::getInt1Ty(ctx);
         integer_types[1] = nullptr;
         integer_types[2] = nullptr;
