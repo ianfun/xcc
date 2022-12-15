@@ -182,8 +182,6 @@ stmts = {
 	"SCondJump": ("Expr test", "label_t T", "label_t F",),
 	"SSwitch": ("Expr itest", "xvector<SwitchCase> switchs", "xvector<GNUSwitchCase> gnu_switchs", "label_t sw_default", "location_t sw_default_loc",),
 	"SIndirectBr": ("Expr jump_addr",),
-
-	"SDeclOnly": ("CType decl",),
 	"SReturn": ("Expr ret", "location_t ret_loc",),
 	"SExpr": ("Expr exprbody",),
 	"SNoReturnCall": ("Expr call_expr",),
@@ -196,7 +194,6 @@ stmts = {
 		"CType functy", 
 		"Stmt funcbody", 
 		"unsigned numLabels", 
-#		"xvector<unsigned> args",
 		"label_t *indirectBrs",
 		"unsigned localStart",
 		"unsigned localSize",

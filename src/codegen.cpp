@@ -596,8 +596,6 @@ private:
             this->currentfunction = nullptr;
         } break;
         case SReturn: ret(s->ret ? gen(s->ret) : nullptr); break;
-        case SDeclOnly:
-            break;
         case SNamedLabel:
         case SLabel: {
             auto BB = labels[s->label];
@@ -663,13 +661,18 @@ private:
                     }
                     const type_tag_t tags = varty->getTags();
                     llvm::Type *ty = wrap(varty);
-                    llvm::Constant *ginit = init ? cast<llvm::Constant>(gen(init)) : llvm::Constant::getNullValue(ty);
+                    // translate "extern void" to "extern char"
+                    if (LLVM_UNLIKELY(ty->isVoidTy())) {
+                        ty = type_cache->integer_types[3];
+                    }
                     GV =
                         new llvm::GlobalVariable(*module, ty, tags & TYCONST, ExternalLinkage, nullptr, name->getKey());
                     GV->setAlignment(align);
                     GV->setAlignment(layout->getPreferredAlign(GV));
-                    if (!(tags & TYEXTERN))
+                    if (!(tags & TYEXTERN)) {
+                        llvm::Constant *ginit = init ? cast<llvm::Constant>(gen(init)) : llvm::Constant::getNullValue(ty);
                         GV->setInitializer(ginit), GV->setDSOLocal(true);
+                    }
                     if (tags & TYTHREAD_LOCAL)
                         GV->setThreadLocal(true);
                     if (tags & TYSTATIC)

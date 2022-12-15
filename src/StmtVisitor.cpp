@@ -77,11 +77,62 @@ struct StmtEndMap {
     }
 };
 
-template <typename T>
+template <typename T, bool enableExpr>
 struct StmtVisitor {
+    void ActOnStmt(Stmt ) {}
+    void ActOnExpr(Expr ) {}
+    void VisitExpr(Expr e) {
+        assert(enableExpr);
+        switch (e->k) {
+            case EBin:
+                VisitExpr(e->lhs);
+                VisitExpr(e->rhs);
+                break;
+            case EUnary:
+                VisitExpr(e->uoperand);
+                break;
+            case EVoid:
+                VisitExpr(e->voidexpr);
+                break;
+            case ECondition:
+                VisitExpr(e->cond);
+                VisitExpr(e->cleft);
+                VisitExpr(e->cright);
+                break;
+            case ECast:
+                VisitExpr(e->castval);
+                break;
+            case ECall:
+                for (const auto it: e->callargs) 
+                    VisitExpr(it);
+                break;
+            case ESubscript:
+                VisitExpr(e->left);
+                VisitExpr(e->right);
+                break;
+            case EArray:
+                for (const auto it: e->arr)
+                    VisitExpr(it);
+                break;
+            case EStruct:
+                for (const auto it: e->arr)
+                    VisitExpr(it);
+                break;
+            case EMemberAccess:
+                VisitExpr(e->obj);
+                break;
+            case EArrToAddress:
+                VisitExpr(e->arr3);
+                break;
+            case EPostFix:
+                VisitExpr(e->poperand);
+                break;
+            default: break;
+        }
+        static_cast<T*>(this)->ActOnExpr(e);
+    }
     void Visit(Stmt s) {
         switch (s->k) {
-            static_cast<T*>(this)->ActOnStmt(s);
             case SHead:
                 for (Stmt ptr = s->next; ptr; ptr = ptr->next)
                     Visit(ptr);
@@ -93,11 +144,48 @@ struct StmtVisitor {
             case SFunction:
                 for (Stmt ptr = s->funcbody->next; ptr; ptr = ptr->next)
                     Visit(ptr);
-            default: break;
+                break;
+            default: 
+            {
+                if (enableExpr) {
+                    switch (s->k) {
+                        case SExpr:
+                            VisitExpr(s->exprbody);
+                            break;
+                        case SNoReturnCall:
+                            VisitExpr(s->call_expr);
+                            break;
+                        case SReturn:
+                            if (s->ret)
+                                VisitExpr(s->ret);
+                            break;
+                        case SCondJump:
+                            VisitExpr(s->test);
+                            break;
+                        case SSwitch:
+                            VisitExpr(s->itest);
+                            break;
+                        case SIndirectBr:
+                            VisitExpr(s->jump_addr);
+                            break;
+                        default: break;
+                    }
+                }
+            }
         }
+        static_cast<T*>(this)->ActOnStmt(s);
     }
 };
-struct StmtReleaser: public StmtVisitor<StmtReleaser> {
+// Free all AST objects within the statement (xvector/xstring, ...)
+struct StmtReleaser: public StmtVisitor<StmtReleaser, true> {
+    void ActOnExpr(Expr e) {
+        switch (e->k) {
+        case ECall: e->callargs.free(); break;
+        case EArray: e->arr.free(); break;
+        case EStruct: e->arr2.free(); break;
+        default: break;
+        }
+    }
     void ActOnStmt(Stmt s) {
         switch (s->k) {
         case SSwitch:

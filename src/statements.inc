@@ -10,7 +10,6 @@ enum StmtKind: uint8_t {
     SCondJump,
     SSwitch,
     SIndirectBr,
-    SDeclOnly,
     SReturn,
     SExpr,
     SNoReturnCall,
@@ -148,9 +147,6 @@ union alignas(void*) {
         Expr jump_addr;
     };
     struct alignas(void*) {
-        CType decl;
-    };
-    struct alignas(void*) {
         Expr ret;
         location_t ret_loc;
     };
@@ -261,13 +257,6 @@ struct IndirectBrStmt {
         Expr jump_addr;
     };
 };
-struct DeclOnlyStmt {
-    Stmt next = nullptr;
-    enum StmtKind k=SDeclOnly;
-    struct alignas(void*) {
-        CType decl;
-    };
-};
 struct ReturnStmt {
     Stmt next = nullptr;
     enum StmtKind k=SReturn;
@@ -338,7 +327,6 @@ static uint8_t stmt_size_map[] = {
     sizeof(CondJumpStmt),
     sizeof(SwitchStmt),
     sizeof(IndirectBrStmt),
-    sizeof(DeclOnlyStmt),
     sizeof(ReturnStmt),
     sizeof(ExprStmt),
     sizeof(NoReturnCallStmt),
@@ -347,7 +335,7 @@ static uint8_t stmt_size_map[] = {
     sizeof(DeclStmt),
     sizeof(FunctionStmt)
 };
-static constexpr size_t stmt_max_size = std::max({sizeof(HeadStmt), sizeof(CompoundStmt), sizeof(LabelStmt), sizeof(NamedLabelStmt), sizeof(GotoWithLocNameStmt), sizeof(GotoWithLocStmt), sizeof(GotoStmt), sizeof(CondJumpStmt), sizeof(SwitchStmt), sizeof(IndirectBrStmt), sizeof(DeclOnlyStmt), sizeof(ReturnStmt), sizeof(ExprStmt), sizeof(NoReturnCallStmt), sizeof(AsmStmt), sizeof(VarDeclStmt), sizeof(DeclStmt), sizeof(FunctionStmt)});
+static constexpr size_t stmt_max_size = std::max({sizeof(HeadStmt), sizeof(CompoundStmt), sizeof(LabelStmt), sizeof(NamedLabelStmt), sizeof(GotoWithLocNameStmt), sizeof(GotoWithLocStmt), sizeof(GotoStmt), sizeof(CondJumpStmt), sizeof(SwitchStmt), sizeof(IndirectBrStmt), sizeof(ReturnStmt), sizeof(ExprStmt), sizeof(NoReturnCallStmt), sizeof(AsmStmt), sizeof(VarDeclStmt), sizeof(DeclStmt), sizeof(FunctionStmt)});
 
 template <typename T>
 StmtIterator<T> &StmtIterator<T>::operator++() {

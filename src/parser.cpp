@@ -2450,33 +2450,39 @@ BREAK:
                     consume();
                 }
                 s.make_eos();
+                Expr result;
                 switch (enc) {
                 case Prefix_none:
                 case Prefix_u8:
                     if (!(ty->arrtype->isInteger() && ty->arrtype->getIntegerKind().asLog2() == 3))
                         type_error(loc1, "initializing %T array with string literal", ty->arrtype);
-                    return wrap(context.getFixArrayType(enc == Prefix_none ? context.getChar() : context.getChar8_t(),
+                    result = wrap(context.getFixArrayType(enc == Prefix_none ? context.getChar() : context.getChar8_t(),
                                                         s.size() + 1),
                                 enc::getUTF8(s, llvmTypeCache.ctx), loc1, endLoc);
+                    break;
                 case Prefix_L:
                     if (!(ty->arrtype->isInteger() && ty->arrtype->getIntegerKind().asLog2() == 5))
                         type_error(loc1, "initializing %T array with wide string literal", ty->arrtype);
-                    return wrap(context.getFixArrayType(context.getWChar(), s.size() + 1),
+                    result = wrap(context.getFixArrayType(context.getWChar(), s.size() + 1),
                                 context.getWCharLog2() == 5 ? enc::getUTF16As32Bit(s, llvmTypeCache.ctx)
                                                             : enc::getUTF16As16Bit(s, llvmTypeCache.ctx),
                                 loc1, endLoc);
+                    break;
                 case Prefix_u:
                     if (!(ty->arrtype->isInteger() && ty->arrtype->getIntegerKind().asLog2() == 5))
                         type_error(loc1, "initializing %T array with UTF-16 string literal", ty->arrtype);
-                    return wrap(context.getFixArrayType(context.getChar16_t(), s.size() + 1),
+                    result = wrap(context.getFixArrayType(context.getChar16_t(), s.size() + 1),
                                 enc::getUTF16As16Bit(s, llvmTypeCache.ctx), loc1, endLoc);
+                    break;
                 case Prefix_U:
                     if (!(ty->arrtype->isInteger() && ty->arrtype->getIntegerKind().asLog2() == 5))
                         type_error(loc1, "initializing %T array with UTF-32 string literal", ty->arrtype);
-                    return wrap(context.getFixArrayType(context.getUChar(), s.size() + 1), enc::getUTF32(s, llvmTypeCache.ctx),
+                    result = wrap(context.getFixArrayType(context.getUChar(), s.size() + 1), enc::getUTF32(s, llvmTypeCache.ctx),
                                 loc1, endLoc);
+                    break;
                 default: llvm_unreachable("bad string encoding");
                 }
+                return result;
             }
             if (!ty->isScalar())
                 return type_error(getLoc(), "expect bracket initializer for aggregate types"), nullptr;
@@ -2978,7 +2984,7 @@ BREAK:
             consume();
             if (base->getAlignLog2Value())
                 warning(loc, "'_Alignas' can only used in variables");
-            return insertStmt(SNEW(DeclOnlyStmt){.decl = base});
+            return;
         }
         for (;;) {
             current_declator_loc = getLoc();
@@ -3066,12 +3072,6 @@ ARGV_OK:;
             result->vars.push_back(VarDecl{.name = st.name, .ty = st.ty, .init = nullptr, .idx = idx, .loc = current_declator_loc});
             if (st.ty->hasTag(TYINLINE))
                 warning(current_declator_loc, "inline can only used in function declaration");
-            if (!(st.ty->hasTag(TYEXTERN))) {
-                if ((st.ty->isVoid()) && !(st.ty->hasTag(TYTYPEDEF)))
-                    return (void)type_error(current_declator_loc, "variable %I declared void", st.name);
-                if (st.ty->isIncomplete())
-                    return (void)type_error(current_declator_loc, "variable %I has imcomplete type %T", st.name, st.ty);
-            }
             if (l.tok.tok == TAssign) {
                 Expr init;
                 auto &var_info = sema.typedefs.getSym(idx);
@@ -3754,7 +3754,7 @@ NEXT:
         } break;
         case TStringLit: {
             location_t endLoc;
-            xstring s = l.tok.str;
+            xstring s = l.tok.str; // move ownership
             auto enc = l.tok.getStringPrefix();
             endLoc = getEndLoc();
             consume();

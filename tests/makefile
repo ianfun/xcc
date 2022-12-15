@@ -21,7 +21,7 @@ LLDFLAGS_STATIC= \
 /usr/local/lib/*.a
 
 # debug on/off
-DEBUG=-g -Wextra -Wno-unused-parameter -Wno-c++20-extensions  -fsanitize=address
+DEBUG=-g -Wextra -Wno-unused-parameter -Wno-c++20-extensions # -fsanitize=address
 
 # XCC driver with LLD disabled
 mainNoLLD:

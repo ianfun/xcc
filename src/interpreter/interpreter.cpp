@@ -171,8 +171,6 @@ struct Function: public DiagnosticHelper {
 	       			}
 	       		}
 	       		break;
-	       	case SDeclOnly:
-	       		break;
 	       	case SNamedLabel:
 	       	case SLabel:
 	       		break;

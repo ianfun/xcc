@@ -170,3 +170,7 @@ root [1] struct alignas(2) bar { int a; };
 ROOT_prompt_1:1:8: error: requested alignment is less than minimum alignment of 4 for type 'bar'
 struct alignas(2) bar { int a; };
 ```
+
+## Memory Leaks
+
+Use AddressSanitizer to detect memory leaks.
