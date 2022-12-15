@@ -1396,7 +1396,6 @@ BINOP_SHIFT:
     }
     llvm::DIType* wrapDIType(CType ty) {
         assert(ty);
-        printf("wrapDIType(%p)\n", ty);
         switch (ty->getKind()) {
             case TYPRIM:
                 return di_basic_types[type_cache->getTypeIndex(ty)];
