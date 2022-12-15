@@ -833,17 +833,18 @@ struct Declator {
 };
 // function parameter-list
 struct Param : public Declator {
-    Param(IdentRef Name = nullptr, CType ty = nullptr) : Declator{Name, ty} { }
-    Param(const Declator &decl) : Declator(decl) { }
+    Param(IdentRef Name = nullptr, CType ty = nullptr, location_t loc = 0) : Declator{Name, ty}, loc{loc} { }
+    Param(const Declator &decl) : Declator(decl), loc{0} { }
+    location_t loc;
 };
-// enumerator
+// An enumerator
 // https://clang.llvm.org/doxygen/classclang_1_1EnumConstantDecl.html
 struct EnumPair {
     IdentRef name;
     uint64_t val;
     EnumPair(IdentRef Name, uint64_t val) : name{Name}, val{val} { }
 };
-// any declaration or definition but except function definition
+// Any declaration or definition but except function definition
 // https://clang.llvm.org/doxygen/classclang_1_1VarDecl.html
 struct VarDecl {
     IdentRef name;

@@ -588,10 +588,11 @@ struct AstDumper {
             OS << ": ";
             printCType(s->functy);
             {
+                size_t Size = s->functy->params.size();
                 OS << " (";
-                for (size_t i = 0; i < s->args.size(); ++i) {
-                    OS << s->args[i];
-                    if (i != s->args.size())
+                for (size_t i = 0; i < Size; ++i) {
+                    OS << s->localStart + i;
+                    if (i != Size - 1)
                         OS << ", ";
                 }
                 OS << ")" << NL << "{" << NL;

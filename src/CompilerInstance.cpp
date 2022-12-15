@@ -85,7 +85,7 @@ struct CompilerInstance
     }
     Parser &createParser() {
         if (!parser)
-            parser = new Parser(createSourceManager(), createCodeGen(), createDiags(), createContext(), createTypeCache());
+            parser = new Parser(createSourceManager(), createCodeGen(), createDiags(), createContext(), createTypeCache(), createOptions());
         return *parser;
     }
 

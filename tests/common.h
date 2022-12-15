@@ -70,6 +70,6 @@ int main(int argc_, const char **argv_)
     ig.setTypeConsumer(type_cache);
 
     // create parser
-    xcc::Parser parser(SM, ig, engine, ctx, type_cache);
+    xcc::Parser parser(SM, ig, engine, ctx, type_cache, options);
 
     // now, parsing source files ...

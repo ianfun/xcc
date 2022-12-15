@@ -108,7 +108,7 @@ struct StmtReleaser: public StmtVisitor<StmtReleaser> {
             s->vars.free();
             break;
         case SFunction:
-            s->args.free();
+            s->functy->params.free();
             break;
         default: break;
         }

@@ -1,14 +1,25 @@
-template <typename T> struct xvector {
+struct xvectorBase {
+    static void destroy_buffer(void *Ptr) {
+        ::free(Ptr);
+    }
+    static void *allocate_buffer(size_t Bytes) {
+        return llvm::safe_malloc(Bytes);
+    }
+    static void *realloc_buffer(void *origin, size_t Bytes) {
+        return llvm::safe_realloc(origin, Bytes);
+    }
+};
+template <typename T> struct xvector: public xvectorBase {
     struct _xvector_impl {
         size_t _length, _capacity;
         T _data[0];
     } *p;
     using p_xvector_impl = _xvector_impl *;
-    void free() const { std::free(reinterpret_cast<void *>(this->p)); };
+    void free() { destroy_buffer(p); };
     static xvector<T> get() {
         xvector<T> res;
         size_t init_size = 15;
-        res.p = reinterpret_cast<p_xvector_impl>(llvm::safe_malloc(sizeof(_xvector_impl) + init_size * sizeof(T)));
+        res.p = reinterpret_cast<p_xvector_impl>(allocate_buffer(sizeof(_xvector_impl) + init_size * sizeof(T)));
         res.p->_length = 0;
         res.p->_capacity = init_size;
         return res;
@@ -16,19 +27,19 @@ template <typename T> struct xvector {
     static xvector<T> get_empty() { return xvector<T>{.p = nullptr}; }
     static xvector<T> get_with_capacity(size_t init_size) {
         xvector<T> res;
-        res.p = reinterpret_cast<p_xvector_impl>(llvm::safe_malloc(sizeof(_xvector_impl) + init_size * sizeof(T)));
+        res.p = reinterpret_cast<p_xvector_impl>(allocate_buffer(sizeof(_xvector_impl) + init_size * sizeof(T)));
         res.p->_length = 0;
         res.p->_capacity = init_size;
         return res;
     }
-    static xvector<T> from_opache_pointer(const void *Ptr) {
+    static xvector<T> from_opache_pointer(void *Ptr) {
         xvector<T> res;
-        res.p = reinterpret_cast<p_xvector_impl>(const_cast<void *>(Ptr));
+        res.p = reinterpret_cast<p_xvector_impl>(Ptr);
         return res;
     }
     static xvector<T> get_with_length(size_t length) {
         xvector<T> res;
-        res.p = reinterpret_cast<p_xvector_impl>(llvm::safe_malloc(sizeof(_xvector_impl) + length * sizeof(T)));
+        res.p = reinterpret_cast<p_xvector_impl>(allocate_buffer(sizeof(_xvector_impl) + length * sizeof(T)));
         res.p->_length = length;
         res.p->_capacity = length;
         return res;
@@ -68,7 +79,7 @@ template <typename T> struct xvector {
             p->_capacity *= 3;
             p->_capacity /= 2;
             p = reinterpret_cast<p_xvector_impl>(
-                llvm::safe_realloc(p, sizeof(_xvector_impl) + p->_capacity * sizeof(T)));
+                realloc_buffer(p, sizeof(_xvector_impl) + p->_capacity * sizeof(T)));
         }
     }
     void append(const void *src, size_t num) {

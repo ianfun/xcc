@@ -126,7 +126,7 @@ struct LLVMTypeConsumer
         case TYPOINTER: return pointer_type;
         case TYTAG: {
             if (ty->isEnum())
-                return integer_types[context.getIntLog2()];
+                return integer_types[context.getEnumLog2()];
             const auto &fields = ty->getRecord()->fields;
             size_t L = fields.size();
             llvm::Type **buf = alloc.Allocate<llvm::Type *>(L);

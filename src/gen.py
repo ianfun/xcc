@@ -196,10 +196,11 @@ stmts = {
 		"CType functy", 
 		"Stmt funcbody", 
 		"unsigned numLabels", 
-		"xvector<unsigned> args",
+#		"xvector<unsigned> args",
 		"label_t *indirectBrs",
 		"unsigned localStart",
-		"unsigned localSize"
+		"unsigned localSize",
+		"location_t funcDefLoc"
 	),
 }
 exprs = {

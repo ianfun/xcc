@@ -278,6 +278,15 @@ struct xcc_context {
     [[nodiscard]] FloatKind getLongDobuleFloatKind() const { return F_Quadruple; }
     [[nodiscard]] uint8_t getSize_tLog2() const { return 6; }
     [[nodiscard]] uint8_t getSize_tBitWidth() const { return _size_t->getIntegerKind().getBitWidth(); }
+    [[nodiscard]] unsigned getEnumSizeInBits() const {
+        return 32;
+    }
+    [[nodiscard]] unsigned getEnumLog2() const {
+        return 5;
+    }
+    [[nodiscard]] CType getEnumRealType() const {
+        return getInt();
+    }
 };
 #undef TNEW
 #undef SNEW

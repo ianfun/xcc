@@ -26,29 +26,69 @@ struct IRGen : public DiagnosticHelper {
     llvm::Function *currentfunction = nullptr;
     llvm::BasicBlock::iterator allocaInsertPt;
     llvm::DIBasicType* di_basic_types[LLVMTypeConsumer::TypeIndexHigh];
-    // `i32 1/0/-1` constant
     llvm::ConstantInt *i32_1 = nullptr, *i32_0 = nullptr, *i32_n1 = nullptr;
     llvm::IntegerType *intptrTy = nullptr;
     unsigned pointerSizeInBits = 0;
-    // LLVM false/true constant
     llvm::ConstantInt *i1_0 = nullptr, *i1_1 = nullptr;
     unsigned lastFileID = -1;
     llvm::DIFile *lastFile = nullptr;
-    // jump labels
     llvm::SmallVector<llvm::BasicBlock *, 5> labels{};
-    // struct/union
-    llvm::Value **vars = nullptr; // llvm::GlobalValue* or llvm::AllocaInst*
-    Stmt currentfunctionAST;
-    llvm::BasicBlock *insertBB;
-    unsigned current_line = 0;
-    unsigned vla_expr_count = 0;
     DenseMap<CType, llvm::DISubroutineType*> di_subroutine_type_cache;
-    DenseMap<Expr, llvm::DILocalVariable*> div_vla_expr_cache;
-    llvm::DIBuilder *di;
-    bool g;
+    DenseMap<Expr, llvm::DILocalVariable*> di_vla_expr_cache;
+    DenseMap<CType, llvm::DICompositeType*> di_composite_cache;
+    SmallVector<llvm::DIScope*> di_lex_scopes;
+    llvm::Value **vars = nullptr; // llvm::GlobalValue* or llvm::AllocaInst*
+    Stmt currentfunctionAST = nullptr;
+    llvm::BasicBlock *insertBB = nullptr;
+    
+    location_t last_location_t = -1;
+    unsigned current_line = 0;
+    unsigned current_column = 0;
+    unsigned vla_expr_count = 0;
+    const IncludeFile *current_file = nullptr;
+    llvm::DIFile* di_cur_file = nullptr;
+    llvm::DIBuilder *di = nullptr;
+    llvm::DICompileUnit *CU = nullptr;
+    llvm::DILocation *di_cur_location = nullptr;
+    bool g = false;
+
 private:
+    void setDebugLoc(location_t loc) {
+        assert(g && "Not in debug mode");
+        if (loc && loc != last_location_t) {
+            const IncludeFile *file;
+            std::pair<unsigned, unsigned> pair = SM.getLineAndColumn(loc, file);
+            if (pair.first != 0) {
+                current_line = pair.first;
+                current_column = pair.second;
+                if (file != current_file) {
+                    current_file = file;
+                    di_cur_file = di->createFile(file->cache->getName(), "");
+                }
+                di_cur_location = llvm::DILocation::get(ctx, current_line, current_column, getLexScope());
+            }
+        }
+    }
+    llvm::DIScope *getLexScope() {
+        assert(di_lex_scopes.size() && "empty scope!");
+        return di_lex_scopes.back();
+    }
+    llvm::DIFile *getFile() {
+        return di_cur_file;
+    }
+    llvm::DILocation* getCurrentDebugLocation() const {
+        return di_cur_location;
+    }
+    unsigned getLine() {
+        return current_line;
+    }
+    unsigned getColumn() {
+        return current_column;
+    }
     void AddMetadataToInst(llvm::Instruction *I) {
-        /* nothing - debug info ? */
+        if (g) {
+            I->setDebugLoc(llvm::DebugLoc(di_cur_location));
+        }
     }
     template <typename T> 
     T *Insert(T *I) {
@@ -368,6 +408,7 @@ private:
         return make_complex_pair(wrapComplex(ty), a, b);
     }
     llvm::Value *gen_cond(Expr e) {
+        assert(e);
         llvm::Value *V = gen(e);
         if (e->ty->isBool())
             return V;
@@ -445,6 +486,7 @@ private:
         return "";
     }
     void gen(Stmt s) {
+        assert(s);
         switch (s->k) {
         case SSwitch: {
             auto cond = gen(s->itest);
@@ -488,8 +530,12 @@ private:
         } break;
         case SHead: llvm_unreachable("");
         case SCompound: {
+            if (g)
+                di_lex_scopes.push_back(di->createLexicalBlock(getLexScope(), getFile(), getLine(), getColumn()));
             for (Stmt ptr = s->inner; ptr; ptr = ptr->next)
                 gen(ptr);
+            if (g)
+                di_lex_scopes.pop_back();
         } break;
         case SDecl: {
             type_cache->handleDecl(s);
@@ -500,11 +546,19 @@ private:
             break;
         case SExpr: (void)gen(s->exprbody); break;
         case SFunction: {
+            llvm::DISubprogram *SP;
             assert(this->labels.empty());
             auto ty = cast<llvm::FunctionType>(wrap(s->functy));
             currentfunctionAST = s;
             currentfunction =
                 newFunction(ty, s->funcname, s->functy->getFunctionAttrTy()->getTags(), s->func_idx, true);
+            if (g) {
+                llvm::DISubroutineType *SubTy = cast<llvm::DISubroutineType>(wrapDIType(s->functy));
+                SP = di->createFunction(getLexScope(), s->funcname->getKey(), getLinkageName(s->functy->getFunctionAttrTy()->getTags()), getFile(), getLine(), SubTy, getLine(), llvm::DINode::FlagZero, llvm::DISubprogram::SPFlagDefinition);
+                di_lex_scopes.push_back(SP);
+                setDebugLoc(s->funcDefLoc);
+                currentfunction->setSubprogram(SP);
+            }
             llvm::BasicBlock *entry = llvm::BasicBlock::Create(ctx, "entry", currentfunction);
             after(entry);
             statics("# %u labels in function\n", s->numLabels);
@@ -514,8 +568,14 @@ private:
             for (auto arg = currentfunction->arg_begin(); arg != currentfunction->arg_end(); ++arg) {
                 llvm::Type *pty = ty->getParamType(arg_no);
                 llvm::AllocaInst *p = createAlloca(pty);
+                if (g) {
+                    const Param &it = s->functy->params[arg_no];
+                    setDebugLoc(it.loc);
+                    llvm::DILocalVariable *var = di->createParameterVariable(SP, it.name->getKey(), arg_no, getFile(), getLine(), wrapDIType(it.ty));
+                    di->insertDeclare(p, var, di->createExpression(), di_cur_location, insertBB);
+                }
                 store(p, arg);
-                vars[s->args[arg_no++]] = p;
+                vars[s->localStart + arg_no++] = p;
             }
             allocaInsertPt = entry->begin();
             for (Stmt ptr = s->funcbody->next; ptr; ptr = ptr->next)
@@ -527,6 +587,10 @@ private:
                 } else {
                     ret(llvm::UndefValue::get(retTy));
                 }
+            }
+            if (g) {
+                di->finalizeSubprogram(SP);
+                di_lex_scopes.pop_back();
             }
             this->labels.clear();
             this->currentfunction = nullptr;
@@ -571,6 +635,7 @@ private:
                 auto varty = it.ty;
                 auto init = it.init;
                 auto idx = it.idx;
+                if (g) setDebugLoc(it.loc);
                 auto align = varty->getAlignAsMaybeAlign();
                 if (varty->hasTag(TYTYPEDEF)) {
                     /* nothing */
@@ -613,6 +678,10 @@ private:
                         GV->setLinkage(ExternalLinkage);
                     else if (!init && !(tags & TYCONST))
                         GV->setLinkage(CommonLinkage);
+                    if (g) {
+                        llvm::DIGlobalVariableExpression *GVE = di->createGlobalVariableExpression(getLexScope(), name->getKey(), getLinkageName(varty->getTags()), getFile(), getLine(), wrapDIType(varty), false, GV->isDeclaration());
+                        GV->addDebugInfo(GVE);
+                    }
                     vars[idx] = GV;
                 } else {
                     if (LLVM_UNLIKELY(scope_index_is_unnamed_alloca(idx))) {
@@ -623,6 +692,8 @@ private:
                     bool isVLA = false;
                     llvm::Value *alloca_size;
                     llvm::Type *ty;
+                    llvm::MaybeAlign Align;
+                    Align = varty->getAlignAsMaybeAlign();
                     if (LLVM_UNLIKELY(varty->isVLA())) {
                         // llvm.stackrestore()
                         // llvm.stacksave()
@@ -631,16 +702,23 @@ private:
                         alloca_size = pair.first;
                         ty = pair.second;
                     } else {
-                        alloca_size = nullptr;
                         ty = wrap(varty);
+                        alloca_size = nullptr;
                     }
+                    if (!Align)
+                        Align = layout->getPrefTypeAlign(ty);
                     llvm::AllocaInst *val = new llvm::AllocaInst(ty, layout->getAllocaAddrSpace(), alloca_size,
-                                                                 layout->getPrefTypeAlign(ty), name->getKey());
+                                                                 *Align, name->getKey());
                     if (LLVM_UNLIKELY(isVLA)) {
+                        insertBB->getInstList().push_back(val);
                         Insert(val);
                     } else {
                         auto &instList = currentfunction->getEntryBlock().getInstList();
                         instList.push_front(val);
+                    }
+                    if (g) {
+                        llvm::DILocalVariable *var = di->createAutoVariable(getLexScope(), name->getKey(), getFile(), getLine(), wrapDIType(varty));
+                        di->insertDeclare(val, var, di->createExpression(), di_cur_location, insertBB);
                     }
                     vars[idx] = val;
                     if (align.hasValue())
@@ -683,6 +761,8 @@ private:
         return type_cache->wrapComplexForInteger(ty);
     }
     llvm::Value *getAddress(Expr e) {
+        assert(e);
+        if (g) setDebugLoc(e->getBeginLoc());
         switch (e->k) {
         case EVar: return vars[e->sval];
         case EMemberAccess: {
@@ -755,6 +835,8 @@ private:
         return genVLASizeof(ty->vla_expr, ty->vla_arraytype);
     }
     llvm::Value *gen(Expr e) {
+        assert(e);
+        if (g) setDebugLoc(e->getBeginLoc());
         switch (e->k) {
         case EConstant: return e->C;
         case EConstantArraySubstript:
@@ -1269,10 +1351,12 @@ BINOP_SHIFT:
         default: llvm_unreachable("bad enum kind!");
         }
     }
-    void initDebugTypes() {
+    void initDebugInfo() {
         vla_expr_count = 0;
         assert(g && "Not in debug mode");
         di = new llvm::DIBuilder(*module);
+        module->addModuleFlag(llvm::Module::Warning, "Debug Info Version", llvm::DEBUG_METADATA_VERSION);
+        module->addModuleFlag(llvm::Module::Warning, "Dwarf Version", llvm::dwarf::DWARF_VERSION);
         di_basic_types[LLVMTypeConsumer::voidty] = nullptr;
         di_basic_types[LLVMTypeConsumer::i1ty] = di->createBasicType("_Bool", 1, llvm::dwarf::DW_ATE_boolean);
         di_basic_types[LLVMTypeConsumer::i8ty] = di->createBasicType("char", 8, llvm::dwarf::DW_ATE_signed_char);
@@ -1293,15 +1377,62 @@ BINOP_SHIFT:
         di_basic_types[LLVMTypeConsumer::fdecimal64ty] = di->createBasicType("_Decimal64", 64, llvm::dwarf::DW_ATE_decimal_float);
         di_basic_types[LLVMTypeConsumer::fdecimal128ty] = di->createBasicType("_Decimal128", 128, llvm::dwarf::DW_ATE_decimal_float);
         di_basic_types[LLVMTypeConsumer::ptrty] = di->createNullPtrType();
+
+        di_cur_file = di->createFile(SM.getMainFileName(), "");
+
+        CU = di->createCompileUnit(
+            llvm::dwarf::DW_LANG_C99,
+            di_cur_file,
+            "xcc",
+            options.OptimizationLevel != 0,
+            "",
+            0
+        );
+        // the file scope
+        di_lex_scopes.push_back(di_cur_file);
     }
     llvm::DIType* wrapDIType(CType ty) {
+        assert(ty);
+        printf("wrapDIType(%p)\n", ty);
         switch (ty->getKind()) {
             case TYPRIM:
                 return di_basic_types[type_cache->getTypeIndex(ty)];
             case TYPOINTER:
                 return di_basic_types[LLVMTypeConsumer::ptrty];
             case TYTAG:
-                return nullptr;                
+                switch (ty->tag) {
+                    case TagType_Enum:
+                    {
+                        auto it = di_composite_cache.insert(std::make_pair(ty, nullptr));
+                        if (it.second) {
+                            const EnumDecl &enumDecl = *ty->getEnum();
+                            size_t Size = enumDecl.enums.size();
+                            llvm::Metadata **Elements = type_cache->alloc.Allocate<llvm::Metadata*>(Size);
+                            for (size_t i = 0;i < Size;++i)
+                                Elements[i] = di->createEnumerator(enumDecl.enums[i].name->getKey(), enumDecl.enums[i].val);
+                            it.first->second = di->createEnumerationType(
+                                getLexScope(), 
+                                ty->tag_name ? ty->tag_name->getKey() : StringRef(),
+                                getFile(),
+                                getLine(),
+                                context.getEnumSizeInBits(),
+                                0,
+                                di->getOrCreateArray(ArrayRef<llvm::Metadata *>(Elements, Size)),
+                                wrapDIType(context.getEnumRealType())
+                            );
+                        }
+                        return it.first->second;
+                    }
+                    case TagType_Struct:
+                    {
+                        llvm_unreachable("TODO");
+                    }
+                    case TagType_Union:
+                    {
+                        llvm_unreachable("TODO");
+                    }
+                }
+                llvm_unreachable("invalid Tag kind");
             case TYBITFIELD:
                 return wrapDIType(ty->bittype);
             case TYARRAY:
@@ -1331,7 +1462,7 @@ BINOP_SHIFT:
             {
                 assert(module && "VLA is not allowed in file scope");
                 llvm::DIType *T = wrapDIType(ty->vla_arraytype);
-                auto it = div_vla_expr_cache.insert(std::make_pair(ty->vla_expr, nullptr));
+                auto it = di_vla_expr_cache.insert(std::make_pair(ty->vla_expr, nullptr));
                 if (it.second) {
                     char Name[20];
                     int N = snprintf(Name, sizeof(Name), "__vla_expr%u", vla_expr_count++);
@@ -1347,18 +1478,11 @@ BINOP_SHIFT:
         }
         llvm_unreachable("invalid CType");
     }
-    llvm::DIScope *getLexScope() {
-        return nullptr;
-    }
-    llvm::DIFile *getFile() {
-        return nullptr;
-    }
   public:
     [[nodiscard]] std::unique_ptr<llvm::Module> takeModule() {
         return std::move(module);
     }
     ~IRGen() {
-        if (g) delete di;
         delete machine;
         delete layout;
     }
@@ -1386,9 +1510,9 @@ BINOP_SHIFT:
         i32_0 = llvm::ConstantInt::get(i32Ty, 0);
         i1_0 = llvm::ConstantInt::getFalse(ctx);
         i1_1 = llvm::ConstantInt::getTrue(ctx);
-        if (g)
-            initDebugTypes();
         createModule();
+        if (g)
+            initDebugInfo();
     }
     uint64_t getsizeof(llvm::Type *ty) { return layout->getTypeStoreSize(ty); }
     uint64_t getsizeof(CType ty) {
@@ -1416,8 +1540,12 @@ BINOP_SHIFT:
         vars = new llvm::Value *[TU.max_typedef_scope];
 
         runCodeGenTranslationUnit(TU.ast);
-        // RunOptimizationPipeline();
+        RunOptimizationPipeline();
         delete [] vars;
+        if (di) {
+            di->finalize();
+            delete di;
+        }
         return std::move(module);
     }
     void setTypeConsumer(LLVMTypeConsumer &C) {

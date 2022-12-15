@@ -176,10 +176,10 @@ union alignas(void*) {
         CType functy;
         Stmt funcbody;
         unsigned numLabels;
-        xvector<unsigned> args;
         label_t *indirectBrs;
         unsigned localStart;
         unsigned localSize;
+        location_t funcDefLoc;
     };
 };
 };
@@ -321,10 +321,10 @@ struct FunctionStmt {
         CType functy;
         Stmt funcbody;
         unsigned numLabels;
-        xvector<unsigned> args;
         label_t *indirectBrs;
         unsigned localStart;
         unsigned localSize;
+        location_t funcDefLoc;
     };
 };
 static uint8_t stmt_size_map[] = {

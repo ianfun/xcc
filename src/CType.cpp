@@ -145,6 +145,9 @@ struct OpaqueCType {
             return llvm::Align(type_tag_t(1) << A);
         return llvm::MaybeAlign();
     }
+    llvm::Align getAlign() const {
+        return llvm::Align(type_tag_t(1) << getAlignLog2Value());
+    }
     void setAlignLog2Value(type_tag_t Align) {
         assert(Align < 64 && "Alignment too large");
         tags |= (Align << 53);
@@ -277,8 +280,12 @@ struct OpaqueCType {
         return OS << getFloatKind().show();
     }
     bool isIncomplete() const {
-        const auto kind = getKind();
-        return kind == TYTAG || isVoid() || (kind == TYARRAY && hassize == false);
+        switch (getKind()) {
+        case TYPRIM: return isVoid();
+        case TYTAG: return !hasDefinition();
+        case TYARRAY: return !hassize;
+        default: return false;
+        }
     }
     bool isBitInt() const { return getKind() == TYBITINT; }
     unsigned getBitIntBits() const {

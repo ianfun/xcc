@@ -20,35 +20,40 @@
 // https://clang.llvm.org/doxygen/classclang_1_1SrcMgr_1_1ContentCache.html
 
 struct ContentCache {
-    llvm::MemoryBuffer *Buffer = nullptr; // owns the buffer, never null
-    void *lineOffsetMapping = nullptr;
+    llvm::MemoryBuffer *Buffer; // owns the buffer, never null
+    void *lineOffsetMapping;
     StringRef Name;
     ContentCache() = delete;
     ContentCache(llvm::MemoryBuffer *Buffer, const StringRef &Name = StringRef())
-        : Buffer{Buffer}, lineOffsetMapping{}, Name{Name} {
+        : Buffer{Buffer}, lineOffsetMapping{nullptr}, Name{Name} {
     }
     ContentCache(const ContentCache &) = delete;
     void setNameAsBufferName() {
         this->Name = Buffer->getBufferIdentifier();
     }
     void setName(StringRef Name) { this->Name = Name; }
-    const StringRef &getName() const { return Name; }
-    size_t getFileSize() { return Buffer->getBufferSize(); }
+    StringRef getName() const { return Name; }
+    size_t getFileSize() const { return Buffer->getBufferSize(); }
     template <typename T> unsigned getLineNumberFor(location_t offset) const {
         const xvector<T> vec = xvector<T>::from_opache_pointer(lineOffsetMapping);
         const T *start = &vec.front();
         const T *end = &vec.back();
-        return static_cast<unsigned>(std::lower_bound(start, end, static_cast<T>(offset)) - start) + 1;
+        return static_cast<unsigned>(std::lower_bound(start, end, static_cast<T>(offset)) - start);
     }
-    unsigned getLineNumber(location_t offset) {
-        if (!lineOffsetMapping) {
-            size_t Size = getFileSize();
-            if (Size < size_t(0xFF))
-                return createLineOffsetMapping<uint8_t>(), getLineNumberFor<uint8_t>(offset);
-            else if (Size <= size_t(0xFFFF))
-                return createLineOffsetMapping<uint16_t>(), getLineNumberFor<uint16_t>(offset);
-            return createLineOffsetMapping<uint32_t>(), getLineNumberFor<uint32_t>(offset);
-        }
+    template <typename T> location_t getLocation_tFromLineImpl(unsigned line) const {
+        return xvector<T>::from_opache_pointer(lineOffsetMapping)[line];
+    }
+    location_t getLocation_tFromLine(unsigned line) const {
+        assert(lineOffsetMapping);
+        size_t Size = getFileSize();
+        if (Size < size_t(0xFF))
+            return getLocation_tFromLineImpl<uint8_t>(line);
+        else if (Size <= size_t(0xFFFF))
+            return getLocation_tFromLineImpl<uint16_t>(line);
+        return getLocation_tFromLineImpl<uint32_t>(line);
+    }
+    unsigned getLineNumber(location_t offset) const {
+        assert(lineOffsetMapping);
         size_t Size = getFileSize();
         if (Size < size_t(0xFF))
             return getLineNumberFor<uint8_t>(offset);
@@ -56,12 +61,21 @@ struct ContentCache {
             return getLineNumberFor<uint16_t>(offset);
         return getLineNumberFor<uint32_t>(offset);
     }
+    void createLineOffsetMapping() {
+        if (!lineOffsetMapping) {
+            size_t Size = getFileSize();
+            if (Size < size_t(0xFF))
+                return createLineOffsetMappingImpl<uint8_t>();
+            if (Size <= size_t(0xFFFF))
+                return createLineOffsetMappingImpl<uint16_t>();
+            return createLineOffsetMappingImpl<uint32_t>();
+        }
+    }
     llvm::MemoryBuffer *getBuffer() { return Buffer; }
     const llvm::MemoryBuffer *getBuffer() const { return Buffer; }
     const char *getBufferStart() const { return Buffer->getBufferStart(); }
-    template <typename T> void createLineOffsetMapping() {
-        xvector<T> vec = xvector<T>::get();
-        lineOffsetMapping = vec.p;
+    template <typename T> void createLineOffsetMappingImpl() {
+        xvector<T> vec = xvector<T>::get_with_capacity(256);
         T I = 0;
         size_t max = Buffer->getBufferSize();
         const char *s = Buffer->getBufferStart();
@@ -77,11 +91,12 @@ struct ContentCache {
             }
             ++I;
         }
+        lineOffsetMapping = vec.p;
     }
     ~ContentCache() {
         delete Buffer;
         if (lineOffsetMapping)
-            reinterpret_cast<xvector<char> *>(lineOffsetMapping)->free();
+            xvectorBase::destroy_buffer(lineOffsetMapping);
     }
 };
 struct IncludeFile {
@@ -233,16 +248,20 @@ PUSH:
     unsigned getColumnNumber(location_t loc) {
         location_t offset;
         const IncludeFile *entry = searchIncludeFile(loc, offset);
-        return entry ? getColumnNumber(offset, *entry) : 1;
+        if (!entry) return 1;
+        entry->cache->createLineOffsetMapping();
+        return getColumnNumber(offset, *entry);
     }
-    std::pair<unsigned, unsigned> getLineAndColumn(location_t loc) {
+    std::pair<unsigned, unsigned> getLineAndColumn(location_t loc, const IncludeFile * &entry) const {
         location_t offset;
-        const IncludeFile *entry = searchIncludeFile(loc, offset);
+        entry = searchIncludeFile(loc, offset);
         if (!entry)
             return {0U, 0U};
-        return {entry->cache->getLineNumber(offset), getColumnNumber(offset, *entry)};
+        entry->cache->createLineOffsetMapping();
+        unsigned line = entry->cache->getLineNumber(offset);
+        unsigned column = offset - entry->cache->getLocation_tFromLine(line) + 1;
+        return std::make_pair(line, column);
     }
-public:
     bool translateLocation(location_t loc, source_location &out, const ArrayRef<SourceRange> ranges = {}) {
         if (loc == 0)
             return false;

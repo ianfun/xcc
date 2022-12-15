@@ -79,6 +79,7 @@ struct Parser : public EvalHelper {
     };
     unsigned parse_flags = 0;
     IRGen &irgen;
+    Options &options;
     LLVMTypeConsumer &llvmTypeCache;
     Stmt InsertPt = nullptr;
     bool sreachable;
@@ -306,7 +307,7 @@ struct Parser : public EvalHelper {
         }
         sema.typedefs.putSym(Name, Variable_Info{
                                        .ty = context.getConstInt(),
-                                       .val = ConstantInt::get(llvmTypeCache.integer_types[5], val),
+                                       .val = ConstantInt::get(llvmTypeCache.integer_types[context.getEnumLog2()], val),
                                        .tags = ASSIGNED | USED, // enums are used by default ignore warnings
                                    });
     }
@@ -689,9 +690,9 @@ PTR_CAST:
         if (k0 == TYPOINTER && k == TYPOINTER)
             return ptr_cast(e, to, implict);
         if (k0 == TYTAG && e->ty->isEnum()) // cast from enum: bit-cast e to int first, then do-cast to ty
-            return castto(bit_cast(e, context.getInt()), to);
+            return castto(bit_cast(e, context.getEnumRealType()), to);
         if (k == TYTAG && to->isEnum()) // cast to enum: do-cast e to int first, then bit-cast to enum
-            return bit_cast(castto(e, context.getInt()), to);
+            return bit_cast(castto(e, context.getEnumRealType()), to);
         if (k0 != TYPRIM || k != TYPRIM)
             return type_error(loc, "invalid conversion from %T to %T", e->ty, to), e;
         if (e->ty->hasTag(TYVOID))
@@ -2217,6 +2218,7 @@ TYPE_SPEC:
             case Kstruct:
                 if (eat_typedef)
                     goto BREAK;
+                no_typedef = true;
                 eat_typedef = struct_union(l.tok.tok);
                 if (!eat_typedef)
                     goto BREAK;
@@ -2224,6 +2226,7 @@ TYPE_SPEC:
             case Kenum:
                 if (eat_typedef)
                     goto BREAK;
+                no_typedef = true;
                 eat_typedef = enum_decl();
                 if (!eat_typedef)
                     goto BREAK;
@@ -2272,7 +2275,7 @@ BREAK:
             case K_Imaginary:
                 warning(loc, "plain '_Imaginary' requires a type specifier; assuming '_Imaginary double'");
                 return context.getImaginaryDouble();
-            default: llvm_unreachable("unhandled type in specifier_qualifier_list()");
+            default: break;
             }
         }
         verify_one_storage_class(tags);
@@ -2814,6 +2817,7 @@ BREAK:
             if (!nt.ty)
                 return expect(current_declator_loc, "abstract-declarator"), false;
             params.push_back(nt);
+            params.back().loc = current_declator_loc;
             if (nt.ty->isIncomplete())
                 type_error(current_declator_loc, "parameter %u has imcomplete type %T", i, nt.ty), ok = false;
             if (nt.name) {
@@ -2949,7 +2953,7 @@ BREAK:
     void declaration() {
         // parse declaration or function definition
         CType base;
-        Stmt result;
+        Stmt result = nullptr;
         location_t loc = getLoc();
         sema.currentAlign = 0;
         if (l.tok.tok == K_Static_assert) {
@@ -2976,7 +2980,6 @@ BREAK:
                 warning(loc, "'_Alignas' can only used in variables");
             return insertStmt(SNEW(DeclOnlyStmt){.decl = base});
         }
-        result = SNEW(VarDeclStmt){.vars = xvector<VarDecl>::get()};
         for (;;) {
             current_declator_loc = getLoc();
             Declator st = declarator(base, D_Direct);
@@ -3022,14 +3025,14 @@ ARGV_OK:;
                 Stmt res = SNEW(FunctionStmt){.func_idx = idx,
                                               .funcname = st.name,
                                               .functy = st.ty,
-                                              .args = xvector<unsigned>::get_with_length(st.ty->params.size()),
                                               .indirectBrs = nullptr,
-                                              .localStart = static_cast<unsigned>(sema.typedefs.data.size())
+                                              .localStart = static_cast<unsigned>(sema.typedefs.data.size()),
+                                              .funcDefLoc = current_declator_loc
                                           };
                 sema.currentfunction = st.ty;
                 sema.pfunc = st.name;
                 res->localSize = res->localStart;
-                res->funcbody = function_body(st.ty->params, res->args, loc, res->localSize);
+                res->funcbody = function_body(st.ty->params, loc, res->localSize);
                 sema.pfunc = nullptr;
                 sema.currentfunction = nullptr;
                 res->numLabels = jumper.cur;
@@ -3058,7 +3061,8 @@ ARGV_OK:;
             print_cdecl(st.name->getKey(), st.ty, llvm::errs(), true);
 #endif
             unsigned idx = putsymtype(st.name, st.ty, current_declator_loc);
-
+            if (!result)
+                result = SNEW(VarDeclStmt){.vars = xvector<VarDecl>::get()};
             result->vars.push_back(VarDecl{.name = st.name, .ty = st.ty, .init = nullptr, .idx = idx, .loc = current_declator_loc});
             if (st.ty->hasTag(TYINLINE))
                 warning(current_declator_loc, "inline can only used in function declaration");
@@ -3066,7 +3070,7 @@ ARGV_OK:;
                 if ((st.ty->isVoid()) && !(st.ty->hasTag(TYTYPEDEF)))
                     return (void)type_error(current_declator_loc, "variable %I declared void", st.name);
                 if (st.ty->isIncomplete())
-                    return (void)type_error(current_declator_loc, "variable %I has imcomplete type %T", st.name);
+                    return (void)type_error(current_declator_loc, "variable %I has imcomplete type %T", st.name, st.ty);
             }
             if (l.tok.tok == TAssign) {
                 Expr init;
@@ -4714,8 +4718,12 @@ ONE_CASE:
             insertBr(CMP);
             insertLabel(LEAVE);
             auto num = leaveBlock(false);
-            if (decl_begin)
+            if ((!options.g) && decl_begin) {
                 removeUnusedVariables(decl_begin, decl_begin->next, decl_end, num);
+            } else {
+                sema.typedefs.pop();
+                sema.tags.pop();
+            }
             return;
         }
         case Kdo: {
@@ -5213,13 +5221,18 @@ ONE_CASE:
             insertStmtEnd();
             sreachable = old;
         }
-        auto num = leaveBlock(false);
-        Stmt real_head = head->inner->next;
-        removeUnusedVariables(head->inner, head->inner->next, nullptr, num);
-        if (!head->inner->next)
-            head->inner = real_head ? real_head->next : nullptr;
-        else
-            head->inner = real_head;
+        if (!options.g) {
+            auto num = leaveBlock(false);
+            Stmt real_head = head->inner->next;
+            removeUnusedVariables(head->inner, head->inner->next, nullptr, num);
+            if (!head->inner->next)
+                head->inner = real_head ? real_head->next : nullptr;
+            else
+                head->inner = real_head;
+        } else {
+            leaveBlock();
+            head->inner = head->inner->next;
+        }
         consume();
         clearFlag(Flag_this_scope_has_vla);
         insertStmt(head);
@@ -5247,7 +5260,7 @@ ONE_CASE:
                 note(loc, "jump bypasses initialization of variable length array");
         }
     };
-    Stmt function_body(const xvector<Param> params, xvector<unsigned> &args, location_t loc, unsigned &num_locals) {
+    Stmt function_body(const xvector<Param> params, location_t loc, unsigned &num_locals) {
         consume();
         Stmt head = SNEW(HeadStmt){};
         sema.typedefs.push_function();
@@ -5255,8 +5268,7 @@ ONE_CASE:
         assert(jumper.cur == 0 && "labels scope should be empty in start of function");
         location_t loc4 = getLoc();
         for (size_t i = 0; i < params.size(); ++i)
-            args[i] =
-                sema.typedefs.putSym(params[i].name, Variable_Info{.ty = params[i].ty, .loc = loc4, .tags = ASSIGNED});
+            (void)sema.typedefs.putSym(params[i].name, Variable_Info{.ty = params[i].ty, .loc = loc4, .tags = ASSIGNED});
         {
             llvm::SaveAndRestore<Stmt> saved_ip(InsertPt, head);
             eat_compound_statement();
@@ -5294,12 +5306,16 @@ ONE_CASE:
             VLAJumpDetector<VLAErrorReporter> detector(jumper.vla_forbidden_labels, reporter);
             detector.Visit(head);
         }
-        auto num = leaveBlock(false);
-        Stmt old_next = head->next;
-        clearFlag(Flag_this_function_has_vla, Flag_this_scope_has_vla);
-        removeUnusedVariables(head, head->next, nullptr, num);
-        if (!head->next)
-            head->next = old_next ? old_next->next : nullptr;
+        if (!options.g) {
+            auto num = leaveBlock(false);
+            Stmt old_next = head->next;
+            clearFlag(Flag_this_function_has_vla, Flag_this_scope_has_vla);
+            removeUnusedVariables(head, head->next, nullptr, num);
+            if (!head->next)
+                head->next = old_next ? old_next->next : nullptr;
+        } else {
+            leaveBlock();
+        }
         num_locals = num_locals - sema.typedefs.data.size();
         sema.typedefs.pop_function();
         consume();
@@ -5329,8 +5345,8 @@ ONE_CASE:
      */
   public:
     // constructor
-    Parser(SourceMgr &SM, IRGen &irgen, DiagnosticsEngine &Diag, xcc_context &theContext, LLVMTypeConsumer &llvmTypeCache)
-        : EvalHelper{Diag}, l(SM, this, theContext, Diag), context{theContext}, irgen{irgen}, llvmTypeCache{llvmTypeCache},
+    Parser(SourceMgr &SM, IRGen &irgen, DiagnosticsEngine &Diag, xcc_context &theContext, LLVMTypeConsumer &llvmTypeCache, Options &options)
+        : EvalHelper{Diag}, l(SM, this, theContext, Diag), context{theContext}, irgen{irgen}, options{options}, llvmTypeCache{llvmTypeCache},
           intzero{wrap(context.getInt(), ConstantInt::get(llvmTypeCache.ctx, APInt::getZero(context.getInt()->getBitWidth())),
                        0, 0)},
           intone{wrap(context.getInt(), ConstantInt::get(llvmTypeCache.ctx, APInt(context.getInt()->getBitWidth(), 1)), 0, 0)},
