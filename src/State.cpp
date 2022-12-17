@@ -287,6 +287,36 @@ struct xcc_context {
     [[nodiscard]] CType getEnumRealType() const {
         return getInt();
     }
+    [[nodiscard]] CType getStringType(enum StringPrefix enc) const {
+        switch (enc) {
+            case Prefix_none:
+                return stringty;
+            case Prefix_u8:
+                return str8ty;
+            case Prefix_L:
+                return wstringty;
+            case Prefix_u:
+                return str16ty;
+            case Prefix_U:
+                return str32ty;
+        }
+        llvm_unreachable("invalid enum StringPrefix");
+    }
+    [[nodiscard]] unsigned getStringCharSizeInBits(enum StringPrefix enc) const {
+        switch (enc) {
+            case Prefix_none:
+                return 8;
+            case Prefix_u8:
+                return 8;
+            case Prefix_L:
+                return getWCharLog2() == 5 ? 32 : 16;
+            case Prefix_u:
+                return 16;
+            case Prefix_U:
+                return 32;
+        }
+        llvm_unreachable("invalid enum StringPrefix");
+    }
 };
 #undef TNEW
 #undef SNEW

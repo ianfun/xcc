@@ -88,6 +88,7 @@ struct Parser : public EvalHelper {
     Expr intzero, intone, size_t_one, cfalse, ctrue;
     StringPool string_pool;
     Expr null_ptr_expr;
+    SmallString<64> parseLiteralCache;
 
   private:
     llvm::Type *wrapFloating(CType ty) { return llvmTypeCache.wrapFloating(ty); }
@@ -2427,6 +2428,30 @@ BREAK:
             consume(), ty = context.getPointerType(ty), type_qualifier_list(ty);
         return direct_declarator(ty, flags);
     }
+    llvm::Constant *parse_string_literal(size_t &strLength) {
+        assert(l.tok.tok == TStringLit);
+        l.parse_string_literal_data(parseLiteralCache);
+        llvm::Constant *C;
+        unsigned Size = context.getStringCharSizeInBits();
+        switch (Size) {
+        case 8:
+            parseLiteralCache.push_back('\0');
+            C = enc::getUTF8(parseLiteralCache.str(), irgen.ctx);
+            strLength = parseLiteralCache.size();
+            break;
+        case 16:
+            C = enc::getUTF16As16Bit(parseLiteralCache.str(), irgen.ctx, strLength);
+            break;
+        case 32:
+            C = prefix == Prefix_L ? 
+                enc::getUTF16As32Bit(parseLiteralCache.str(), irgen.ctx, strLength) : 
+                enc::getUTF32(parseLiteralCache.str(), irgen.ctxm strLength);
+            break;
+        default: llvm_unreachable("unhandled size");
+        }
+        parseLiteralCache.clear();
+        return C;
+    }
     Expr initializer_list() {
         Expr e, result;
         int m;
@@ -2436,20 +2461,11 @@ BREAK:
                 return assignment_expression();
             auto k = ty->getKind();
             if (k == TYARRAY && l.tok.tok == TStringLit) {
-                xstring s = l.tok.str;
-                auto enc = l.tok.getStringPrefix();
                 location_t loc1 = getLoc();
                 location_t endLoc;
-                consume();
-                while (l.tok.tok == TStringLit) {
-                    auto enc2 = l.tok.getStringPrefix();
-                    s.push_back(l.tok.str);
-                    if (enc2 != enc)
-                        type_error(getLoc(), "unsupported non-standard concatenation of string literals");
-                    endLoc = getEndLoc();
-                    consume();
-                }
-                s.make_eos();
+                enum StringPrefix enc = l.tok.getStringPrefix();
+                size_t strLength;
+                llvm::Constant *C = parse_string_literal(strLength);
                 Expr result;
                 switch (enc) {
                 case Prefix_none:
@@ -2457,27 +2473,26 @@ BREAK:
                     if (!(ty->arrtype->isInteger() && ty->arrtype->getIntegerKind().asLog2() == 3))
                         type_error(loc1, "initializing %T array with string literal", ty->arrtype);
                     result = wrap(context.getFixArrayType(enc == Prefix_none ? context.getChar() : context.getChar8_t(),
-                                                        s.size() + 1),
-                                enc::getUTF8(s, llvmTypeCache.ctx), loc1, endLoc);
+                                                        strLength),
+                                C, loc1, endLoc);
                     break;
                 case Prefix_L:
                     if (!(ty->arrtype->isInteger() && ty->arrtype->getIntegerKind().asLog2() == 5))
                         type_error(loc1, "initializing %T array with wide string literal", ty->arrtype);
-                    result = wrap(context.getFixArrayType(context.getWChar(), s.size() + 1),
-                                context.getWCharLog2() == 5 ? enc::getUTF16As32Bit(s, llvmTypeCache.ctx)
-                                                            : enc::getUTF16As16Bit(s, llvmTypeCache.ctx),
+                    result = wrap(context.getFixArrayType(context.getWChar(), strLength),
+                                C,
                                 loc1, endLoc);
                     break;
                 case Prefix_u:
                     if (!(ty->arrtype->isInteger() && ty->arrtype->getIntegerKind().asLog2() == 5))
                         type_error(loc1, "initializing %T array with UTF-16 string literal", ty->arrtype);
-                    result = wrap(context.getFixArrayType(context.getChar16_t(), s.size() + 1),
-                                enc::getUTF16As16Bit(s, llvmTypeCache.ctx), loc1, endLoc);
+                    result = wrap(context.getFixArrayType(context.getChar16_t(), strLength),
+                                C, loc1, endLoc);
                     break;
                 case Prefix_U:
                     if (!(ty->arrtype->isInteger() && ty->arrtype->getIntegerKind().asLog2() == 5))
                         type_error(loc1, "initializing %T array with UTF-32 string literal", ty->arrtype);
-                    result = wrap(context.getFixArrayType(context.getUChar(), s.size() + 1), enc::getUTF32(s, llvmTypeCache.ctx),
+                    result = wrap(context.getFixArrayType(context.getUChar(), strLength), C,
                                 loc1, endLoc);
                     break;
                 default: llvm_unreachable("bad string encoding");
@@ -2899,7 +2914,9 @@ BREAK:
         consume(); // eat '('
         if (l.tok.tok != TStringLit)
             return expect(getLoc(), "string literal"), nullptr;
-        result = SNEW(AsmStmt){.asms = l.tok.str};
+        l.parse_string_literal_data(parseLiteralCache);
+        result = SNEW(AsmStmt){.asms = xstring::get(parseLiteralCache.str())};
+        parseLiteralCache.clear();
         consume(); // eat string
         if (l.tok.tok != TRbracket)
             return expectRB(getLoc()), nullptr;
@@ -2925,9 +2942,10 @@ BREAK:
             consume();
             if (l.tok.tok != TStringLit)
                 return expect(loc, "string literal in static assert"), false;
+            l.parse_string_literal_data(parseLiteralCache);
             if (!ok)
-                parse_error(loc, "static assert failed: %s", l.tok.str.data());
-            consume();
+                parse_error(loc, "static assert failed: %R", parseLiteralCache.str(););
+            parseLiteralCache.clear();
             if (l.tok.tok != TRbracket)
                 return expectRB(getLoc()), false;
             consume();
@@ -3754,38 +3772,10 @@ NEXT:
         } break;
         case TStringLit: {
             location_t endLoc;
-            xstring s = l.tok.str; // move ownership
-            auto enc = l.tok.getStringPrefix();
-            endLoc = getEndLoc();
-            consume();
-            while (l.tok.tok == TStringLit) {
-                auto enc2 = l.tok.getStringPrefix();
-                s.push_back(l.tok.str);
-                if (enc2 != enc)
-                    type_error(getLoc(), "unsupported non-standard concatenation of string literals");
-                endLoc = getEndLoc();
-                consume();
-            }
-            s.make_eos();
-            switch (enc) {
-            case Prefix_none:
-                result = ENEW(ConstantArrayExpr){.ty = context.stringty, .array = string_pool.getAsUTF8(s)};
-                break;
-            case Prefix_u8:
-                result = ENEW(ConstantArrayExpr){.ty = context.str8ty, .array = string_pool.getAsUTF8(s)};
-                break;
-            case Prefix_L:
-                result = ENEW(ConstantArrayExpr){.ty = context.wstringty,
-                                                 .array = string_pool.getAsUTF16(s, context.getWCharLog2() == 5)};
-                break;
-            case Prefix_u:
-                result = ENEW(ConstantArrayExpr){.ty = context.str16ty, .array = string_pool.getAsUTF16(s, false)};
-                break;
-            case Prefix_U:
-                result = ENEW(ConstantArrayExpr){.ty = context.str32ty, .array = string_pool.getAsUTF32(s)};
-                break;
-            default: llvm_unreachable("bad encoding");
-            }
+            size_t strLength;
+            enum StringPrefix enc = l.tok.getStringPrefix();
+            llvm::Constant *C = parse_string_literal(strLength);
+            result = ENEW(ConstantArrayExpr){.ty = context.getStringType(enc), .array = C};
             result->constantArrayLoc = loc;
             result->constantArrayLocEnd = endLoc;
         } break;

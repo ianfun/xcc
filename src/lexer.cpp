@@ -200,6 +200,31 @@ private:
             str.push_back(0x80 | (chr & 0x3f));
         }
     }
+    void cat_codepoint(SmallVectorImpl<char> &str, Codepoint chr) {
+        if (0 == (0xffffff80 & chr)) {
+            /* 1-byte/7-bit ascii
+             * (0b0xxxxxxx) */
+            str.push_back(chr);
+        } else if (0 == (0xfffff800 & chr)) {
+            /* 2-byte/11-bit utf8 code point
+             * (0b110xxxxx 0b10xxxxxx) */
+            str.push_back(0xc0 | (chr >> 6));
+            str.push_back(0x80 | (chr & 0x3f));
+        } else if (0 == (0xffff0000 & chr)) {
+            /* 3-byte/16-bit utf8 code point
+             * (0b1110xxxx 0b10xxxxxx 0b10xxxxxx) */
+            str.push_back(0xe0 | (chr >> 12));
+            str.push_back(0x80 | ((chr >> 6) & 0x3f));
+            str.push_back(0x80 | (chr & 0x3f));
+        } else { /* if (0 == ((int)0xffe00000 & chr)) { */
+            /* 4-byte/21-bit utf8 code point
+             * (0b11110xxx 0b10xxxxxx 0b10xxxxxx 0b10xxxxxx) */
+            str.push_back(0xf0 | (chr >> 18));
+            str.push_back(0x80 | ((chr >> 12) & 0x3f));
+            str.push_back(0x80 | ((chr >> 6) & 0x3f));
+            str.push_back(0x80 | (chr & 0x3f));
+        }
+    }
     TokenV lexIdent() {
         TokenV theTok = TokenV(PPIdent);
         for (;;) {
@@ -278,85 +303,83 @@ R:
     //
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-    TokenV lexPPNumberEnd(xstring &s) {
+    TokenV lexPPNumberEnd() {
         switch (c) {
         case 'p':
         case 'P':
         case 'e':
         case 'E': {
-            s.push_back(c);
             eat();
             if (c == '+' || c == '-')
-                s.push_back(c), eat();
+                eat();
             return lexPPNumberEnd(s);
         }
         default: {
             if (c == '\'')
                 eat();
             if (isalnum(c) || c == '.') {
-                return lexPPNumberDigits(s);
+                return lexPPNumber(s);
             }
             if (c == '\\') {
                 Codepoint codepoint;
-                s.push_back(c);
                 eat();
                 if (c == 'u')
-                    codepoint = lexUChar(4);
+                    lexUChar(4);
                 else if (c == 'U')
-                    codepoint = lexUChar(8);
-                else
-                    goto END;
-                cat_codepoint(s, codepoint);
-END:
-                return lexPPNumberEnd(s);
+                    lexUChar(8);
+                return lexPPNumberEnd();
             }
             endLoc = SM.getLoc() - 2;
-            s.make_eos();
-            TokenV theTok = TokenV(PPNumber);
-            theTok.str = s;
-            return theTok;
+            return PPNumber;
         }
         }
     }
-    TokenV lexPPNumberDigits(xstring &s) {
+    TokenV lexPPNumber() {
         do {
-            s.push_back(c);
             eat();
             if (c == '\'')
                 eat();
         } while (isalnum(c) || c == '\'');
-        return lexPPNumberEnd(s);
+        return lexPPNumberEnd();
     }
-    TokenV lexPPNumberAfterDot() {
-        xstring s = xstring::get_with_capacity(14);
-        s.push_back('.');
-        return lexPPNumberDigits(s);
+    void lexString(SmallVectorImpl<char> &buffer, TokenV theTok) {
+        StringRef literalData = theTok.getLiteralString(SM());
+        StringRef inner = StringRef(buffer.data() + 1, literalData.size() - 1);
+        llvm::errs() << "lexString: inner = " << inner << '\n';
+        for (const char c: inner) {
+            if (c == '\\') {
+                l.cat_codepoint(buffer, lexEscape());
+            } else if (c == '"') {
+                break;
+            } else {
+                buffer.push_back(c);
+            }
+        }
     }
-    TokenV lexPPNumber() {
-        xstring s = xstring::get_with_capacity(13);
-        return lexPPNumberDigits(s);
+    void parse_string_literal_data(SmallVectorImpl<char> &buffer) {
+        enum StringPrefix prefix = getStringPrefix();
+        do {
+            enum StringPrefix prefix2 = getStringPrefix()
+            if (prefix != prefix2)
+                error(l.tok.getLoc(), "unsupported non-standard concatenation of string literals");
+            lexString(buffer);
+            consume();
+        } while(l.tok.tok == TStringLit);
     }
     TokenV lexStringLit(enum StringPrefix enc = Prefix_none) {
-        xstring str = xstring::get();
         eat(); // eat "
-        TokenV theTok = TokenV(TStringLit);
         for (;;) {
             if (c == '\\')
-                cat_codepoint(str, lexEscape());
+                (void)lexEscape();
             else if (c == '"') {
                 endLoc = SM.getLoc() - 1;
                 eat();
                 break;
             } else {
-                if (c == '\0') {
-                    warning(loc, "missing terminating \" character");
-                    break;
-                }
-                str.push_back(c);
                 eat();
             }
         }
-        theTok.str = str;
+        TokenV theTok = TStringLit;
         theTok.setStringPrefix(enc);
         return theTok;
     }
@@ -859,7 +882,7 @@ STD_INCLUDE:
                     return TEllipsis;
                 }
                 if (llvm::isDigit(c))
-                    return lexPPNumberAfterDot();
+                    return lexPPNumber();
                 return TDot;
             case '0':
             case '1':

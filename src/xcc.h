@@ -1100,10 +1100,9 @@ struct TokenV {
     Token tok: 8; // 1 bytes
     unsigned length: 24; // 3 bytes
     location_t loc; // 4 bytes
-    union {
-        // containing the encoding, .e.g: 8, 16, 32
-        xstring str;
-        IdentRef s; // 64 bits
+    union { // pointer size
+        uint8_t strenc;
+        IdentRef s;
         struct {
             uint8_t i;
             uint8_t itag;
@@ -1112,11 +1111,7 @@ struct TokenV {
     };
     TokenV(Token tok = TNul, location_t loc = 0) : tok{tok}, loc{loc} {}
     TokenV(struct LocTree *tree) :  tok{PPMacroTraceLoc}, loc{0} { this->tree = tree; }
-    enum StringPrefix getStringPrefix() {
-        auto r = static_cast<enum StringPrefix>(static_cast<unsigned char>(str.back()));
-        str.pop_back();
-        return r;
-    }
+    enum StringPrefix getStringPrefix() { return static_cast<enum StringPrefix>(strenc);  }
     // Return the start location.
     location_t getLoc() const {
         return loc;
@@ -1131,6 +1126,7 @@ struct TokenV {
     Token getToken() const {
         return tok;
     }
+    StringRef getLiteralString(const struct SourceMgr &SM) const;
     bool is(Token tok) const {
         return this->tok == tok;
     }
@@ -1154,60 +1150,16 @@ struct TokenV {
     bool isNull() const {
         return tok == TNul;
     }
-    void setStringPrefix(enum StringPrefix enc = Prefix_none) { str.push_back(static_cast<char>(enc)); }
+    void setStringPrefix(enum StringPrefix enc = Prefix_none) { this->strenc = enc; }
     enum StringPrefix getCharPrefix() const { return static_cast<enum StringPrefix>(itag); }
-    void dump(raw_ostream &OS = llvm::errs()) const {
-        switch (tok) {
-        default:
-            if (tok >= kw_start) 
-                OS << s->getKey();
-            else 
-                OS << show(tok); 
-            break;
-        case PPNumber: OS << str.str(); break;
-        case TStringLit: OS.write_escaped(str.str()); break;
-        case TCharLit:
-            if (isprint(i)) {
-                OS << '\'' << i << '\'';
-            } else {
-                (OS << "<0x").write_hex(i) << '>';
-            }
-            break;
-        }
-    }
+    void dump(raw_ostream &OS, const struct SourceMgr &SM) const;
 };
 enum MacroFlags: unsigned char {
     Macro_Function = 0x1,
     Macro_VarArgs = 0x2
 };
 struct PPMacroDef {
-    static bool tokensEq(const ArrayRef<TokenV> &a, const ArrayRef<TokenV> &b) {
-        if (a.size() != b.size())
-            return false;
-        for (unsigned i = 0; i < a.size(); ++i) {
-            TokenV x = a[i];
-            TokenV y = b[i];
-            if (x.tok > TIdentifier)
-                x.tok = TIdentifier;
-            if (y.tok > TIdentifier)
-                y.tok = TIdentifier;
-            if (x.tok != y.tok)
-                return false;
-            switch (x.tok) {
-            case TStringLit:
-            case PPNumber:
-                if (x.str.str() != y.str.str())
-                    return false;
-                break;
-            case TIdentifier:
-                if (x.s != y.s)
-                    return false;
-                break;
-            default: break;
-            }
-        }
-        return true;
-    }
+    static bool tokensEq(const ArrayRef<TokenV> &a, const ArrayRef<TokenV> &b, const struct SourceMgr &SM);
     IdentRef Name;
     SmallVector<TokenV, 8> tokens;
     SmallVector<IdentRef, 2> params;
@@ -1227,8 +1179,8 @@ struct PPMacroDef {
     IdentRef getName() const {
         return Name;
     }
-    bool equals(const PPMacroDef &other) const {
-        return (flags == other.flags) && tokensEq(tokens, other.tokens);
+    bool equals(const PPMacroDef &other, const struct SourceMgr &SM) const {
+        return (flags == other.flags) && tokensEq(tokens, other.tokens, SM);
     }
     bool isObj() const {
         return !(flags & Macro_Function);
@@ -1274,6 +1226,57 @@ static unsigned scalarRank(const_CType ty) {
 #include "Scope.cpp"
 #include "State.cpp"
 #include "SourceMgr.cpp"
+
+StringRef TokenV::getLiteralString(const struct SourceMgr &SM) const {
+    return StringRef(SM.getBufferForLoc(loc), offset);
+}
+
+void TokenV::dump(raw_ostream &OS = llvm::errs(), const struct SourceMgr &SM) const {
+    switch (tok) {
+    default:
+        if (tok >= kw_start) 
+            OS << s->getKey();
+        else 
+            OS << show(tok); 
+        break;
+    case PPNumber: OS.write_escaped(getLiteralString(SM)); break;
+    case TStringLit: OS.write_escaped(getLiteralString(SM)); break;
+    case TCharLit:
+        if (isprint(i)) {
+            OS << '\'' << i << '\'';
+        } else {
+            (OS << "<0x").write_hex(i) << '>';
+        }
+        break;
+    }
+}
+static bool PPMacroDef::tokensEq(const ArrayRef<TokenV> &a, const ArrayRef<TokenV> &b, const struct SourceMgr &SM) {
+    if (a.size() != b.size())
+        return false;
+    for (unsigned i = 0; i < a.size(); ++i) {
+        TokenV x = a[i];
+        TokenV y = b[i];
+        if (x.tok > TIdentifier)
+            x.tok = TIdentifier;
+        if (y.tok > TIdentifier)
+            y.tok = TIdentifier;
+        if (x.tok != y.tok)
+            return false;
+        switch (x.tok) {
+        case TStringLit:
+        case PPNumber:
+            if (x.getLiteralString(SM) != y.getLiteralString(SM))
+                return false;
+            break;
+        case TIdentifier:
+            if (x.s != y.s)
+                return false;
+            break;
+        default: break;
+        }
+    }
+    return true;
+}
 #include "TextDiagnosticPrinter.cpp"
 #include "LLVMTypeConsumer.cpp"
 #include "codegen.cpp"

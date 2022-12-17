@@ -47,7 +47,7 @@ IsUTF8(StringRef str) {
 
 // clang-format on
 
-llvm::Constant *getUTF8(const StringRef &s, LLVMContext &ctx) {
+llvm::Constant *getUTF8(StringRef s, LLVMContext &ctx) {
     if (s.empty()) {
         auto Ty = llvm::ArrayType::get(llvm::Type::getInt8Ty(ctx), 1);
         return llvm::ConstantAggregateZero::get(Ty);
@@ -55,9 +55,10 @@ llvm::Constant *getUTF8(const StringRef &s, LLVMContext &ctx) {
     return llvm::ConstantDataArray::getString(ctx, s, false);
 }
 
-template <typename T> llvm::Constant *getUTF16AsNBit(const StringRef &s, LLVMContext &ctx) {
+template <typename T> llvm::Constant *getUTF16AsNBit(StringRef s, LLVMContext &ctx, size_t &strLength) {
     if (s.empty()) {
         auto Ty = llvm::ArrayType::get(llvm::Type::getIntNTy(ctx, sizeof(T)), 1);
+        strLength = 0;
         return llvm::ConstantAggregateZero::get(Ty);
     }
     SmallVector<T> data;
@@ -72,13 +73,15 @@ template <typename T> llvm::Constant *getUTF16AsNBit(const StringRef &s, LLVMCon
         data.push_back(0xD7C0 + (codepoint >> 10));
         data.push_back(0xDC00 + (codepoint & 0x3FF));
     }
+    data.push_back(0);
+    strLength = data.size();
     return llvm::ConstantDataArray::get(ctx, data);
 }
 // in Linux, wchar_t are 32 bit(int)
-llvm::Constant *getUTF16As32Bit(const StringRef &s, LLVMContext &ctx) { return getUTF16AsNBit<uint32_t>(s, ctx); }
+llvm::Constant *getUTF16As32Bit(StringRef s, LLVMContext &ctx, size_t &strLength) { return getUTF16AsNBit<uint32_t>(s, ctx, strLength); }
 // in Windows, wchar_t are 16 bit(unsigned short)
-llvm::Constant *getUTF16As16Bit(const StringRef &s, LLVMContext &ctx) { return getUTF16AsNBit<uint16_t>(s, ctx); }
-llvm::Constant *getUTF32(const StringRef &s, LLVMContext &ctx) {
+llvm::Constant *getUTF16As16Bit(StringRef s, LLVMContext &ctx, size_t &strLength) { return getUTF16AsNBit<uint16_t>(s, ctx, strLength); }
+llvm::Constant *getUTF32(StringRef s, LLVMContext &ctx, size_t &strLength) {
     if (s.empty()) {
         auto Ty = llvm::ArrayType::get(llvm::Type::getInt32Ty(ctx), 1);
         return llvm::ConstantAggregateZero::get(Ty);
@@ -88,6 +91,8 @@ llvm::Constant *getUTF32(const StringRef &s, LLVMContext &ctx) {
     for (const auto c : s)
         if (!decode(&state, &codepoint, (uint32_t)(unsigned char)c))
             data.push_back(codepoint);
+    data.push_back(0);
+    strLength = data.size();
     return llvm::ConstantDataArray::get(ctx, data);
 }
 

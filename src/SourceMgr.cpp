@@ -283,6 +283,12 @@ NO_TREE:
         get_source(offset, out, loc, ranges, *fd);
         return true;
     }
+    const char *getBufferForLoc(location_t loc) const {
+        location_t offset;
+        const IncludeFile * entry = searchIncludeFile(loc, offset);
+        if (!entry) return nullptr;
+        return entry->getBufferStart() + offset;
+    }
     // translate location_t to
     // 1. source line(string)
     // 2. line
