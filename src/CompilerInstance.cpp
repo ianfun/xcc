@@ -57,35 +57,20 @@ struct CompilerInstance
             llvm_context = new LLVMContext();
         return *llvm_context;
     }
-    const llvm::Target* createTarget() {
-        createOptions();
-        if (options->theTarget) return options->theTarget;
-        std::string Error;
-        options->theTarget = llvm::TargetRegistry::lookupTarget(options->triple.str(), Error);
-        if (!options->theTarget) {
-            DiagnosticHelper helper{createDiags()};
-            helper.error("unknown target triple %R, please use -triple or -arch", options->triple.str());
-            helper.note("%R", Error);
-            auto it = llvm::TargetRegistry::targets().begin();
-            if (it != llvm::TargetRegistry::targets().end())
-                options->theTarget = &*it;
-        }
-        return options->theTarget;
-    }
     IRGen &createCodeGen() {
-        createTarget();
+        options->createTarget(createDiags());
         if (!codegen)
-            codegen = new IRGen(createContext(), createDiags(), createSourceManager(), createLLVMContext(), createOptions());
+            codegen = new IRGen(createSourceManager(), createContext(), createOptions(), createTypeCache());
         return *codegen;
     }
     LLVMTypeConsumer &createTypeCache() {
         if (!type_cache)
-            type_cache = new LLVMTypeConsumer(createContext(), createLLVMContext());
+            type_cache = new LLVMTypeConsumer(createLLVMContext(), createOptions());
         return *type_cache;
     }
     Parser &createParser() {
         if (!parser)
-            parser = new Parser(createSourceManager(), createCodeGen(), createDiags(), createContext(), createTypeCache(), createOptions());
+            parser = new Parser(createSourceManager(), createContext(), createTypeCache(), createOptions());
         return *parser;
     }
 
@@ -112,7 +97,7 @@ struct CompilerInstance
     // Emit LLVM IR for a TranslationUnit.
     // \pre prepareCodeGen
     std::unique_ptr<llvm::Module> CodeGen(const TranslationUnit &TU) {
-        return codegen->run(TU, createTypeCache());
+        return codegen->run(TU);
     }
     // Parse a TranslationUnit and emit LLVM IR.
     std::unique_ptr<llvm::Module> ParseAndCodeGen() {

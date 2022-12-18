@@ -483,6 +483,14 @@ public:
         includeStack.emplace_back(cache, getInsertPos(), includePos);
         addBuffer();
     }
+    IncludeFile *addScratchBuffer(llvm::MemoryBuffer *Buffer) {
+        ContentCache *cache = new ContentCache(Buffer);
+        cache->setNameAsBufferName();
+        cached_strings.push_back(cache);
+        includeStack.emplace_back(cache, getInsertPos(), 0);
+        addBuffer();
+        return &includeStack.back();
+    }
 private:
     inline void setCurPtr() {
         IncludeFile file = includeStack[grow_include_stack.back()];

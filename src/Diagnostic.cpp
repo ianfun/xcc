@@ -362,6 +362,7 @@ struct DiagnosticBuilder {
 struct DiagnosticHelper {
     DiagnosticsEngine &engine;
     DiagnosticHelper(DiagnosticsEngine &engine) : engine{engine} { }
+    DiagnosticHelper(const DiagnosticHelper &other): engine{other.engine} {}
     unsigned getNumErrors() const { return engine.getNumErrors(); }
     unsigned getNumWarnings() const { return engine.getNumWarnings(); }
 #define DIAGNOSTIC_HANDLER(HANDLER, LEVEL)                                                                             \
@@ -400,7 +401,8 @@ struct DiagnosticHelper {
     void expectRB(location_t loc) { parse_error(loc, "%s", "missing " lquote ")" rquote); }
 };
 struct EvalHelper : public DiagnosticHelper {
-    EvalHelper(DiagnosticsEngine &engine) : DiagnosticHelper(engine) { }
+    EvalHelper(DiagnosticsEngine &engine) : DiagnosticHelper{engine} { }
+    EvalHelper(const DiagnosticHelper &other): DiagnosticHelper{other} {}
     [[nodiscard]] uint64_t force_eval(Expr e) {
         if (e->k != EConstant) {
             type_error(e->getBeginLoc(), "not a constant expression: %E", e) << e->getSourceRange();

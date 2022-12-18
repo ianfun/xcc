@@ -680,7 +680,6 @@ struct IntegerKind {
 };
 static constexpr uint64_t build_integer(IntegerKind kind, bool Signed = false), build_float(FloatKind kind);
 
-#include "option.cpp"
 #include "Arena.cpp"
 #include "tokens.inc"
 #include "IdentifierTable.h"
@@ -922,6 +921,8 @@ struct TranslationUnit {
 #include "expressions.inc"
 #include "statements.inc"
 #include "utf8.cpp"
+#include "Diagnostic.cpp"
+#include "option.cpp"
 #include "printer.cpp"
 #include "Graph.cpp"
 
@@ -970,14 +971,14 @@ location_t OpaqueExpr::getBeginLoc() const {
     case EConstant: return constantLoc;
     case ECondition: return cond->getBeginLoc();
     case ECall: return callfunc->getBeginLoc();
-    case EConstantArray: return constantArrayLoc;
+    case EString: return stringLoc;
     case EMemberAccess: return obj->getBeginLoc();
     case EArrToAddress: return arr3->getBeginLoc();
     case EPostFix: return poperand->getBeginLoc();
     case EArray: return ArrayStartLoc;
     case EStruct: return StructStartLoc;
     case EVoid: return voidStartLoc;
-    case EConstantArraySubstript: return constantArraySubscriptLoc;
+    case EConstantArraySubstript: return casLoc;
     }
     llvm_unreachable("invalid Expr");
 }
@@ -991,8 +992,8 @@ location_t OpaqueExpr::getEndLoc() const {
     case EBin: return rhs->getEndLoc();
     case EUnary: return uoperand->getEndLoc();
     case ESubscript: return right->getEndLoc();
-    case EConstantArraySubstript: return constantArraySubscriptLocEnd;
-    case EConstantArray: return constantArrayLocEnd;
+    case EConstantArraySubstript: return casEndLoc;
+    case EString: return stringEndLoc;
     case EVoid: return voidexpr->getEndLoc();
     case ECast: return castval->getEndLoc();
     case EVar: return varLoc + varName->getKey().size() - 1;
@@ -1082,7 +1083,7 @@ static bool compatible(CType p, CType expected) {
 static bool isConstant(const_Expr e) {
     switch (e->k) {
         case EConstant:
-        case EConstantArray:
+        case EString:
         case EConstantArraySubstript:
         case EBlockAddress:
             return true;
@@ -1101,7 +1102,7 @@ struct TokenV {
     unsigned length: 24; // 3 bytes
     location_t loc; // 4 bytes
     union { // pointer size
-        uint8_t strenc;
+        const char *str;
         IdentRef s;
         struct {
             uint8_t i;
@@ -1111,7 +1112,36 @@ struct TokenV {
     };
     TokenV(Token tok = TNul, location_t loc = 0) : tok{tok}, loc{loc} {}
     TokenV(struct LocTree *tree) :  tok{PPMacroTraceLoc}, loc{0} { this->tree = tree; }
-    enum StringPrefix getStringPrefix() { return static_cast<enum StringPrefix>(strenc);  }
+    bool operator!=(const TokenV &other) const { return !(*this == other); }
+    bool operator==(const TokenV &other) const {
+        Token x = this->tok;
+        Token y = other.tok;
+        if (x > TIdentifier)
+            x = TIdentifier;
+        if (y > TIdentifier)
+            y = TIdentifier;
+        if (x != y)
+            return false;
+        switch (x) {
+        case TStringLit:
+        case PPNumber:
+            return StringRef(this->str) == StringRef(other.str);
+        case TIdentifier:
+            return this->s == other.s;
+        default: return true;
+        }
+    }
+    enum StringPrefix getStringPrefix() {
+        switch (str[0]) {
+        case 'U':
+            return Prefix_U;
+        case 'L':
+            return Prefix_L;
+        case 'u':
+            return str[1] == '8' ? Prefix_u8 : Prefix_u;
+        default: return Prefix_none;
+        }
+    }
     // Return the start location.
     location_t getLoc() const {
         return loc;
@@ -1126,7 +1156,6 @@ struct TokenV {
     Token getToken() const {
         return tok;
     }
-    StringRef getLiteralString(const struct SourceMgr &SM) const;
     bool is(Token tok) const {
         return this->tok == tok;
     }
@@ -1147,19 +1176,45 @@ struct TokenV {
         assert(this->loc <= loc && "invalid endLoc!");
         length = loc - this->loc + 1;
     }
+    void setLength(unsigned length) {
+        assert(length && "empty length is invalid token");
+        this->length = length;
+    }
     bool isNull() const {
         return tok == TNul;
     }
-    void setStringPrefix(enum StringPrefix enc = Prefix_none) { this->strenc = enc; }
+    StringRef getStringLiteral() const {
+        return StringRef(str, length);
+    }
+    StringRef getPPNumberLit() const {
+        return StringRef(str, length);
+    }
     enum StringPrefix getCharPrefix() const { return static_cast<enum StringPrefix>(itag); }
-    void dump(raw_ostream &OS, const struct SourceMgr &SM) const;
+    void dump(raw_ostream &OS = llvm::errs()) const {
+        switch (tok) {
+        default:
+            if (tok >= kw_start) 
+                OS << s->getKey();
+            else 
+                OS << show(tok); 
+            break;
+        case PPNumber: OS << str; break;
+        case TStringLit: OS << str; break;
+        case TCharLit:
+            if (isprint(i)) {
+                OS << '\'' << i << '\'';
+            } else {
+                (OS << "<0x").write_hex(i) << '>';
+            }
+            break;
+        }
+    }
 };
 enum MacroFlags: unsigned char {
     Macro_Function = 0x1,
     Macro_VarArgs = 0x2
 };
 struct PPMacroDef {
-    static bool tokensEq(const ArrayRef<TokenV> &a, const ArrayRef<TokenV> &b, const struct SourceMgr &SM);
     IdentRef Name;
     SmallVector<TokenV, 8> tokens;
     SmallVector<IdentRef, 2> params;
@@ -1179,8 +1234,13 @@ struct PPMacroDef {
     IdentRef getName() const {
         return Name;
     }
-    bool equals(const PPMacroDef &other, const struct SourceMgr &SM) const {
-        return (flags == other.flags) && tokensEq(tokens, other.tokens, SM);
+    static bool tokensEq(const ArrayRef<TokenV> &a, const ArrayRef<TokenV> &b) {
+        for (size_t i = 0;i < a.size();++i) 
+            if (a[i] != b[i]) return false;
+        return true;
+    }
+    bool equals(const PPMacroDef &other) const {
+        return (flags == other.flags) && tokensEq(tokens, other.tokens);
     }
     bool isObj() const {
         return !(flags & Macro_Function);
@@ -1218,7 +1278,6 @@ static unsigned scalarRank(const_CType ty) {
     return scalarRank(ty);
 }
 
-#include "Diagnostic.cpp"
 #ifdef XCC_JIT
 #include "JIT.cpp"
 #endif
@@ -1226,63 +1285,11 @@ static unsigned scalarRank(const_CType ty) {
 #include "Scope.cpp"
 #include "State.cpp"
 #include "SourceMgr.cpp"
-
-StringRef TokenV::getLiteralString(const struct SourceMgr &SM) const {
-    return StringRef(SM.getBufferForLoc(loc), offset);
-}
-
-void TokenV::dump(raw_ostream &OS = llvm::errs(), const struct SourceMgr &SM) const {
-    switch (tok) {
-    default:
-        if (tok >= kw_start) 
-            OS << s->getKey();
-        else 
-            OS << show(tok); 
-        break;
-    case PPNumber: OS.write_escaped(getLiteralString(SM)); break;
-    case TStringLit: OS.write_escaped(getLiteralString(SM)); break;
-    case TCharLit:
-        if (isprint(i)) {
-            OS << '\'' << i << '\'';
-        } else {
-            (OS << "<0x").write_hex(i) << '>';
-        }
-        break;
-    }
-}
-static bool PPMacroDef::tokensEq(const ArrayRef<TokenV> &a, const ArrayRef<TokenV> &b, const struct SourceMgr &SM) {
-    if (a.size() != b.size())
-        return false;
-    for (unsigned i = 0; i < a.size(); ++i) {
-        TokenV x = a[i];
-        TokenV y = b[i];
-        if (x.tok > TIdentifier)
-            x.tok = TIdentifier;
-        if (y.tok > TIdentifier)
-            y.tok = TIdentifier;
-        if (x.tok != y.tok)
-            return false;
-        switch (x.tok) {
-        case TStringLit:
-        case PPNumber:
-            if (x.getLiteralString(SM) != y.getLiteralString(SM))
-                return false;
-            break;
-        case TIdentifier:
-            if (x.s != y.s)
-                return false;
-            break;
-        default: break;
-        }
-    }
-    return true;
-}
 #include "TextDiagnosticPrinter.cpp"
 #include "LLVMTypeConsumer.cpp"
 #include "codegen.cpp"
 #include "lexer.cpp"
 #include "output.cpp"
-#include "StringPool.cpp"
 #include "StmtVisitor.cpp"
 #include "parser.cpp"
 #include "lexerDefinition.cpp"

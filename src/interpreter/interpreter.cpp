@@ -194,7 +194,7 @@ struct Function: public DiagnosticHelper {
         case ESubscript:
         	llvm_unreachable("");
         case EArrToAddress: return getAddress(e->voidexpr);
-        case EConstantArray: llvm_unreachable("");
+        case EString: llvm_unreachable("");
         case EArray:
         case EStruct: llvm_unreachable("");
         default:
@@ -237,9 +237,13 @@ struct Function: public DiagnosticHelper {
             case EConstant: return e->C;
             case EBlockAddress:
         	   return reinterpret_cast<Value>(getLabel(e->addr));
-            case EConstantArraySubstript: return llvm::ConstantExpr::getInBoundsGetElementPtr(type_cache.wrap(e->ty->p), e->carray,
-                                                                        ConstantInt::get(type_cache.ctx, e->cidx));;
-            case EConstantArray: return e->array;
+            case EConstantArraySubstript: 
+                return llvm::ConstantExpr::getInBoundsGetElementPtr(
+                    type_cache.wrap(e->ty->p), 
+                    e->array,
+                    ConstantInt::get(type_cache.intptrTy, e->cidx)
+                );;
+            case EString: return e->string;
             case EBin:
     {
         enum BinOp bop = e->bop;
@@ -535,17 +539,7 @@ struct IncrementalExecutor
 {
     CompilerInstance &CI;
     ExecutionSession session;
-    IncrementalExecutor(CompilerInstance &CI, const std::string &triple): CI{CI}, session{llvm::DataLayout("")} {
-        const llvm::Target *theTarget = CI.createTarget();
-        llvm::TargetOptions opt;
-        llvm::TargetMachine *machine = theTarget->createTargetMachine(triple, "generic", "", opt, llvm::None);
-        if (machine) {
-            session.DL = machine->createDataLayout();
-        }
-    }
-    IncrementalExecutor(CompilerInstance &CI, const llvm::Triple &triple): IncrementalExecutor{CI, triple.str()} {}
-    IncrementalExecutor(CompilerInstance &CI): IncrementalExecutor{CI, CI.getOptions().triple} {}
-    IncrementalExecutor(CompilerInstance &CI, const llvm::DataLayout &DL): CI{CI}, session{DL} {}
+    IncrementalExecutor(CompilerInstance &CI): CI{CI}, session{CI.getOptions().DL} {}
 	const ExecutionSession &getExecutionSession() const {
 		return session;
 	}
@@ -568,9 +562,6 @@ struct Interpreter {
     IncrementalExecutor exe;
     SmallVector<Stmt> asts;
     Interpreter(CompilerInstance &CI): parser{CI}, exe{CI} {}
-    Interpreter(CompilerInstance &CI, const llvm::DataLayout &DL): parser{CI}, exe{CI, DL} {}
-    Interpreter(CompilerInstance &CI, const std::string &triple): parser{CI}, exe{CI, triple} {}
-    Interpreter(CompilerInstance &CI, const llvm::Triple &triple): parser{CI}, exe{CI, triple} {}
     bool Parse(StringRef input_line, TranslationUnit &TU) {
         return parser.Parse(input_line, TU);
     }

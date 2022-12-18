@@ -1,8 +1,10 @@
 struct Options {
     StringRef mainFileName;
     llvm::Triple triple;
+    llvm::DataLayout DL;
+    llvm::TargetMachine *machine;
     SmallString<256> CWD;
-    mutable const llvm::Target *theTarget;
+    const llvm::Target *theTarget;
     bool g : 1;
     bool trigraphs : 1;
     bool UnrollLoops : 1;
@@ -19,9 +21,11 @@ struct Options {
     std::vector<std::string> PassPlugins;
     llvm::Reloc::Model RelocationModel;
     Optional<llvm::CodeModel::Model> CodeModel;
-    Options(): 
+    Options(std::string tripleStr = llvm::sys::getDefaultTargetTriple()): 
         mainFileName{},
-        triple{llvm::sys::getDefaultTargetTriple()},
+        triple{tripleStr},
+        DL{""},
+        machine{nullptr},
         CWD{},
         theTarget{nullptr},
         g{false}, 
@@ -43,16 +47,38 @@ struct Options {
          {
             llvm::sys::fs::current_path(CWD);
         }
-    void createTarget() const {
-        std::string Error;
-        if (theTarget) return;
-        theTarget = llvm::TargetRegistry::lookupTarget(triple.str(), Error);
-        if (!theTarget) {
-            auto it = llvm::TargetRegistry::targets().begin();
-            if (it != llvm::TargetRegistry::targets().end())
-                theTarget = &*it;
-            else
-                llvm::report_fatal_error(llvm::Twine(Error));
+    llvm::CodeGenOpt::Level getCGOptLevel() const {
+        switch (OptimizationLevel) {
+        default: llvm_unreachable("Invalid optimization level!");
+        case 0: return llvm::CodeGenOpt::None;
+        case 1: return llvm::CodeGenOpt::Less;
+        case 2: return llvm::CodeGenOpt::Default; // O2/Os/Oz
+        case 3: return llvm::CodeGenOpt::Aggressive;
         }
+    }
+    void createTarget(DiagnosticsEngine &engine) {
+        if (this->theTarget) return;
+        std::string Error;
+        this->theTarget = llvm::TargetRegistry::lookupTarget(this->triple.str(), Error);
+        if (!this->theTarget) {
+            DiagnosticHelper helper{engine};
+            helper.error("unknown target triple %R, please use -triple or -arch", this->triple.str());
+            helper.note("%R", Error);
+            auto it = llvm::TargetRegistry::targets().begin();
+            assert(it != llvm::TargetRegistry::targets().end() && "No target registered");
+            this->theTarget = &*it;
+        }
+        llvm::TargetOptions opt;
+        this->machine = this->theTarget->createTargetMachine(
+            this->triple.str(), 
+            "generic", 
+            "", 
+            opt,
+            this->RelocationModel, 
+            this->CodeModel,
+            this->getCGOptLevel()
+        );
+        if (!this->machine)
+            llvm::report_fatal_error("Failed to create TargetMachine");
     }
 };

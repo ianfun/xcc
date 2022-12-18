@@ -2,6 +2,37 @@
 
 struct Parser;
 
+struct ScratchBuffer {
+    SourceMgr &SM;
+    static constexpr unsigned ScratchBufSize = 4060;
+    IncludeFile *curFile = nullptr;
+    unsigned BytesUsed = ScratchBufSize;
+    char *CurBuffer = nullptr;
+    ScratchBuffer(SourceMgr &SM): SM{SM} {}
+    TokenV getToken(const char *Buf, unsigned Len) {
+        TokenV theTok = TStringLit;
+        if (BytesUsed+Len+2 > ScratchBufSize)
+            AllocScratchBuffer(Len+2);
+        CurBuffer[BytesUsed++] = '\n';
+        theTok.str = CurBuffer+BytesUsed;
+        memcpy(CurBuffer+BytesUsed, Buf, Len);
+        BytesUsed += Len+1;
+        CurBuffer[BytesUsed-1] = '\0';
+        location_t newLoc = curFile->getStartLoc() + BytesUsed - Len - 1;
+        theTok.setLoc(newLoc);
+        theTok.setLength(Len);
+        return theTok;
+    }
+    void AllocScratchBuffer(unsigned RequestLen) {
+        if (RequestLen < ScratchBufSize)
+            RequestLen = ScratchBufSize;
+        llvm::WritableMemoryBuffer *newBuffer = llvm::WritableMemoryBuffer::getNewMemBuffer(RequestLen, "<scratch space>").release();
+        CurBuffer = const_cast<char*>(newBuffer->getBufferStart());
+        curFile = SM.addScratchBuffer(newBuffer);
+        BytesUsed = 0;
+    }
+};
+
 struct Lexer : public EvalHelper {
     enum PPFlags : uint8_t {
         PFNormal = 1,
@@ -25,14 +56,14 @@ struct Lexer : public EvalHelper {
     uint32_t counter = 0;
     location_t loc = 0, endLoc = 0;
     xcc_context &context;
+    ScratchBuffer ScratchBuf;
 
     ~Lexer() {
         lexIdnetBuffer.free();
     }
-    Lexer(SourceMgr &SM, Parser *parser, xcc_context &context, DiagnosticsEngine &Diag)
-        : EvalHelper{Diag}, parser{parser}, SM{SM}, context{context} { initC(); }
+    Lexer(SourceMgr &SM, xcc_context &context, Parser *parser = nullptr)
+        : EvalHelper{SM}, parser{parser}, SM{SM}, context{context}, ScratchBuf{SM} { initC(); }
     void initC() { c = ' '; }
-private:
     location_t getLoc() const { return loc; }
     location_t getEndLoc() const { return endLoc; }
     Expr constant_expression();
@@ -54,11 +85,25 @@ private:
         if (codepoint >= 0xD800 && codepoint <= 0xDFFF)
             lex_error(loc, "universal character %U in surrogate range", codepoint);
     }
-    void eat() { c = SM.skip_read(); }
+    inline void eat() { c = SM.skip_read(); }
+    Codepoint lexHexChar(const unsigned char * &s) {
+        Codepoint n = 0;
+        for (;;) {
+            Codepoint t = *s++;
+            if (llvm::isDigit(t))
+                n = (n << 4) | (t - '0' + 0);
+            else if (t >= 'a' && t <= 'f')
+                n = (n << 4) | (t - 'a' + 10);
+            else if (t >= 'A' && t <= 'F')
+                n = (n << 4) | (t - 'A' + 10);
+            else
+                return n;
+        }
+    }
     Codepoint lexHexChar() {
         Codepoint n = 0;
         for (;;) {
-            unsigned char t = c;
+            Codepoint t = (unsigned char)c;
             if (llvm::isDigit(t))
                 n = (n << 4) | (t - '0' + 0);
             else if (t >= 'a' && t <= 'f')
@@ -70,29 +115,89 @@ private:
             eat();
         }
     }
-    Codepoint lexUChar(unsigned count) {
-        location_t loc = getLoc();
-        unsigned n = 0, i = 0;
-
-        for (;;) {
-            unsigned char t = c;
+    void consumeHexChar() {
+        while (llvm::isHexDigit(c))
+            eat();
+    }
+    void consumeUChar(unsigned count) {
+        unsigned i = 0;
+        do {
+            if (!llvm::isHexDigit(c))
+                lex_error(getLoc(), "incomplete universal character name (expect %u hex digits)", count);
+            eat();
+        } while (i < count);
+    }
+    Codepoint lexUChar(unsigned count, const unsigned char * &s, location_t TheLoc) {
+        unsigned i = 0;
+        Codepoint n = 0;
+        do {
+            Codepoint t = *s++;
             i++;
             if (llvm::isDigit(t))
                 n = (n << 4) | (t - '0');
             else if (t >= 'a' && t <= 'f')
                 n = (n << 4) | (t - 'a' + 10);
-            else if (t >= 'A' && t <= 'F')
+            else
                 n = (n << 4) | (t - 'A' + 10);
-            else {
-                warning("unexpected token %C, expect %u hex digits for universal character", t, count);
-                break;
-            }
-            eat();
-            if (i == count)
-                break;
-        }
-        validUCN(n, loc);
+        } while (i < count);
+        validUCN(n, TheLoc);
         return n;
+    }
+    Codepoint lexUChar(unsigned count) {
+        unsigned i = 0;
+        Codepoint n = 0;
+        do {
+            Codepoint t = static_cast<unsigned char>(c);
+            i++;
+            if (llvm::isDigit(t))
+                n = (n << 4) | (t - '0');
+            else if (t >= 'a' && t <= 'f')
+                n = (n << 4) | (t - 'a' + 10);
+            else
+                n = (n << 4) | (t - 'A' + 10);
+            eat();
+        } while (i < count);
+        validUCN(n, getLoc());
+        return n;
+    }
+    Codepoint lexEscape(const unsigned char *&s, location_t TheLoc) {
+        s++;
+        switch (*s++) {
+        case 'a': return 7;
+        case 'b': return 8;
+        case 'f': return 12;
+        case 'n': return 10;
+        case 'r': return 13;
+        case 't': return 9;
+        case 'v': return 11;
+        case 'e':
+        case 'E': return 27;
+        case 'x': return lexHexChar(s);
+        case 'u': return lexUChar(4, s, TheLoc);
+        case 'U': return lexUChar(8, s, TheLoc);
+        case '0':
+        case '1':
+        case '2':
+        case '3':
+        case '4':
+        case '5':
+        case '6':
+        case '7': {
+            Codepoint n = Codepoint(s[-1]) - '0';
+            if (*s >= '0' && *s <= '7') {
+                n = (n << 3) | (Codepoint(*s) - '0');
+                s++;
+                if (*s >= '0' && *s <= '7') {
+                    n = (n << 3) | (Codepoint(*s) - '0');
+                    s++;
+                }
+            }
+            return n;
+        }
+        default: {
+            return s[-1];
+        }
+        }
     }
     Codepoint lexEscape() {
         eat();
@@ -106,9 +211,9 @@ private:
         case 'v': return eat(), 11;
         case 'e':
         case 'E': return eat(), 27;
-        case 'x': return eat(), lexHexChar();
-        case 'u': return eat(), lexUChar(4);
-        case 'U': return eat(), lexUChar(8);
+        case 'x': return lexHexChar();
+        case 'u': return lexUChar(4);
+        case 'U': return lexUChar(8);
         case '0':
         case '1':
         case '2':
@@ -117,22 +222,50 @@ private:
         case '5':
         case '6':
         case '7': {
-            auto n = (Codepoint)c - '0';
-            eat(); // eat first
-            if ((unsigned char)c >= '0' && (unsigned char)c <= '7') {
-                n = (n << 3) | ((unsigned char)c - '0');
-                eat(); // eat second
-                if ((unsigned char)c >= '0' && (unsigned char)c <= '7') {
-                    n = (n << 3) | ((unsigned char)c - '0');
-                    eat(); // eat third
+            unsigned char t = c;
+            Codepoint n = Codepoint(t) - '0';
+            eat();
+            t = c;
+            if (t >= '0' && t <= '7') {
+                n = (n << 3) | (Codepoint(t) - '0');
+                eat();
+                t = c;
+                if (t >= '0' && t <= '7') {
+                    n = (n << 3) | (Codepoint(t) - '0');
+                    eat();
                 }
             }
             return n;
         }
         default: {
-            auto c2 = c;
+            unsigned char t = c;
             eat();
-            return c2;
+            return t; 
+        }
+        }
+    }
+    void consumeEscape() {
+        eat();
+        switch (c) {
+        case 'x': return eat(), consumeHexChar();
+        case 'u': return eat(), consumeUChar(4);
+        case 'U': return eat(), consumeUChar(8);
+        case '0':
+        case '1':
+        case '2':
+        case '3':
+        case '4':
+        case '5':
+        case '6':
+        case '7': 
+        {
+            eat();
+            while (c >= '0' && c <= '7')
+                eat();
+            return;
+        }
+        default: {
+            eat();
         }
         }
     }
@@ -312,16 +445,15 @@ R:
             eat();
             if (c == '+' || c == '-')
                 eat();
-            return lexPPNumberEnd(s);
+            return lexPPNumberEnd();
         }
         default: {
             if (c == '\'')
                 eat();
             if (isalnum(c) || c == '.') {
-                return lexPPNumber(s);
+                return lexPPNumber();
             }
             if (c == '\\') {
-                Codepoint codepoint;
                 eat();
                 if (c == 'u')
                     lexUChar(4);
@@ -342,46 +474,31 @@ R:
         } while (isalnum(c) || c == '\'');
         return lexPPNumberEnd();
     }
-    void lexString(SmallVectorImpl<char> &buffer, TokenV theTok) {
-        StringRef literalData = theTok.getLiteralString(SM());
-        StringRef inner = StringRef(buffer.data() + 1, literalData.size() - 1);
-        llvm::errs() << "lexString: inner = " << inner << '\n';
-        for (const char c: inner) {
+    TokenV lexStringLit(enum StringPrefix enc) {
+        eat();
+        for (;c != '\"';) {
             if (c == '\\') {
-                l.cat_codepoint(buffer, lexEscape());
-            } else if (c == '"') {
-                break;
+                consumeEscape();
+            } else {
+                eat();
+            }
+        }
+        eat();
+        return TStringLit;
+    }
+    void lexString(SmallVectorImpl<char> &buffer, const TokenV &theTok) {
+        assert(buffer.empty() && "buffer must be empty");
+        const unsigned char *s = reinterpret_cast<const unsigned char*>(theTok.getStringLiteral().data());
+        do {} while (*s++ != '\"');
+        for (;;) {
+            char c = *s++;
+            if (c == '"') break;
+            if (c == '\\') {
+                cat_codepoint(buffer, lexEscape(s, theTok.getLoc()));
             } else {
                 buffer.push_back(c);
             }
         }
-    }
-    void parse_string_literal_data(SmallVectorImpl<char> &buffer) {
-        enum StringPrefix prefix = getStringPrefix();
-        do {
-            enum StringPrefix prefix2 = getStringPrefix()
-            if (prefix != prefix2)
-                error(l.tok.getLoc(), "unsupported non-standard concatenation of string literals");
-            lexString(buffer);
-            consume();
-        } while(l.tok.tok == TStringLit);
-    }
-    TokenV lexStringLit(enum StringPrefix enc = Prefix_none) {
-        eat(); // eat "
-        for (;;) {
-            if (c == '\\')
-                (void)lexEscape();
-            else if (c == '"') {
-                endLoc = SM.getLoc() - 1;
-                eat();
-                break;
-            } else {
-                eat();
-            }
-        }
-        TokenV theTok = TStringLit;
-        theTok.setStringPrefix(enc);
-        return theTok;
     }
     void beginExpandMacro(PPMacroDef *M) {
         SM.beginExpandMacro(M, context);
@@ -950,7 +1067,6 @@ STD_INCLUDE:
             eat();
         }
     }
-private:
     void checkMacro() {
         IdentRef name = tok.s;
         Token saved_tok;
@@ -958,10 +1074,10 @@ private:
         case PP__LINE__:
         case PP__COUNTER__: {
             unsigned val = saved_tok == PP__LINE__ ? SM.current_line : counter++;
-            char buf[13];
-            int n = snprintf(buf, sizeof(buf), "%u", val);
-            tok = TokenV(PPNumber);
-            tok.str = xstring::get(StringRef(buf, n));
+            SmallString<13> str;
+            raw_svector_ostream OS(str);
+            OS << val;
+            tok = ScratchBuf.getToken(str.data(), str.size());
             return;
         }
         case PP__DATE__:
@@ -969,22 +1085,22 @@ private:
             time_t now = time(nullptr);
             struct tm *t = localtime(&now);
 
-            xstring str = xstring::get_with_capacity(32);
+            char buffer[32];
+            int N;
             if (saved_tok == PP__DATE__)
                 // Mmm dd yyyy
-                str.msize() = snprintf(str.data(), 32, "%s %2d %4d", months[t->tm_mon], t->tm_mday, t->tm_year + 1900);
+                N = snprintf(buffer, sizeof(buffer), "%s %2d %4d", months[t->tm_mon], t->tm_mday, t->tm_year + 1900);
             else
                 // hh:mm:ss
-                str.msize() = snprintf(str.data(), 32, "%02d:%02d:%02d", t->tm_hour, t->tm_min, t->tm_sec);
-            tok = TokenV(TStringLit);
-            tok.str = str;
-            tok.setStringPrefix(Prefix_none);
+                N = snprintf(buffer, sizeof(buffer), "%02d:%02d:%02d", t->tm_hour, t->tm_min, t->tm_sec);
+            tok = ScratchBuf.getToken(buffer, N);
             return;
         }
         case PP__FILE__: {
-            tok = TokenV(TStringLit);
-            tok.str = xstring::get(SM.getFileName());
-            tok.setStringPrefix(Prefix_none);
+            SmallString<128> str;
+            raw_svector_ostream OS(str);
+            OS << '"' << SM.getFileName() << '"';
+            tok = ScratchBuf.getToken(str.data(), str.size());
             return;
         }
         case PP_Pragma: {

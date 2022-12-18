@@ -8,7 +8,7 @@
         return 1;
     }
 
-    std::unique_ptr<llvm::Module> M(ig.run(TU, type_cache));
+    std::unique_ptr<llvm::Module> M(ig.run(TU));
 
     xcc::StmtReleaser().Visit(TU.ast);
 

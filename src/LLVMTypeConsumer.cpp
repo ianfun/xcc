@@ -26,7 +26,6 @@ struct LLVMTypeConsumer
         ptrty,
         TypeIndexHigh
     };
-    xcc_context &context;
 	LLVMContext &ctx;
     SmallVector<llvm::Type*, 0> tags;
    	llvm::StructType *_complex_float, *_complex_double;
@@ -39,6 +38,34 @@ struct LLVMTypeConsumer
     DenseMap<CType, llvm::FunctionType *> function_type_cache;
     DenseMap<Expr, llvm::Value *> vla_size_map;
     llvm::ConstantPointerNull *null_ptr;
+    llvm::ConstantInt *i32_1, *i32_0, *i32_n1;
+    llvm::IntegerType *intptrTy;
+    unsigned pointerSizeInBits;
+    llvm::ConstantInt *i1_0, *i1_1;
+    const Options &options;
+    
+    uint64_t getsizeof(llvm::Type *ty) { return options.DL.getTypeStoreSize(ty); }
+    uint64_t getsizeof(CType ty) {
+        assert((!ty->isVLA()) && "VLA should handled in other case");
+        type_tag_t Align = ty->getAlignLog2Value();
+        if (Align)
+            return uint64_t(1) << Align;
+        if (ty->isVoid() || ty->getKind() == TYFUNCTION)
+            return 1;
+        return getsizeof(wrap(ty));
+    }
+    uint64_t getsizeof(Expr e) { return getsizeof(e->ty); }
+    uint64_t getAlignof(llvm::Type *ty) { return options.DL.getPrefTypeAlign(ty).value(); }
+    uint64_t getAlignof(CType ty) {
+        type_tag_t Align = ty->getAlignLog2Value();
+        if (Align)
+            return uint64_t(1) << Align;
+        return getAlignof(wrap(ty));
+    }
+    uint64_t getAlignof(Expr e) { return getAlignof(e->ty); }
+    LLVMContext &getLLVMContext() {
+        return ctx;
+    }
     llvm::Type *wrapNoComplexScalar(CType ty) {
         assert(ty->getKind() == TYPRIM);
         if (ty->isInteger())
@@ -126,7 +153,7 @@ struct LLVMTypeConsumer
         case TYPOINTER: return pointer_type;
         case TYTAG: {
             if (ty->isEnum())
-                return integer_types[context.getEnumLog2()];
+                return integer_types[5];
             const auto &fields = ty->getRecord()->fields;
             size_t L = fields.size();
             llvm::Type **buf = alloc.Allocate<llvm::Type *>(L);
@@ -171,7 +198,7 @@ struct LLVMTypeConsumer
     void reset(unsigned num_tags) {
         tags.resize_for_overwrite(num_tags);
     }
-    LLVMTypeConsumer(xcc_context &context, LLVMContext &ctx): context{context}, ctx{ctx}, alloc{} {
+    LLVMTypeConsumer(LLVMContext &ctx, const Options &options): ctx{ctx}, alloc{}, options{options} {
         pointer_type = llvm::PointerType::get(ctx, 0);
         void_type = llvm::Type::getVoidTy(ctx);
         null_ptr = llvm::ConstantPointerNull::get(pointer_type);
@@ -192,5 +219,14 @@ struct LLVMTypeConsumer
         float_types[F_PPC128] = llvm::Type::getPPC_FP128Ty(ctx);
         _complex_double = llvm::StructType::get(float_types[F_Double], float_types[F_Double]);
         _complex_float = llvm::StructType::get(float_types[F_Float], float_types[F_Float]);
+        intptrTy = options.DL.getIntPtrType(getLLVMContext());
+        pointerSizeInBits = intptrTy->getBitWidth();
+
+        llvm::IntegerType *i32Ty = cast<llvm::IntegerType>(integer_types[5]);
+        i32_n1 = llvm::ConstantInt::get(i32Ty, -1);
+        i32_1 = llvm::ConstantInt::get(i32Ty, 1);
+        i32_0 = llvm::ConstantInt::get(i32Ty, 0);
+        i1_0 = llvm::ConstantInt::getFalse(getLLVMContext());
+        i1_1 = llvm::ConstantInt::getTrue(getLLVMContext());
     }
 };

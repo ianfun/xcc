@@ -5,6 +5,7 @@
  * implements getAlignof() and getsizeof() method(used by Sema and constant folding).
  */
 
+
 struct IRGen : public DiagnosticHelper {
     static constexpr llvm::GlobalValue::LinkageTypes ExternalLinkage = llvm::GlobalValue::ExternalLinkage,
                           PrivateLinkage = llvm::GlobalValue::PrivateLinkage,
@@ -14,22 +15,20 @@ struct IRGen : public DiagnosticHelper {
     static constexpr llvm::GlobalValue::DLLStorageClassTypes DefaultStorageClass = llvm::GlobalValue::DefaultStorageClass,
                           DLLImportStorageClass = llvm::GlobalValue::DLLImportStorageClass,
                           DLLExportStorageClass = llvm::GlobalValue::DLLExportStorageClass;
-    LLVMTypeConsumer *type_cache;
+
+    DenseMap<StringRef, llvm::GlobalVariable *> str8Map;
+    DenseMap<ArrayRef<uint16_t>, llvm::GlobalVariable *> str16Map;
+    DenseMap<ArrayRef<uint32_t>, llvm::GlobalVariable *> str32Map;
+
+    LLVMTypeConsumer &type_cache;
     xcc_context &context;
     std::unique_ptr<llvm::Module> module;
     SourceMgr &SM;
-    LLVMContext &ctx;
-    llvm::TargetMachine *machine = nullptr;
-    llvm::DataLayout *layout = nullptr;
     const Options &options;
     llvm::Triple triple;
     llvm::Function *currentfunction = nullptr;
     llvm::BasicBlock::iterator allocaInsertPt;
     llvm::DIBasicType* di_basic_types[LLVMTypeConsumer::TypeIndexHigh];
-    llvm::ConstantInt *i32_1 = nullptr, *i32_0 = nullptr, *i32_n1 = nullptr;
-    llvm::IntegerType *intptrTy = nullptr;
-    unsigned pointerSizeInBits = 0;
-    llvm::ConstantInt *i1_0 = nullptr, *i1_1 = nullptr;
     unsigned lastFileID = -1;
     llvm::DIFile *lastFile = nullptr;
     llvm::SmallVector<llvm::BasicBlock *, 5> labels{};
@@ -51,10 +50,77 @@ struct IRGen : public DiagnosticHelper {
     llvm::DICompileUnit *CU = nullptr;
     llvm::DILocation *di_cur_location = nullptr;
     bool g = false;
+    LLVMContext &getLLVMContext() {
+        return type_cache.getLLVMContext();
+    }
 
 private:
+    auto &getMapFor(const StringRef &) { return str8Map; }
+    auto &getMapFor(const ArrayRef<uint16_t> &) { return str16Map; }
+    auto &getMapFor(const ArrayRef<uint32_t> &) { return str32Map; }
+    template <typename T>
+    llvm::GlobalVariable *createString(llvm::Constant *init, T str) {
+        auto it = getMapFor(str).insert({str, nullptr});
+        if (it.second) {
+            llvm::GlobalVariable *GV = new llvm::GlobalVariable(*module, init->getType(), true, llvm::GlobalValue::PrivateLinkage, init, ".cstr");
+            GV->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
+            GV->setConstant(true);
+            GV->setAlignment(options.DL.getPreferredAlign(GV));
+            it.first->second = GV;
+        }
+        return it.first->second;
+    }
+    llvm::GlobalVariable * createString(llvm::Constant *C) {
+        llvm::IntegerType *T = cast<llvm::IntegerType>(cast<llvm::ArrayType>(C->getType())->getElementType());
+        switch (T->getBitWidth()) {
+        case 8: 
+        {
+            if (auto CA = dyn_cast<llvm::ConstantDataArray>(C)) {
+                return createString(C, CA->getRawDataValues());
+            }
+            assert(isa<llvm::ConstantAggregateZero>(C));
+            return createString(C, StringRef());
+        }
+        case 16:
+        {
+            if (auto CA = dyn_cast<llvm::ConstantDataArray>(C)) {
+                const uint16_t *Data = reinterpret_cast<const uint16_t*>(CA->getRawDataValues().data());
+                unsigned numElements = CA->getNumElements();
+                return createString(
+                    C,
+                    llvm::makeArrayRef(
+                        Data + numElements,
+                        numElements
+                    )
+                );
+            }
+            assert(isa<llvm::ConstantAggregateZero>(C));
+            return createString(C, ArrayRef<uint16_t>());
+        }
+        case 32:
+        {
+            if (auto CA = dyn_cast<llvm::ConstantDataArray>(C)) {
+                const uint32_t *Data = reinterpret_cast<const uint32_t*>(CA->getRawDataValues().data());
+                unsigned numElements = CA->getNumElements();
+                return createString(
+                    C,
+                    llvm::makeArrayRef(
+                        Data + numElements,
+                        numElements
+                    )
+                );
+            }
+            assert(isa<llvm::ConstantAggregateZero>(C));
+            return createString(C, ArrayRef<uint32_t>());
+        }
+        default: llvm_unreachable("unhandled character size");
+        }
+    }
+    llvm::GlobalVariable *createString(Expr e) {
+        return createString(e->string);
+    }
     void setDebugLoc(location_t loc) {
-        assert(g && "Not in debug mode");
+        assert(options.g && "Not in debug mode");
         if (loc && loc != last_location_t) {
             const IncludeFile *file;
             std::pair<unsigned, unsigned> pair = SM.getLineAndColumn(loc, file);
@@ -65,7 +131,7 @@ private:
                     current_file = file;
                     di_cur_file = di->createFile(file->cache->getName(), "");
                 }
-                di_cur_location = llvm::DILocation::get(ctx, current_line, current_column, getLexScope());
+                di_cur_location = llvm::DILocation::get(getLLVMContext(), current_line, current_column, getLexScope());
             }
         }
     }
@@ -86,7 +152,7 @@ private:
         return current_column;
     }
     void AddMetadataToInst(llvm::Instruction *I) {
-        if (g) {
+        if (options.g) {
             I->setDebugLoc(llvm::DebugLoc(di_cur_location));
         }
     }
@@ -96,7 +162,7 @@ private:
         return I;
     }
     llvm::ReturnInst *ret(llvm::Value *Val = nullptr) {
-        return Insert(llvm::ReturnInst::Create(ctx, Val, insertBB));
+        return Insert(llvm::ReturnInst::Create(getLLVMContext(), Val, insertBB));
     }
     llvm::CastInst *createCast(llvm::Instruction::CastOps Op, llvm::Value *V, llvm::Type *DestTy) {
         return Insert(llvm::CastInst::Create(Op, V, DestTy, "", insertBB));
@@ -114,12 +180,12 @@ private:
         return Insert(llvm::UnaryOperator::Create(llvm::Instruction::FNeg, V, "", insertBB));
     }
     llvm::AllocaInst *createAlloca(llvm::Type *Ty) {
-        unsigned AddrSpace = layout->getAllocaAddrSpace();
-        llvm::Align Align = layout->getPrefTypeAlign(Ty);
+        unsigned AddrSpace = options.DL.getAllocaAddrSpace();
+        llvm::Align Align = options.DL.getPrefTypeAlign(Ty);
         return Insert(new llvm::AllocaInst(Ty, AddrSpace, nullptr, Align, "", insertBB));
     }
     llvm::AllocaInst *createAlloca(llvm::Type *Ty, llvm::Align Align) {
-        unsigned AddrSpace = layout->getAllocaAddrSpace();
+        unsigned AddrSpace = options.DL.getAllocaAddrSpace();
         return Insert(new llvm::AllocaInst(Ty, AddrSpace, nullptr, Align, "", insertBB));
     }
     llvm::BinaryOperator *udiv(llvm::Value *LHS, llvm::Value *RHS) {
@@ -129,15 +195,15 @@ private:
         return binop(llvm::Instruction::SDiv, LHS, RHS);
     }
     llvm::UnreachableInst *createUnreachable() {
-        return Insert(new llvm::UnreachableInst(ctx, insertBB));
+        return Insert(new llvm::UnreachableInst(getLLVMContext(), insertBB));
     }
     llvm::ICmpInst *createLogicalNot(llvm::Value *Val) {
         llvm::Constant *C;
         llvm::Type *Ty = Val->getType();
         if (llvm::IntegerType *IT = dyn_cast<llvm::IntegerType>(Ty)) {
-            C = ConstantInt::get(ctx, APInt::getZero(IT->getBitWidth()));
+            C = ConstantInt::get(getLLVMContext(), APInt::getZero(IT->getBitWidth()));
         } else if (isa<llvm::PointerType>(Ty)) {
-            C = type_cache->null_ptr;
+            C = type_cache.null_ptr;
         } else {
             llvm_unreachable("bad argument to createLogicalNot");
         }
@@ -147,7 +213,7 @@ private:
         return Insert(llvm::GetElementPtrInst::CreateInBounds(PointeeType, Ptr, IdxList, "", insertBB));
     }
     llvm::GetElementPtrInst *structGEP(llvm::Type *StructTy, llvm::Value *Val, unsigned idx) {
-        return gep(StructTy, Val, {i32_0, llvm::ConstantInt::get(type_cache->integer_types[5], idx)});
+        return gep(StructTy, Val, {type_cache.i32_0, llvm::ConstantInt::get(type_cache.integer_types[5], idx)});
     }
     llvm::PHINode *phi(llvm::Type *Ty, unsigned NumReservedValues) {
         return Insert(llvm::PHINode::Create(Ty, NumReservedValues, "", insertBB));
@@ -244,7 +310,7 @@ private:
     }
     const llvm::Instruction *getTerminator() { return insertBB->getTerminator(); }
     llvm::ValueAsMetadata *mdNum(uint64_t num) {
-        llvm::Value *v = llvm::ConstantInt::get(llvm::Type::getInt32Ty(ctx), num);
+        llvm::Value *v = llvm::ConstantInt::get(llvm::Type::getInt32Ty(getLLVMContext()), num);
         return llvm::ValueAsMetadata::get(v);
     }
     void append(llvm::BasicBlock *TheBB) {
@@ -255,32 +321,32 @@ private:
     llvm::Function *addFunction(llvm::FunctionType *ty, const Twine &N) {
         return llvm::Function::Create(ty, ExternalLinkage, N, module.get());
     }
-    llvm::BasicBlock *newBB() const {
-        return llvm::BasicBlock::Create(ctx);
+    llvm::BasicBlock *newBB() {
+        return llvm::BasicBlock::Create(getLLVMContext());
     }
     llvm::BasicBlock *addBB(StringRef Name = "") {
-        return llvm::BasicBlock::Create(ctx, "", currentfunction);
+        return llvm::BasicBlock::Create(getLLVMContext(), "", currentfunction);
     }
     void handle_asm(StringRef s) {
         if (currentfunction)
             // module level asm
             module->appendModuleInlineAsm(s);
         else {
-            auto ty = llvm::FunctionType::get(type_cache->void_type, false);
+            auto ty = llvm::FunctionType::get(type_cache.void_type, false);
             auto f = llvm::InlineAsm::get(ty, s, StringRef(), true);
             call(ty, f);
         }
     }
-    uint64_t getSizeInBits(llvm::Type *ty) { return layout->getTypeSizeInBits(ty); }
+    uint64_t getSizeInBits(llvm::Type *ty) { return options.DL.getTypeSizeInBits(ty); }
     uint64_t getSizeInBits(CType ty) { return getSizeInBits(wrap(ty)); }
     uint64_t getSizeInBits(Expr e) { return getSizeInBits(e->ty); }
-    llvm::MDString *mdStr(StringRef str) { return llvm::MDString::get(ctx, str); }
-    llvm::MDNode *mdNode(llvm::Metadata *m) { return llvm::MDNode::get(ctx, {m}); }
-    llvm::MDNode *mdNode(ArrayRef<llvm::Metadata *> m) { return llvm::MDNode::get(ctx, m); }
+    llvm::MDString *mdStr(StringRef str) { return llvm::MDString::get(getLLVMContext(), str); }
+    llvm::MDNode *mdNode(llvm::Metadata *m) { return llvm::MDNode::get(getLLVMContext(), {m}); }
+    llvm::MDNode *mdNode(ArrayRef<llvm::Metadata *> m) { return llvm::MDNode::get(getLLVMContext(), m); }
     void createModule() {
-        module.reset(new llvm::Module(options.mainFileName, ctx));
+        module.reset(new llvm::Module(options.mainFileName, getLLVMContext()));
         module->setSourceFileName(options.mainFileName);
-        module->setDataLayout(*layout);
+        module->setDataLayout(options.DL);
         module->setTargetTriple(options.triple.str());
 
         auto llvm_ident = module->getOrInsertNamedMetadata("llvm.ident");
@@ -313,19 +379,10 @@ private:
         case 3: return llvm::OptimizationLevel::O3;
         }
     }
-    llvm::CodeGenOpt::Level getCGOptLevel() const {
-        switch (options.OptimizationLevel) {
-        default: llvm_unreachable("Invalid optimization level!");
-        case 0: return llvm::CodeGenOpt::None;
-        case 1: return llvm::CodeGenOpt::Less;
-        case 2: return llvm::CodeGenOpt::Default; // O2/Os/Oz
-        case 3: return llvm::CodeGenOpt::Aggressive;
-        }
-    }
     // clang::EmitAssemblyHelper::RunOptimizationPipeline
     void RunOptimizationPipeline() {
         llvm::Optional<llvm::PGOOptions> PGOOpt;
-        machine->setPGOOption(PGOOpt);
+        options.machine->setPGOOption(PGOOpt);
 
         llvm::PipelineTuningOptions PTO;
         PTO.LoopUnrolling = options.UnrollLoops;
@@ -349,7 +406,7 @@ private:
         llvm::StandardInstrumentations SI(false,
                                           /*VerifyEach*/ false, PrintPassOpts);
         SI.registerCallbacks(PIC, &FAM);
-        llvm::PassBuilder PB(machine, PTO, PGOOpt, &PIC);
+        llvm::PassBuilder PB(options.machine, PTO, PGOOpt, &PIC);
 
         // Enable verify-debuginfo-preserve-each for new PM.
         DebugInfoPerPass DebugInfoBeforePass;
@@ -446,7 +503,7 @@ private:
         br(phiBB);
 
         append(phiBB);
-        llvm::PHINode *Phi = phi(type_cache->integer_types[0], 2);
+        llvm::PHINode *Phi = phi(type_cache.integer_types[0], 2);
         Phi->addIncoming(R, leftBB);
         Phi->addIncoming(L, rightBB);
         return Phi;
@@ -497,13 +554,13 @@ private:
                     if (it.range.ult(CC_SITCH_RANGE_UNROLL_MAX)) {
                         const uint64_t range_end = it.CaseStart->getZExtValue() + it.range.getZExtValue();
                         for (uint64_t i = it.CaseStart->getZExtValue(); i <= range_end;) {
-                            sw->addCase(ConstantInt::get(ctx, APInt(it.CaseStart->getBitWidth(), i++)),
+                            sw->addCase(ConstantInt::get(getLLVMContext(), APInt(it.CaseStart->getBitWidth(), i++)),
                                         labels[it.label]);
                         }
                         continue;
                     }
-                    auto diff = sub(cond, ConstantInt::get(ctx, *it.CaseStart));
-                    auto c = icmp(llvm::ICmpInst::ICMP_UGE, diff, ConstantInt::get(ctx, it.range));
+                    auto diff = sub(cond, ConstantInt::get(getLLVMContext(), *it.CaseStart));
+                    auto c = icmp(llvm::ICmpInst::ICMP_UGE, diff, ConstantInt::get(getLLVMContext(), it.range));
                     auto BB = addBB();
                     condbr(c, labels[it.label], BB);
                     after(BB);
@@ -514,7 +571,7 @@ private:
                 return;
             }
             for (const auto &it : s->switchs)
-                sw->addCase(ConstantInt::get(ctx, *it.CaseStart), labels[it.label]);
+                sw->addCase(ConstantInt::get(getLLVMContext(), *it.CaseStart), labels[it.label]);
             Insert(sw);
         } break;
         case SIndirectBr:
@@ -530,15 +587,15 @@ private:
         } break;
         case SHead: llvm_unreachable("");
         case SCompound: {
-            if (g)
+            if (options.g)
                 di_lex_scopes.push_back(di->createLexicalBlock(getLexScope(), getFile(), getLine(), getColumn()));
             for (Stmt ptr = s->inner; ptr; ptr = ptr->next)
                 gen(ptr);
-            if (g)
+            if (options.g)
                 di_lex_scopes.pop_back();
         } break;
         case SDecl: {
-            type_cache->handleDecl(s);
+            type_cache.handleDecl(s);
         } break;
         case SNoReturnCall:
             (void)gen(s->call_expr);
@@ -552,14 +609,14 @@ private:
             currentfunctionAST = s;
             currentfunction =
                 newFunction(ty, s->funcname, s->functy->getFunctionAttrTy()->getTags(), s->func_idx, true);
-            if (g) {
+            if (options.g) {
                 llvm::DISubroutineType *SubTy = cast<llvm::DISubroutineType>(wrapDIType(s->functy));
                 SP = di->createFunction(getLexScope(), s->funcname->getKey(), getLinkageName(s->functy->getFunctionAttrTy()->getTags()), getFile(), getLine(), SubTy, getLine(), llvm::DINode::FlagZero, llvm::DISubprogram::SPFlagDefinition);
                 di_lex_scopes.push_back(SP);
                 setDebugLoc(s->funcDefLoc);
                 currentfunction->setSubprogram(SP);
             }
-            llvm::BasicBlock *entry = llvm::BasicBlock::Create(ctx, "entry", currentfunction);
+            llvm::BasicBlock *entry = llvm::BasicBlock::Create(getLLVMContext(), "entry", currentfunction);
             after(entry);
             statics("# %u labels in function\n", s->numLabels);
             for (unsigned i = 0; i < s->numLabels; i++)
@@ -568,7 +625,7 @@ private:
             for (auto arg = currentfunction->arg_begin(); arg != currentfunction->arg_end(); ++arg) {
                 llvm::Type *pty = ty->getParamType(arg_no);
                 llvm::AllocaInst *p = createAlloca(pty);
-                if (g) {
+                if (options.g) {
                     const Param &it = s->functy->params[arg_no];
                     setDebugLoc(it.loc);
                     llvm::DILocalVariable *var = di->createParameterVariable(SP, it.name->getKey(), arg_no, getFile(), getLine(), wrapDIType(it.ty));
@@ -588,7 +645,7 @@ private:
                     ret(llvm::UndefValue::get(retTy));
                 }
             }
-            if (g) {
+            if (options.g) {
                 di->finalizeSubprogram(SP);
                 di_lex_scopes.pop_back();
             }
@@ -622,7 +679,7 @@ private:
             if (currentfunction)
                 module->appendModuleInlineAsm(s->asms);
             else {
-                auto ty = llvm::FunctionType::get(type_cache->void_type, false);
+                auto ty = llvm::FunctionType::get(type_cache.void_type, false);
                 auto f = llvm::InlineAsm::get(ty, s->asms, StringRef(), true);
                 call(ty, f);
             }
@@ -633,7 +690,7 @@ private:
                 auto varty = it.ty;
                 auto init = it.init;
                 auto idx = it.idx;
-                if (g) setDebugLoc(it.loc);
+                if (options.g) setDebugLoc(it.loc);
                 auto align = varty->getAlignAsMaybeAlign();
                 if (varty->hasTag(TYTYPEDEF)) {
                     /* nothing */
@@ -663,12 +720,12 @@ private:
                     llvm::Type *ty = wrap(varty);
                     // translate "extern void" to "extern char"
                     if (LLVM_UNLIKELY(ty->isVoidTy())) {
-                        ty = type_cache->integer_types[3];
+                        ty = type_cache.integer_types[3];
                     }
                     GV =
                         new llvm::GlobalVariable(*module, ty, tags & TYCONST, ExternalLinkage, nullptr, name->getKey());
                     GV->setAlignment(align);
-                    GV->setAlignment(layout->getPreferredAlign(GV));
+                    GV->setAlignment(options.DL.getPreferredAlign(GV));
                     if (!(tags & TYEXTERN)) {
                         llvm::Constant *ginit = init ? cast<llvm::Constant>(gen(init)) : llvm::Constant::getNullValue(ty);
                         GV->setInitializer(ginit), GV->setDSOLocal(true);
@@ -681,7 +738,7 @@ private:
                         GV->setLinkage(ExternalLinkage);
                     else if (!init && !(tags & TYCONST))
                         GV->setLinkage(CommonLinkage);
-                    if (g) {
+                    if (options.g) {
                         llvm::DIGlobalVariableExpression *GVE = di->createGlobalVariableExpression(getLexScope(), name->getKey(), getLinkageName(varty->getTags()), getFile(), getLine(), wrapDIType(varty), false, GV->isDeclaration());
                         GV->addDebugInfo(GVE);
                     }
@@ -709,8 +766,8 @@ private:
                         alloca_size = nullptr;
                     }
                     if (!Align)
-                        Align = layout->getPrefTypeAlign(ty);
-                    llvm::AllocaInst *val = new llvm::AllocaInst(ty, layout->getAllocaAddrSpace(), alloca_size,
+                        Align = options.DL.getPrefTypeAlign(ty);
+                    llvm::AllocaInst *val = new llvm::AllocaInst(ty, options.DL.getAllocaAddrSpace(), alloca_size,
                                                                  *Align, name->getKey());
                     if (LLVM_UNLIKELY(isVLA)) {
                         insertBB->getInstList().push_back(val);
@@ -719,7 +776,7 @@ private:
                         auto &instList = currentfunction->getEntryBlock().getInstList();
                         instList.push_front(val);
                     }
-                    if (g) {
+                    if (options.g) {
                         llvm::DILocalVariable *var = di->createAutoVariable(getLexScope(), name->getKey(), getFile(), getLine(), wrapDIType(varty));
                         di->insertDeclare(val, var, di->createExpression(), di_cur_location, insertBB);
                     }
@@ -738,7 +795,7 @@ private:
     llvm::Value *getStruct(Expr e) { return nullptr; }
     llvm::Value *getArray(Expr e) { return nullptr; }
     llvm::GlobalVariable *CreateGlobalString(StringRef bstr, llvm::Type *&ty) {
-        auto str = llvm::ConstantDataArray::getString(ctx, bstr, true);
+        auto str = llvm::ConstantDataArray::getString(getLLVMContext(), bstr, true);
         ty = str->getType();
         auto GV = new llvm::GlobalVariable(*module, ty, true, PrivateLinkage, str);
         GV->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
@@ -752,20 +809,17 @@ private:
         return gep(ty, v, {r});
     }
     llvm::Type* wrap(CType ty) {
-        assert(type_cache);
-        return type_cache->wrap(ty);
+        return type_cache.wrap(ty);
     }
     llvm::StructType *wrapComplex(const_CType ty) {
-        assert(type_cache);
-        return type_cache->wrapComplex(ty);
+        return type_cache.wrapComplex(ty);
     }
     llvm::StructType *wrapComplexForInteger(const_CType ty) {
-        assert(type_cache);
-        return type_cache->wrapComplexForInteger(ty);
+        return type_cache.wrapComplexForInteger(ty);
     }
     llvm::Value *getAddress(Expr e) {
         assert(e);
-        if (g) setDebugLoc(e->getBeginLoc());
+        if (options.g) setDebugLoc(e->getBeginLoc());
         switch (e->k) {
         case EVar: return vars[e->sval];
         case EMemberAccess: {
@@ -780,7 +834,7 @@ private:
             case C__real__:
             case C__imag__: {
                 auto ty = wrap(e->uoperand->ty);
-                return gep(ty, getAddress(e->uoperand), {i32_0, e->uop == C__real__ ? i32_0 : i32_1});
+                return gep(ty, getAddress(e->uoperand), {type_cache.i32_0, e->uop == C__real__ ? type_cache.i32_0 : type_cache.i32_1});
             }
             default: llvm_unreachable("");
             }
@@ -789,7 +843,8 @@ private:
             return subscript(e, ty);
         }
         case EArrToAddress: return getAddress(e->voidexpr);
-        case EConstantArray: return e->array;
+        case EString:
+            return createString(e);
         case EArray:
         case EStruct: {
             auto v = e->k == EArray ? getArray(e) : getStruct(e);
@@ -814,7 +869,7 @@ private:
         }
     }
     llvm::Value *genVLANumelements(Expr e) {
-        auto it = type_cache->vla_size_map.insert(std::make_pair(e, nullptr));
+        auto it = type_cache.vla_size_map.insert(std::make_pair(e, nullptr));
         if (it.second)
             it.first->second = gen(e);
         return it.first->second;
@@ -839,12 +894,12 @@ private:
     }
     llvm::Value *gen(Expr e) {
         assert(e);
-        if (g) setDebugLoc(e->getBeginLoc());
+        if (options.g) setDebugLoc(e->getBeginLoc());
         switch (e->k) {
         case EConstant: return e->C;
         case EConstantArraySubstript:
-            return llvm::ConstantExpr::getInBoundsGetElementPtr(wrap(e->ty->p), e->carray,
-                                                                ConstantInt::get(ctx, e->cidx));
+            return llvm::ConstantExpr::getInBoundsGetElementPtr(wrap(e->ty->p), e->array,
+                                                                ConstantInt::get(type_cache.intptrTy, e->cidx));
         case EPostFix: {
             auto p = getAddress(e->poperand);
             auto ty = wrap(e->ty);
@@ -853,7 +908,7 @@ private:
             llvm::Value *v;
             if (e->ty->getKind() == TYPOINTER) {
                 ty = wrap(e->poperand->ty->p);
-                v = gep(ty, r, {e->pop == PostfixIncrement ? i32_1 : i32_n1});
+                v = gep(ty, r, {e->pop == PostfixIncrement ? type_cache.i32_1 : type_cache.i32_n1});
             } else if (e->ty->getKind() == TYPRIM && e->ty->isFloating()) {
                 v = (e->pop == PostfixIncrement) ? fadd(r, llvm::ConstantFP::get(ty, 1.0))
                                                  : fsub(r, llvm::ConstantFP::get(ty, 1.0));
@@ -876,12 +931,12 @@ private:
             auto base = isVar ? getAddress(e->obj) : gen(e->obj);
             if (isVar || e->obj->ty->getKind() == TYPOINTER) {
                 auto pMember = gep(
-                    ty, base, {llvm::ConstantInt::get(type_cache->integer_types[context.getIntLog2()], e->idx)});
+                    ty, base, {llvm::ConstantInt::get(type_cache.integer_types[context.getIntLog2()], e->idx)});
                 return load(pMember, wrap(e->ty), e->obj->ty->getAlignAsMaybeAlign());
             }
             return extractValue(load(base, ty, e->obj->ty->getAlignAsMaybeAlign()), e->idx);
         }
-        case EConstantArray: return e->array;
+        case EString: return createString(e);
         case EBin: {
             unsigned pop = 0;
             switch (e->bop) {
@@ -913,7 +968,7 @@ BINOP_ATOMIC_RMW:
                 llvm::Value *addr = getAddress(e->lhs), *rhs = gen(e->rhs);
                 llvm::MaybeAlign Align = e->rhs->ty->getAlignAsMaybeAlign();
                 if (!Align) {
-                    Align = llvm::Align(layout->getTypeStoreSize(rhs->getType()));
+                    Align = llvm::Align(options.DL.getTypeStoreSize(rhs->getType()));
                 }
                 return atomicRMW(static_cast<llvm::AtomicRMWInst::BinOp>(pop), addr, rhs, *Align,
                                          llvm::AtomicOrdering::SequentiallyConsistent);
@@ -967,7 +1022,7 @@ BINOP_ATOMIC_RMW:
             // clang::ComplexExprEmitter::EmitBinMul
             case CFMul: {
                 llvm::Value *LibCallI, *LibCallR;
-                llvm::MDBuilder MDHelper(ctx);
+                llvm::MDBuilder MDHelper(getLLVMContext());
                 llvm::StructType *ty = cast<llvm::StructType>(wrap(e->ty));
                 llvm::Value *const a = gen_complex_real(lhs), *const b = gen_complex_imag(lhs),
                                    *const c = gen_complex_real(rhs), *const d = gen_complex_imag(rhs),
@@ -1002,7 +1057,7 @@ BINOP_ATOMIC_RMW:
                     ArrayRef<llvm::Value *> Args = {a, b, c, d};
                     llvm::FunctionType *FTY = llvm::FunctionType::get(ty, Params, false);
                     llvm::AttributeList attrs = llvm::AttributeList::get(
-                        ctx, llvm::AttributeList::FunctionIndex,
+                        getLLVMContext(), llvm::AttributeList::FunctionIndex,
                         {llvm::Attribute::NoUnwind, llvm::Attribute::ReadNone, llvm::Attribute::MustProgress,
                          llvm::Attribute::WillReturn, llvm::Attribute::NoRecurse, llvm::Attribute::NoSync,
                          llvm::Attribute::NoFree});
@@ -1075,7 +1130,7 @@ BINOP_ATOMIC_RMW:
                 ArrayRef<llvm::Value *> Args = {a, b, c, d};
                 llvm::FunctionType *FTY = llvm::FunctionType::get(ty, Params, false);
                 llvm::AttributeList attrs = llvm::AttributeList::get(
-                    ctx, llvm::AttributeList::FunctionIndex,
+                    getLLVMContext(), llvm::AttributeList::FunctionIndex,
                     {llvm::Attribute::NoUnwind, llvm::Attribute::ReadNone, llvm::Attribute::MustProgress,
                      llvm::Attribute::WillReturn, llvm::Attribute::NoRecurse, llvm::Attribute::NoSync,
                      llvm::Attribute::NoFree});
@@ -1122,24 +1177,24 @@ BINOP_ATOMIC_RMW:
                 CType target = e->lhs->ty->p;
                 llvm::Value *dividend;
 
-                lhs = ptrtoint(lhs, intptrTy);
-                rhs = ptrtoint(rhs, intptrTy);
+                lhs = ptrtoint(lhs, type_cache.intptrTy);
+                rhs = ptrtoint(rhs, type_cache.intptrTy);
                 llvm::BinaryOperator *diff = sub(lhs, rhs);
 
                 if (LLVM_UNLIKELY(target->isVLA())) {
                     std::pair<llvm::Value *, llvm::Type *> pair = genVLASizeof(target);
-                    uint64_t Size = getsizeof(pair.second);
+                    uint64_t Size = type_cache.getsizeof(pair.second);
                     if (Size == 1) {
-                        dividend = mul(pair.first, llvm::ConstantInt::get(intptrTy, Size));
+                        dividend = mul(pair.first, llvm::ConstantInt::get(type_cache.intptrTy, Size));
                         cast<llvm::Instruction>(dividend)->setHasNoSignedWrap(true);
                     } else {
                         dividend = pair.first;
                     }
                 } else {
-                    uint64_t Size = getsizeof(target);
+                    uint64_t Size = type_cache.getsizeof(target);
                     if (Size == 1)
                         return diff;
-                    dividend = llvm::ConstantInt::get(intptrTy, Size);
+                    dividend = llvm::ConstantInt::get(type_cache.intptrTy, Size);
                 }
                 llvm::BinaryOperator *it = sdiv(diff, dividend);
                 it->setIsExact(true);
@@ -1328,7 +1383,7 @@ BINOP_SHIFT:
             if (pair.second->isIntegerTy(1))
                 return pair.first;
             llvm::BinaryOperator *it = mul(pair.first, /*llvm::ConstantExpr::getSizeOf(pair.second)*/ llvm::ConstantInt::get(
-                                      intptrTy, getsizeof(pair.second)));
+                                      type_cache.intptrTy, type_cache.getsizeof(pair.second)));
             it->setHasNoSignedWrap(true);
             return it;
         }
@@ -1343,7 +1398,7 @@ BINOP_SHIFT:
                 f = gen(e->callfunc);
             }
             size_t l = e->callargs.size();
-            llvm::Value **buf = type_cache->alloc.Allocate<llvm::Value *>(l);
+            llvm::Value **buf = type_cache.alloc.Allocate<llvm::Value *>(l);
             for (size_t i = 0; i < l; ++i)
                 buf[i] = gen(e->callargs[i]); // eval argument from left to right
             llvm::CallInst *r = call(ty, f, ArrayRef<llvm::Value *>(buf, l));
@@ -1356,7 +1411,7 @@ BINOP_SHIFT:
     }
     void initDebugInfo() {
         vla_expr_count = 0;
-        assert(g && "Not in debug mode");
+        assert(options.g && "Not in debug mode");
         di = new llvm::DIBuilder(*module);
         module->addModuleFlag(llvm::Module::Warning, "Debug Info Version", llvm::DEBUG_METADATA_VERSION);
         module->addModuleFlag(llvm::Module::Warning, "Dwarf Version", llvm::dwarf::DWARF_VERSION);
@@ -1398,7 +1453,7 @@ BINOP_SHIFT:
         assert(ty);
         switch (ty->getKind()) {
             case TYPRIM:
-                return di_basic_types[type_cache->getTypeIndex(ty)];
+                return di_basic_types[type_cache.getTypeIndex(ty)];
             case TYPOINTER:
                 return di_basic_types[LLVMTypeConsumer::ptrty];
             case TYTAG:
@@ -1409,7 +1464,7 @@ BINOP_SHIFT:
                         if (it.second) {
                             const EnumDecl &enumDecl = *ty->getEnum();
                             size_t Size = enumDecl.enums.size();
-                            llvm::Metadata **Elements = type_cache->alloc.Allocate<llvm::Metadata*>(Size);
+                            llvm::Metadata **Elements = type_cache.alloc.Allocate<llvm::Metadata*>(Size);
                             for (size_t i = 0;i < Size;++i)
                                 Elements[i] = di->createEnumerator(enumDecl.enums[i].name->getKey(), enumDecl.enums[i].val);
                             it.first->second = di->createEnumerationType(
@@ -1439,20 +1494,20 @@ BINOP_SHIFT:
                 return wrapDIType(ty->bittype);
             case TYARRAY:
             {
-                uint64_t size = getsizeof(ty);
+                uint64_t size = type_cache.getsizeof(ty);
                 llvm::DINodeArray subscripts = di->getOrCreateArray(
                     {
                         di->getOrCreateSubrange(0, ty->hassize ? (int64_t)ty->arrsize : (int64_t)-1)
                     }
                 );
-                return di->createArrayType(size, getAlignof(ty) * 8, wrapDIType(ty->arrtype), subscripts);
+                return di->createArrayType(size, type_cache.getAlignof(ty) * 8, wrapDIType(ty->arrtype), subscripts);
             }
             case TYFUNCTION:
             {
                 auto it = di_subroutine_type_cache.insert(std::make_pair(ty, nullptr));
                 if (it.second) {
                     size_t Size = ty->params.size() + 1;
-                    llvm::Metadata **tys = type_cache->alloc.Allocate<llvm::Metadata*>(Size);
+                    llvm::Metadata **tys = type_cache.alloc.Allocate<llvm::Metadata*>(Size);
                     tys[0] = wrapDIType(ty->ret);
                     for (size_t i = 0;i < ty->params.size();i++) 
                         tys[i + 1] = wrapDIType(ty->params[i].ty);
@@ -1484,73 +1539,37 @@ BINOP_SHIFT:
     [[nodiscard]] std::unique_ptr<llvm::Module> takeModule() {
         return std::move(module);
     }
-    ~IRGen() {
-        delete machine;
-        delete layout;
+    [[nodiscard]] llvm::Module *getModule() const {
+        return module.get();
     }
-    IRGen(xcc_context &context, DiagnosticsEngine &Diag, SourceMgr &SM, LLVMContext &ctx, const Options &options)
-        : DiagnosticHelper{Diag}, context{context}, SM{SM}, ctx{ctx}, options{options}, g{options.g} {
-        StringRef CPU = "generic";
-        StringRef Features = "";
-        llvm::TargetOptions opt;
-        if (!options.theTarget)
-            options.createTarget();
-        // rustc: Could not create LLVM TargetMachine for triple: ...
-        machine = options.theTarget->createTargetMachine(options.triple.str(), CPU, Features, opt,
-                                                         options.RelocationModel, options.CodeModel, getCGOptLevel());
-        if (LLVM_UNLIKELY(!machine))
-            llvm::report_fatal_error("failed to create llvm::TargetMachine: the target might has no target machine");
-        layout = new llvm::DataLayout(machine->createDataLayout());
-
-        // TODO: Decimal float types
-        intptrTy = layout->getIntPtrType(ctx);
-        pointerSizeInBits = intptrTy->getBitWidth();
-
-        llvm::IntegerType *i32Ty = llvm::Type::getInt32Ty(ctx);
-        i32_n1 = llvm::ConstantInt::get(i32Ty, -1);
-        i32_1 = llvm::ConstantInt::get(i32Ty, 1);
-        i32_0 = llvm::ConstantInt::get(i32Ty, 0);
-        i1_0 = llvm::ConstantInt::getFalse(ctx);
-        i1_1 = llvm::ConstantInt::getTrue(ctx);
+    llvm::Module *releaseModule() {
+        return module.release();
+    }
+    [[nodiscard]] bool hasModule() const {
+        return bool(module);
+    }
+    IRGen(SourceMgr &SM, xcc_context &context, const Options &options, LLVMTypeConsumer &type_cache)
+     : DiagnosticHelper{SM}, type_cache{type_cache}, context{context}, SM{SM}, options{options} {}
+    [[nodiscard]] std::unique_ptr<llvm::Module> run(const TranslationUnit &TU) {
         createModule();
-        if (g)
+        
+        if (options.g)
             initDebugInfo();
-    }
-    uint64_t getsizeof(llvm::Type *ty) { return layout->getTypeStoreSize(ty); }
-    uint64_t getsizeof(CType ty) {
-        assert((!ty->isVLA()) && "VLA should handled in other case");
-        type_tag_t Align = ty->getAlignLog2Value();
-        if (Align)
-            return uint64_t(1) << Align;
-        if (ty->isVoid() || ty->getKind() == TYFUNCTION)
-            return 1;
-        return getsizeof(wrap(ty));
-    }
-    uint64_t getsizeof(Expr e) { return getsizeof(e->ty); }
-    uint64_t getAlignof(llvm::Type *ty) { return layout->getPrefTypeAlign(ty).value(); }
-    uint64_t getAlignof(CType ty) {
-        type_tag_t Align = ty->getAlignLog2Value();
-        if (Align)
-            return uint64_t(1) << Align;
-        return getAlignof(wrap(ty));
-    }
-    uint64_t getAlignof(Expr e) { return getAlignof(e->ty); }
-    [[nodiscard]] std::unique_ptr<llvm::Module> run(const TranslationUnit &TU, LLVMTypeConsumer &type_cache) {
-        this->type_cache = &type_cache;
-        assert(this->type_cache);
-        this->type_cache->reset(TU.max_tags_scope);
+
+        type_cache.reset(TU.max_tags_scope);
+
         vars = new llvm::Value *[TU.max_typedef_scope];
 
         runCodeGenTranslationUnit(TU.ast);
+
         RunOptimizationPipeline();
+
         delete [] vars;
+
         if (di) {
             di->finalize();
             delete di;
         }
         return std::move(module);
-    }
-    void setTypeConsumer(LLVMTypeConsumer &C) {
-        this->type_cache = &C;
     }
 };

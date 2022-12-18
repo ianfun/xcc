@@ -3,7 +3,7 @@ enum ExprKind: uint8_t {
     EConstant,
     EBin,
     EUnary,
-    EConstantArray,
+    EString,
     EConstantArraySubstript,
     EVoid,
     EVar,
@@ -25,7 +25,8 @@ OpaqueExpr()=delete;
 bool isSimple() const {
   switch (k) {
     case EVar:
-    case EConstantArray:
+    case EString:
+    case EConstantArraySubstript:
     case EConstant:
     case EStruct:
     case EArray:
@@ -61,15 +62,15 @@ union alignas(void*) {
         location_t opLoc;
     };
     struct alignas(void*) {
-      llvm::GlobalVariable *array;
-        location_t constantArrayLoc;
-        location_t constantArrayLocEnd;
+      llvm::Constant *string;
+        location_t stringLoc;
+        location_t stringEndLoc;
     };
     struct alignas(void*) {
-      llvm::GlobalVariable *carray;
-        APInt cidx;
-        location_t constantArraySubscriptLoc;
-        location_t constantArraySubscriptLocEnd;
+      llvm::Constant *array;
+        uint64_t cidx;
+        location_t casLoc;
+        location_t casEndLoc;
     };
     struct alignas(void*) {
       Expr voidexpr;
@@ -157,23 +158,23 @@ struct UnaryExpr {
         location_t opLoc;
   };
 };
-struct ConstantArrayExpr {
-    enum ExprKind k=EConstantArray;
+struct StringExpr {
+    enum ExprKind k=EString;
     CType ty;
     struct alignas(void*) {
-          llvm::GlobalVariable *array;
-        location_t constantArrayLoc;
-        location_t constantArrayLocEnd;
+          llvm::Constant *string;
+        location_t stringLoc;
+        location_t stringEndLoc;
   };
 };
 struct ConstantArraySubstriptExpr {
     enum ExprKind k=EConstantArraySubstript;
     CType ty;
     struct alignas(void*) {
-          llvm::GlobalVariable *carray;
-        APInt cidx;
-        location_t constantArraySubscriptLoc;
-        location_t constantArraySubscriptLocEnd;
+          llvm::Constant *array;
+        uint64_t cidx;
+        location_t casLoc;
+        location_t casEndLoc;
   };
 };
 struct VoidExpr {
@@ -289,7 +290,7 @@ static uint8_t expr_size_map[] = {
     sizeof(ConstantExpr),
     sizeof(BinExpr),
     sizeof(UnaryExpr),
-    sizeof(ConstantArrayExpr),
+    sizeof(StringExpr),
     sizeof(ConstantArraySubstriptExpr),
     sizeof(VoidExpr),
     sizeof(VarExpr),
@@ -305,4 +306,4 @@ static uint8_t expr_size_map[] = {
     sizeof(SizeofExpr),
     sizeof(BlockAddressExpr)
 };
-static constexpr size_t expr_max_size = std::max({sizeof(ConstantExpr), sizeof(BinExpr), sizeof(UnaryExpr), sizeof(ConstantArrayExpr), sizeof(ConstantArraySubstriptExpr), sizeof(VoidExpr), sizeof(VarExpr), sizeof(ConditionExpr), sizeof(CastExpr), sizeof(CallExpr), sizeof(SubscriptExpr), sizeof(ArrayExpr), sizeof(StructExpr), sizeof(MemberAccessExpr), sizeof(ArrToAddressExpr), sizeof(PostFixExpr), sizeof(SizeofExpr), sizeof(BlockAddressExpr)});
+static constexpr size_t expr_max_size = std::max({sizeof(ConstantExpr), sizeof(BinExpr), sizeof(UnaryExpr), sizeof(StringExpr), sizeof(ConstantArraySubstriptExpr), sizeof(VoidExpr), sizeof(VarExpr), sizeof(ConditionExpr), sizeof(CastExpr), sizeof(CallExpr), sizeof(SubscriptExpr), sizeof(ArrayExpr), sizeof(StructExpr), sizeof(MemberAccessExpr), sizeof(ArrToAddressExpr), sizeof(PostFixExpr), sizeof(SizeofExpr), sizeof(BlockAddressExpr)});

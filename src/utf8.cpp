@@ -48,7 +48,8 @@ IsUTF8(StringRef str) {
 // clang-format on
 
 llvm::Constant *getUTF8(StringRef s, LLVMContext &ctx) {
-    if (s.empty()) {
+    assert(s.back() == 0 && "C string must be null terminated");
+    if (s.size() == 1) {
         auto Ty = llvm::ArrayType::get(llvm::Type::getInt8Ty(ctx), 1);
         return llvm::ConstantAggregateZero::get(Ty);
     }

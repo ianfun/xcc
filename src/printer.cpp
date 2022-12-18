@@ -137,8 +137,13 @@ raw_ostream &operator<<(llvm::raw_ostream &OS, const_Expr e) {
     switch (e->k) {
     case EBlockAddress:
         return OS << "&&" << e->labelName->getKey();
-    case EConstantArraySubstript: printConstant(e->carray->getInitializer(), OS); return OS;
-    case EConstantArray: printConstant(e->array, OS); return OS;
+    case EString: 
+        printConstant(e->string, OS); 
+        return OS;
+    case EConstantArraySubstript: 
+        printConstant(e->array, OS); 
+        OS << " + " << e->cidx;
+        return OS;
     case EConstant: printConstant(e->C, OS); return OS;
     case EBin: 
         maybe_print_paren(e->lhs, OS);

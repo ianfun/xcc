@@ -41,6 +41,8 @@ int main(int argc_, const char **argv_)
     if (theDriver.BuildCompilation(argv, options, SM, ret))
         return ret;
 
+    options.createTarget(engine);
+
     SM.setTrigraphsEnabled(options.trigraphs);
 
     llvm::InitializeAllAsmParsers();
@@ -60,16 +62,12 @@ int main(int argc_, const char **argv_)
     // create xcc_context
     xcc::xcc_context ctx;
 
-    // preparing target information and ready for code generation to LLVM IR
-    xcc::IRGen ig(ctx, engine, SM, llvmcontext, options);
-
     // create xcc's type cache for LLVM
-    xcc::LLVMTypeConsumer type_cache(ctx, llvmcontext);
+    xcc::LLVMTypeConsumer type_cache(llvmcontext, options);
 
-    // configure IRGen to use it
-    ig.setTypeConsumer(type_cache);
+    xcc::IRGen ig(SM, ctx, options, type_cache);
 
     // create parser
-    xcc::Parser parser(SM, ig, engine, ctx, type_cache, options);
+    xcc::Parser parser(SM, ctx, type_cache, options);
 
     // now, parsing source files ...

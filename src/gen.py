@@ -204,8 +204,8 @@ exprs = {
 	"EConstant": ("llvm::Constant* C", "location_t constantLoc", "location_t constantEndLoc",),
 	"EBin": ("Expr lhs", "enum BinOp bop", "Expr rhs",),
 	"EUnary": ("Expr uoperand", "enum UnaryOp uop", "location_t opLoc",),
-	"EConstantArray": ("llvm::GlobalVariable *array", "location_t constantArrayLoc", "location_t constantArrayLocEnd",),
-	"EConstantArraySubstript": ("llvm::GlobalVariable *carray", "APInt cidx", "location_t constantArraySubscriptLoc", "location_t constantArraySubscriptLocEnd",),
+	"EString": ("llvm::Constant *string", "location_t stringLoc", "location_t stringEndLoc"),
+	"EConstantArraySubstript": ("llvm::Constant *array", "uint64_t cidx", "location_t casLoc", "location_t casEndLoc",),
 	"EVoid": ("Expr voidexpr", "location_t voidStartLoc"),
 	"EVar": ("unsigned sval", "IdentRef varName", "location_t varLoc",),
 	"ECondition": ("Expr cond, cleft, cright",),
@@ -454,7 +454,8 @@ OpaqueExpr()=delete;
 bool isSimple() const {
   switch (k) {
     case EVar:
-    case EConstantArray:
+    case EString:
+    case EConstantArraySubstript:
     case EConstant:
     case EStruct:
     case EArray:

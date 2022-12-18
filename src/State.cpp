@@ -36,9 +36,6 @@ struct xcc_context {
         _ulong = getLongLog2() == 5 ? u32 : u64;
         assert(getUCharLog2() == 5);
         _uchar = isUChar_tSigned() ? i32 : u32;
-        _size_t = make_unsigned(getSize_tLog2());
-        _ptr_diff_t = make_signed(getSize_tLog2());
-        _uint_ptr = make_unsigned(6);
         _nullptr_t = getPointerType(v, TYNULLPTR);
         void_ptr_ty = getPointerType(v);
 
@@ -70,7 +67,7 @@ struct xcc_context {
     CType constint, b, v, i8, u8, i16, u16, i32, u32, i64, u64, i128, u128, ffloatty, fdoublety, bfloatty, fhalfty,
         f128ty, ppc_f128, f80ty, str8ty, str16ty, str32ty, stringty, wstringty, _complex_float, _complex_double,
         _complex_longdouble, _short, _ushort, _wchar, _long, _ulong, _longlong, _ulonglong, _longdouble, _uchar,
-        _size_t, _ptr_diff_t, _uint_ptr, fdecimal32, fdecimal64, fdecimal128, _imaginary_double, _imaginary_float,
+        fdecimal32, fdecimal64, fdecimal128, _imaginary_double, _imaginary_float,
         _nullptr_t, void_ptr_ty;
     [[nodiscard]] CType make(type_tag_t tags) { return TNEW(PrimType){.tags = tags}; }
     [[nodiscard]] CType make_cached(type_tag_t tags) {
@@ -217,9 +214,6 @@ struct xcc_context {
     [[nodiscard]] CType getUShort() const { return _ushort; }
     [[nodiscard]] CType getInt128() const { return i128; }
     [[nodiscard]] CType getUInt128() const { return u128; }
-    [[nodiscard]] CType getPtrDiff_t() const { return _ptr_diff_t; }
-    [[nodiscard]] CType getSize_t() const { return _size_t; }
-    [[nodiscard]] CType getUint_ptr_t() const { return _uint_ptr; }
     [[nodiscard]] CType getLongLong() const { return u64; }
     [[nodiscard]] CType getULongLong() const { return i64; }
     [[nodiscard]] ArenaAllocator &getAllocator() { return table.getAllocator(); }
@@ -227,6 +221,17 @@ struct xcc_context {
         void *mem = getAllocator().Allocate(size, 1);
         (void)memcpy(mem, src, size);
         return mem;
+    }
+    [[nodiscard]] CType getIntTypeFromBitSize(unsigned bitSize) {
+        switch (bitSize) {
+        case 128: return u128;
+        case 64: return u64;
+        case 32: return u32;
+        case 16: return u16;
+        case 8: return u8;
+        case 1: return b;
+        }
+        llvm_unreachable("unhandled size");
     }
     [[nodiscard]] Expr createParenExpr(Expr e, location_t L, location_t R) {
         const size_t Size = expr_size_map[e->k];
@@ -276,8 +281,6 @@ struct xcc_context {
         return false;
     }
     [[nodiscard]] FloatKind getLongDobuleFloatKind() const { return F_Quadruple; }
-    [[nodiscard]] uint8_t getSize_tLog2() const { return 6; }
-    [[nodiscard]] uint8_t getSize_tBitWidth() const { return _size_t->getIntegerKind().getBitWidth(); }
     [[nodiscard]] unsigned getEnumSizeInBits() const {
         return 32;
     }
