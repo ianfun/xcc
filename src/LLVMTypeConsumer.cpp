@@ -129,12 +129,15 @@ struct LLVMTypeConsumer
             return;
         IdentRef Name = ty->getTagName();
         RecordDecl *RD = ty->getRecord();
+        SmallString<64> str;
+        if (Name) {
+            str.assign("struct.");
+            str += Name->getKey();
+        }
+        else
+            str.assign("struct.anon");
         if (!RD) {
-            // xxx: incomplex struct/union should must not used, so there is no needed to create it ...
-            if (Name)
-                tags[s->decl_idx] = llvm::StructType::create(ctx, ty->getTagName()->getKey());
-            else
-                tags[s->decl_idx] = llvm::StructType::create(ctx);
+            tags[s->decl_idx] = llvm::StructType::create(ctx, str.str());
             return;
         }
         const auto &fields = RD->fields;
@@ -142,9 +145,7 @@ struct LLVMTypeConsumer
         llvm::Type **buf = alloc.Allocate<llvm::Type *>(l);
         for (size_t i = 0; i < l; ++i)
             buf[i] = wrap(fields[i].ty);
-        ArrayRef<llvm::Type *> arr(buf, l);
-        tags[s->decl_idx] =
-            Name ? llvm::StructType::create(ctx, arr, Name->getKey()) : llvm::StructType::create(ctx, arr);
+        tags[s->decl_idx] = llvm::StructType::create(ctx, llvm::makeArrayRef(buf, l), str.str());
     }
     llvm::Type *wrap(CType ty) {
         assert(ty && "wrap a nullptr");
@@ -154,12 +155,7 @@ struct LLVMTypeConsumer
         case TYTAG: {
             if (ty->isEnum())
                 return integer_types[5];
-            const auto &fields = ty->getRecord()->fields;
-            size_t L = fields.size();
-            llvm::Type **buf = alloc.Allocate<llvm::Type *>(L);
-            for (size_t i = 0; i < L; ++i)
-                buf[i] = wrap(fields[i].ty);
-            return llvm::StructType::create(ctx, ArrayRef<llvm::Type *>(buf, L));
+            return tags[ty->idx];
         }
         case TYFUNCTION: {
             // fast case: search cached

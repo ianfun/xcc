@@ -27,8 +27,8 @@ struct ArenaAllocator : public llvm::AllocatorBase<ArenaAllocator> {
 #endif
         if (cur->offset + Size > CC_ARENA_BLOCK_SIZE) {
 #if CC_DEBUG
-            // dbgprint("ArenaAllocator: new_arena_block\n");
             ++num_blocks;
+            allocated_bytes = 0;
 #endif
             struct arena_block *n = new_arena_block();
             cur->next = n;
@@ -49,7 +49,7 @@ struct ArenaAllocator : public llvm::AllocatorBase<ArenaAllocator> {
 #if CC_DEBUG
         statics("ArenaAllocator statics\n");
         statics("  - Number of blocks: %zu\n", num_blocks);
-        statics("  - Total bytes allocated: %zu\n", allocated_bytes);
+        statics("  - Total bytes allocated: %zu\n", num_blocks * CC_ARENA_BLOCK_SIZE + allocated_bytes);
         endStatics();
 #endif
         struct arena_block *p = head;

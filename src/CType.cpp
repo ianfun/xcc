@@ -220,29 +220,6 @@ struct OpaqueCType {
     type_tag_t andTags(const type_tag_t tag_to_clear) const { return tags & tag_to_clear; }
     const_CType getFunctionAttrTy() const { return this; }
     CType getFunctionAttrTy() { return this; }
-    void noralize() {
-        switch (getKind()) {
-        case TYFUNCTION: {
-            type_tag_t h = ret->getTagsStoragesAndFunctionsOnly();
-            ret->clearTags(storage_class_specifiers);
-            addTags(h);
-            break;
-        }
-        case TYARRAY: {
-            type_tag_t h = arrtype->getTagsStoragesOnly();
-            arrtype->clearTags(storage_class_specifiers);
-            addTags(h);
-            break;
-        }
-        case TYPOINTER: {
-            type_tag_t h = p->getTagsStoragesOnly();
-            p->clearTags(storage_class_specifiers);
-            addTags(h);
-            break;
-        }
-        default: break;
-        }
-    }
     StringRef get_pointer_qual_str() const {
         if (hasTag(TYCONST))
             return "const";

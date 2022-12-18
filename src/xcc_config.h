@@ -1,4 +1,4 @@
-// config.nim - default configs for cc
+// config.nim - default configs for xcc
 
 // short version string
 #ifndef CC_VERSION
@@ -109,5 +109,5 @@ template <unsigned long long n> static constexpr inline unsigned long long cstrl
 #endif
 
 #ifndef CC_PRINT_CDECL_FUNCTION
-#define CC_PRINT_CDECL_FUNCTION 0
+#define CC_PRINT_CDECL_FUNCTION 1
 #endif

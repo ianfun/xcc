@@ -2062,9 +2062,9 @@ NOT_CONSTANT:
     }
     Expr boolToInt(Expr e) { return ENEW(CastExpr){.ty = context.getInt(), .castop = ZExt, .castval = e}; }
     enum DeclaratorFlags: unsigned char {
-        D_Direct = 0,
-        D_Abstract = 1,
-        D_Function = 2
+        D_Direct,
+        D_Abstract,
+        D_Function 
     };
     CType declaration_specifiers() { return specifier_qualifier_list(); }
     void consume() {
@@ -2418,8 +2418,14 @@ BREAK:
     }
     Declator declarator(CType base, enum DeclaratorFlags flags = D_Direct) {
         CType ty = base;
-        while (l.tok.tok == TMul)
-            consume(), ty = context.getPointerType(ty), type_qualifier_list(ty);
+        while (l.tok.tok == TMul) {
+            consume();
+            ty = context.getPointerType(context.clone(ty));
+            type_tag_t tags = ty->p->getTagsStoragesOnly();
+            ty->p->clearTags(storage_class_specifiers);
+            ty->addTags(tags);
+            type_qualifier_list(ty);
+        }
         return direct_declarator(ty, flags);
     }
     llvm::Constant *parse_string_literal(size_t &strLength, location_t &endLoc, enum StringPrefix &prefix) {
@@ -2618,7 +2624,11 @@ designator:
                         parse_error(getLoc(), "expect identifier in designator");
                         return nullptr;
                     }
+                    size_t old_size = designators.size();
+                    CType oldTy = ty;
                     ty = ty->getFieldIndex(l.tok.s, designators);
+                    if (designators.size() == old_size) 
+                        return type_error(getLoc(), "field designator %I does not refer to any field in type %T", l.tok.s, oldTy), nullptr;
                     consume();
                     break;
                 }
@@ -2722,7 +2732,11 @@ designator:
             } else if (base->isIncomplete()) {
                 type_error("array type has incomplete element type");
             }
+            CType arrType = context.clone(base);
+            type_tag_t tags = arrType->getTagsStoragesOnly();
+            arrType->clearTags(storage_class_specifiers);
             CType ty = TNEW(ArrayType){.arrtype = base, .hassize = false, .arrsize = 0};
+            ty->addTags(tags);
             ty->setKind(TYARRAY);
             consume();
             if (l.tok.tok == TMul) {
@@ -2749,6 +2763,7 @@ designator:
                 ty->arrsize = try_eval(e, ok);
                 if (!ok) {
                     ty = TNEW(VlaType){.vla_arraytype = base, .vla_expr = int_cast(e, size_t_ty)};
+                    ty->addTags(tags);
                     ty->setKind(TYVLA);
                 }
                 if (l.tok.tok != TRSquareBrackets)
@@ -2758,7 +2773,10 @@ designator:
             return direct_declarator_end(ty, name);
         }
         case TLbracket: {
-            CType ty = TNEW(FunctionType){.ret = base, .params = xvector<Param>::get(), .isVarArg = false};
+            CType ret = context.clone(base);
+            type_tag_t tags = ret->getTagsStoragesAndFunctionsOnly();
+            CType ty = TNEW(FunctionType){.ret = ret, .params = xvector<Param>::get(), .isVarArg = false};
+            ty->addTags(tags);
             ty->setKind(TYFUNCTION);
             consume();
             if (l.tok.tok != TRbracket) {
@@ -2776,7 +2794,6 @@ designator:
         }
     }
     Declator struct_declarator(CType base) {
-        Declator d;
         if (l.tok.tok == TColon) {
             Expr e;
             unsigned bitsize;
@@ -2788,7 +2805,7 @@ designator:
             res.ty->setKind(TYBITFIELD);
             return res;
         }
-        d = declarator(base, D_Direct);
+        Declator d = declarator(base, D_Function);
         if (!d.ty)
             return Declator();
         if (l.tok.tok == TColon) {
@@ -2802,7 +2819,7 @@ designator:
             res.ty->setKind(TYBITFIELD);
             return res;
         }
-        return Declator(d.name, d.ty);
+        return d;
     }
     CType struct_union(Token tok) {
         // parse a struct or union, return it
@@ -2828,56 +2845,39 @@ designator:
         result->setKind(TYTAG);
         SmallVectorImpl<FieldDecl> &fields = result->getRecord()->fields;
         consume();
-        if (l.tok.tok != TRcurlyBracket) {
+        while (l.tok.tok != TRcurlyBracket) {
+            CType base;
+            if (l.tok.tok == K_Static_assert) {
+                if (!consume_static_assert())
+                    return nullptr;
+                if (l.tok.tok == TRcurlyBracket)
+                    break;
+                continue;
+            }
+            if (!(base = specifier_qualifier_list()))
+                return expect(getLoc(), "specifier-qualifier-list"), nullptr;
             for (;;) {
-                CType base;
-                if (l.tok.tok == K_Static_assert) {
-                    if (!consume_static_assert())
-                        return nullptr;
-                    if (l.tok.tok == TRcurlyBracket)
-                        break;
-                    continue;
-                }
-                if (!(base = specifier_qualifier_list()))
-                    return expect(getLoc(), "specifier-qualifier-list"), nullptr;
-                if (l.tok.tok == TSemicolon) {
-                    consume();
-                    continue;
-                } else {
-                    Declator e;
-                    for (;;) {
-                        if (l.tok.tok == TSemicolon) {
-                            e = Declator(nullptr, base);
-                            goto PUT_FIELD;
-                        }
-                        e = struct_declarator(base);
-                        if (!e.ty)
-                            return parse_error(getLoc(), "expect struct-declarator"), nullptr;
-                        if (e.name) {
-                            for (const auto &p : fields) {
-                                if (p.name == e.name) {
-                                    type_error(getLoc(), "duplicate member %I", e.name);
-                                    break;
-                                }
-                            }
-                        }
-PUT_FIELD:
-                        fields.push_back(e);
-                        if (l.tok.tok == TComma)
-                            consume();
-                        else {
-                            checkSemicolon();
+                Declator e = struct_declarator(base);
+                if (!e.ty)
+                    return parse_error(getLoc(), "expect struct-declarator"), nullptr;
+                if (e.name) {
+                    for (const auto &p : fields) {
+                        if (p.name == e.name) {
+                            type_error(getLoc(), "duplicate member %I", e.name);
                             break;
                         }
                     }
-                    if (l.tok.tok == TRcurlyBracket) {
-                        consume();
-                        break;
-                    }
+                }
+                fields.push_back(e);
+                if (l.tok.tok == TComma)
+                    consume();
+                else {
+                    checkSemicolon();
+                    break;
                 }
             }
-        } else
-            consume();
+        }
+        consume();
         result->idx = puttag(Name, result, full_loc, tok == Kstruct ? TagType_Struct : TagType_Union);
         return result;
     }
@@ -3133,7 +3133,6 @@ PUT_FIELD:
             Declator st = declarator(base, D_Direct);
             if (!st.ty)
                 return;
-            st.ty->noralize();
             if (l.tok.tok == TLcurlyBracket) {
                 if (st.ty->getKind() != TYFUNCTION)
                     return (void)type_error(current_declator_loc, "unexpected function definition");
@@ -3230,12 +3229,6 @@ ARGV_OK:;
                     return;
                 result->vars.back().init = init;
                 if (st.ty->getKind() == TYARRAY) {
-                    unsigned initSize = init->ty->arrsize;
-                    if (st.ty->hassize) {
-                        unsigned declSize = st.ty->arrsize;
-                        if (declSize < initSize)
-                            error("excess elements in array initializer");
-                    }
                     st.ty->hassize = true;
                     st.ty->arrsize = init->ty->arrsize;
                 }
