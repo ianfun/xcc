@@ -376,7 +376,7 @@ R:
                     eat();
                 }
             } else {
-                if (!(isalnum(c) || c == '_' || (unsigned char)c & 128 || c == '$'))
+                if (!(llvm::isAlnum(c) || c == '_' || (unsigned char)c & 128 || c == '$'))
                     break;
 
                 lexIdnetBuffer.push_back(c);
@@ -435,43 +435,22 @@ R:
     //
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-    TokenV lexPPNumberEnd(const char *BufferPtr) {
-        switch (c) {
-        case 'p':
-        case 'P':
-        case 'e':
-        case 'E': {
-            eat();
-            if (c == '+' || c == '-')
-                eat();
-            return lexPPNumberEnd(BufferPtr);
-        }
-        default: {
-            if (c == '\'')
-                eat();
-            if (isalnum(c) || c == '.') {
-                return lexPPNumber(BufferPtr);
-            }
-            if (c == '\\') {
-                eat();
-                if (c == 'u')
-                    lexUChar(4);
-                else if (c == 'U')
-                    lexUChar(8);
-                return lexPPNumberEnd(BufferPtr);
-            }
-            endLoc = SM.getLoc() - 2;
-            return TokenV(PPNumber, BufferPtr);
-        }
-        }
-    }
     TokenV lexPPNumber(const char *BufferPtr) {
         do {
             eat();
-            if (c == '\'')
+            switch (c) {
+            case 'P':
+            case 'p':
+            case 'E':
+            case 'e':
                 eat();
-        } while (isalnum(c) || c == '\'');
-        return lexPPNumberEnd(BufferPtr);
+                if (c == '+' || c == '-')
+                    eat();
+                continue;
+            }
+        } while (llvm::isAlnum(c) || c == '\'' || c == '.');
+        endLoc = SM.getLoc() - 2;
+        return TokenV(PPNumber, BufferPtr);
     }
     TokenV lexStringLit(const char *BufferPtr) {
         eat();

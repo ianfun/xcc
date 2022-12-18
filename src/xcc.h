@@ -921,9 +921,9 @@ struct TranslationUnit {
 #include "expressions.inc"
 #include "statements.inc"
 #include "utf8.cpp"
+#include "printer.cpp"
 #include "Diagnostic.cpp"
 #include "option.cpp"
-#include "printer.cpp"
 #include "Graph.cpp"
 
 struct ReplacedExprParen {
@@ -1284,7 +1284,7 @@ static unsigned scalarRank(const_CType ty) {
 #endif
 #include "LLVMDiagnosticHandler.cpp"
 #include "Scope.cpp"
-#include "State.cpp"
+#include "xcc_context.cpp"
 #include "SourceMgr.cpp"
 #include "TextDiagnosticPrinter.cpp"
 #include "LLVMTypeConsumer.cpp"

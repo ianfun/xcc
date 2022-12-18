@@ -3480,10 +3480,10 @@ START_LEX:
         uint64_t radix;
         const unsigned char *s = reinterpret_cast<const unsigned char *>(str.data());
         if (str.size() == 2) {
-            if (!llvm::isDigit(str.front()))
-                return lex_error(loc, "expect one digit"), nullptr;
-            return wrap(context.getInt(), ConstantInt::get(getLLVMContext(), APInt(32, static_cast<uint64_t>(*s) - '0')), 0,
-                        0);
+            assert(llvm::isDigit(str.front()));
+            return wrap(
+                context.getInt(), 
+                ConstantInt::get(getLLVMContext(), APInt(32, uint64_t(*s) - '0')), 0, 0);
         }
         if (*s == '0') {
             s++;
@@ -3551,7 +3551,7 @@ common:
                         return lex_error(loc, "exponent 'p' and 'p' can only used in hexdecimal constant"), nullptr;
 READ_EXP:
                     isFPConstant = true;
-                    ++s;
+                    s++;
                     if (*s == '+' || *s == '-')
                         s++;
                     if (!llvm::isDigit(*s))
@@ -3789,15 +3789,19 @@ NEXT:
             parseLiteralCache.resize_for_overwrite(s.size() + 1);
             size_t i = 0;
             for (const char c: s) {
-                if (c != '_')
+                if (c != '\'')
                     parseLiteralCache[i++] = c;
             }
             assert(i > 0 && "empty number literal");
             parseLiteralCache[i] = '\0';
             result = parse_pp_number(parseLiteralCache.str());
             parseLiteralCache.clear();
-            result->constantLoc = loc;
-            result->constantEndLoc = getEndLoc();
+            if (!result) {
+                result = getIntZero();
+            } else {
+                result->constantLoc = loc;
+                result->constantEndLoc = getEndLoc();
+            }
             consume();
         } break;
         case TIdentifier: {

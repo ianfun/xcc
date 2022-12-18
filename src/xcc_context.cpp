@@ -50,7 +50,7 @@ struct xcc_context {
         // the multibyte character sequence
         str8ty = getPointerType(make(getChar8_t()->getTags() | TYCONST));
 
-        _longdouble = make_floating(getLongDobuleFloatKind());
+        _longdouble = make_floating(getLongDoubleFloatKind());
 
         // There are three complex types, designated as float _Complex, double _Complex, and long double _Complex.
 
@@ -280,7 +280,7 @@ struct xcc_context {
         // always unsigned since char32_t is unsigned
         return false;
     }
-    [[nodiscard]] FloatKind getLongDobuleFloatKind() const { return F_Quadruple; }
+    [[nodiscard]] FloatKind getLongDoubleFloatKind() const { return F_Quadruple; }
     [[nodiscard]] unsigned getEnumSizeInBits() const {
         return 32;
     }
