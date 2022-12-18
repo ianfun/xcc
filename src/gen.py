@@ -206,14 +206,13 @@ exprs = {
 	"EUnary": ("Expr uoperand", "enum UnaryOp uop", "location_t opLoc",),
 	"EString": ("llvm::Constant *string", "location_t stringLoc", "location_t stringEndLoc"),
 	"EConstantArraySubstript": ("llvm::Constant *array", "uint64_t cidx", "location_t casLoc", "location_t casEndLoc",),
+	"EInitList": ("location_t initStartLoc", "location_t initEndLoc", "xvector<Initializer> inits"),
 	"EVoid": ("Expr voidexpr", "location_t voidStartLoc"),
 	"EVar": ("unsigned sval", "IdentRef varName", "location_t varLoc",),
 	"ECondition": ("Expr cond, cleft, cright",),
 	"ECast": ("enum CastOp castop", "Expr castval",),
 	"ECall": ("Expr callfunc", "xvector<Expr> callargs", "location_t callEnd", ),
 	"ESubscript": ("Expr left, right",),
-	"EArray": ("xvector<Expr> arr", "location_t ArrayStartLoc", "location_t ArrayEndLoc", ),
-	"EStruct": ("xvector<Expr> arr2", "location_t StructStartLoc", "location_t StructEndLoc",),
 	"EMemberAccess": ("Expr obj", "unsigned idx", "location_t memberEndLoc",),
 	"EArrToAddress": ("Expr arr3",),
 	"EPostFix": ("enum PostFixOp pop", "Expr poperand", "location_t postFixEndLoc", ),
@@ -460,11 +459,10 @@ bool isSimple() const {
     case EStruct:
     case EArray:
       return true;
-    default: 
+    default:
       return false;
   }
 }
-bool hasSideEffects() const;
 const location_t *getParenLLoc() const;
 const location_t *getParenRLoc() const;
 location_t *getParenLLoc();

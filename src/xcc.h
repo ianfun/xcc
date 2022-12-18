@@ -885,6 +885,10 @@ union TagDecl {
     bool hasValue() const { return struct_decl != nullptr; }
     operator bool() const { return hasValue(); }
 };
+struct Initializer {
+    Expr value; // value
+    unsigned idx; // The index for the array/struct/union
+};
 // Simple 'case' statement with one value
 struct SwitchCase {
     location_t loc;
@@ -968,6 +972,7 @@ location_t OpaqueExpr::getBeginLoc() const {
     case EUnary: return opLoc;
     case ECast: return castval->getBeginLoc();
     case ESubscript: return left->getBeginLoc();
+    case EInitList: return initStartLoc;
     case EConstant: return constantLoc;
     case ECondition: return cond->getBeginLoc();
     case ECall: return callfunc->getBeginLoc();
@@ -988,6 +993,7 @@ location_t OpaqueExpr::getEndLoc() const {
     switch (k) {
     case EBlockAddress: return block_loc_begin + labelName->getKeyLength() - 1;
     case ESizeof: return sizeof_loc_end;
+    case EInitList: return initEndLoc;
     case EConstant: return constantEndLoc;
     case EBin: return rhs->getEndLoc();
     case EUnary: return uoperand->getEndLoc();
@@ -1007,7 +1013,6 @@ location_t OpaqueExpr::getEndLoc() const {
     }
     llvm_unreachable("invalid Expr");
 }
-bool OpaqueExpr::hasSideEffects() const { return !isSimple(); }
 static constexpr uint64_t build_integer(IntegerKind kind, bool Signed) {
     const uint64_t log2size = kind.asLog2();
     return (log2size << 47) | (Signed ? OpaqueCType::sign_bit : 0ULL);
@@ -1086,6 +1091,12 @@ static bool isConstant(const_Expr e) {
         case EString:
         case EConstantArraySubstript:
         case EBlockAddress:
+            return true;
+        case EInitList:
+            for (const Initializer &it: e->inits) {
+                if (!isConstant(it.value))
+                    return false;
+            }
             return true;
         case EBin:
             switch(e->bop) {

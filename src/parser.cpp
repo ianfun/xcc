@@ -832,7 +832,7 @@ PTR_CAST:
                     while (length--) {
                         VarDecl &it = *start;
                         if (std::binary_search(set.begin(), set_end, it.idx)) {
-                            if (it.init && it.init->hasSideEffects()) {
+                            if (it.init && !it.init->isSimple()) {
                                 scope_index_set_unnamed_alloca(it.idx);
                                 goto SIDE_EFFECT;
                             }
@@ -1120,6 +1120,7 @@ SIDE_EFFECT:
         case EBlockAddress:
         case EArrToAddress:
         case ESizeof:
+        case EInitList:
         case EConstantArraySubstript: return e;
         }
         llvm_unreachable("bad expr kind");
@@ -2447,112 +2448,120 @@ BREAK:
         parseLiteralCache.clear();
         return C;
     }
-    Expr initializer_list() {
-        Expr e, result;
-        int m;
-        if (l.tok.tok != TLcurlyBracket) {
-            CType ty = sema.currentInitTy;
-            if (!ty)
-                return assignment_expression();
-            auto k = ty->getKind();
-            if (k == TYARRAY && l.tok.tok == TStringLit) {
-                location_t loc1 = getLoc();
-                location_t endLoc;
-                enum StringPrefix enc;
-                size_t strLength;
-                llvm::Constant *C = parse_string_literal(strLength, endLoc, enc);
-                Expr result;
-                switch (enc) {
-                case Prefix_none:
-                case Prefix_u8:
-                    if (!(ty->arrtype->isInteger() && ty->arrtype->getIntegerKind().asLog2() == 3))
-                        type_error(loc1, "initializing %T array with string literal", ty->arrtype);
-                    result = wrap(context.getFixArrayType(enc == Prefix_none ? context.getChar() : context.getChar8_t(),
-                                                        strLength),
-                                C, loc1, endLoc);
-                    break;
-                case Prefix_L:
-                    if (!(ty->arrtype->isInteger() && ty->arrtype->getIntegerKind().asLog2() == 5))
-                        type_error(loc1, "initializing %T array with wide string literal", ty->arrtype);
-                    result = wrap(context.getFixArrayType(context.getWChar(), strLength),
-                                C,
-                                loc1, endLoc);
-                    break;
-                case Prefix_u:
-                    if (!(ty->arrtype->isInteger() && ty->arrtype->getIntegerKind().asLog2() == 5))
-                        type_error(loc1, "initializing %T array with UTF-16 string literal", ty->arrtype);
-                    result = wrap(context.getFixArrayType(context.getChar16_t(), strLength),
-                                C, loc1, endLoc);
-                    break;
-                case Prefix_U:
-                    if (!(ty->arrtype->isInteger() && ty->arrtype->getIntegerKind().asLog2() == 5))
-                        type_error(loc1, "initializing %T array with UTF-32 string literal", ty->arrtype);
-                    result = wrap(context.getFixArrayType(context.getUChar(), strLength), C,
-                                loc1, endLoc);
-                    break;
-                default: llvm_unreachable("bad string encoding");
-                }
-                return result;
+/*
+braced-initializer:
+    { }
+    { initializer-list }
+    { initializer-list , }
+
+initializer:
+    assignment-expression
+    braced-initializer
+
+initializer-list:
+    designationopt initializer
+    initializer-list , designationopt initializer
+
+designation:
+    designator-list =
+
+designator-list:
+    designator
+    designator-list designator
+
+designator:
+    [ constant-expression ]
+    . identifier
+*/
+    Expr scalar_init_list() {
+        CType ty = sema.currentInitTy;
+        if (!ty)
+            return assignment_expression();
+        auto k = ty->getKind();
+        if (k == TYARRAY && l.tok.tok == TStringLit) {
+            location_t loc1 = getLoc();
+            location_t endLoc;
+            enum StringPrefix enc;
+            size_t strLength;
+            llvm::Constant *C = parse_string_literal(strLength, endLoc, enc);
+            Expr result;
+            switch (enc) {
+            case Prefix_none:
+            case Prefix_u8:
+                if (!(ty->arrtype->isInteger() && ty->arrtype->getIntegerKind().asLog2() == 3))
+                    type_error(loc1, "initializing %T array with string literal", ty->arrtype);
+                result = wrap(context.getFixArrayType(enc == Prefix_none ? context.getChar() : context.getChar8_t(),
+                                                    strLength),
+                            C, loc1, endLoc);
+                break;
+            case Prefix_L:
+                if (!(ty->arrtype->isInteger() && ty->arrtype->getIntegerKind().asLog2() == 5))
+                    type_error(loc1, "initializing %T array with wide string literal", ty->arrtype);
+                result = wrap(context.getFixArrayType(context.getWChar(), strLength),
+                            C,
+                            loc1, endLoc);
+                break;
+            case Prefix_u:
+                if (!(ty->arrtype->isInteger() && ty->arrtype->getIntegerKind().asLog2() == 5))
+                    type_error(loc1, "initializing %T array with UTF-16 string literal", ty->arrtype);
+                result = wrap(context.getFixArrayType(context.getChar16_t(), strLength),
+                            C, loc1, endLoc);
+                break;
+            case Prefix_U:
+                if (!(ty->arrtype->isInteger() && ty->arrtype->getIntegerKind().asLog2() == 5))
+                    type_error(loc1, "initializing %T array with UTF-32 string literal", ty->arrtype);
+                result = wrap(context.getFixArrayType(context.getUChar(), strLength), C,
+                            loc1, endLoc);
+                break;
+            default: llvm_unreachable("bad string encoding");
             }
-            if (!ty->isScalar())
-                return type_error(getLoc(), "expect bracket initializer for aggregate types"), nullptr;
-            if (!(e = assignment_expression()))
-                return nullptr;
-            return castto(e, ty, Implict_Init);
+            return result;
         }
-        auto k = sema.currentInitTy->getKind();
-        bool isStructUnion = sema.currentInitTy->isAgg() && sema.currentInitTy->isUnionOrStruct();
-        result = k == isStructUnion ? ENEW(StructExpr){.ty = sema.currentInitTy, .arr2 = xvector<Expr>::get()}
-                                    : ENEW(ArrayExpr){.ty = sema.currentInitTy, .arr = xvector<Expr>::get()};
-        result->StructStartLoc = getLoc();
-        consume();
-        if (k == TYARRAY) {
-            if (sema.currentInitTy->hassize) {
-                m = sema.currentInitTy->arrsize;
-            } else {
-                result->ty->hassize = true, result->ty->arrsize = 0, m = -1;
-            }
-        } else if (k == isStructUnion) {
-            m = sema.currentInitTy->getRecord()->fields.size();
-        } else {
-            // braces around scalar initializer
-            m = 1;
-        }
-        for (unsigned i = 0;; i++) {
-            CType ty;
-            if (l.tok.tok == TRcurlyBracket) {
-                result->StructEndLoc = getLoc();
+        if (!ty->isScalar())
+            return type_error(getLoc(), "expect bracket initializer for aggregate types"), nullptr;
+        Expr e;
+        if (!(e = assignment_expression()))
+            return nullptr;
+        return castto(e, ty, Implict_Init);
+    }
+    Expr simple_initializer_list() {
+        CType ty = sema.currentInitTy;
+        location_t loc = getLoc();
+        Expr init = nullptr;
+        unsigned braces = 1;
+        while (braces) {
+            switch (l.tok.tok) {
+            case TLcurlyBracket:
+                ++braces;
                 consume();
                 break;
-            }
-            if (k == isStructUnion) {
-                ty = i < (unsigned)m ? sema.currentInitTy->getRecord()->fields[i].ty : nullptr;
-            } else if (k == TYARRAY) {
-                ty = sema.currentInitTy->arrtype;
-            } else {
-                ty = sema.currentInitTy;
-            }
-            {
-                CType o = sema.currentInitTy;
-                sema.currentInitTy = ty;
-                e = initializer_list();
-                sema.currentInitTy = o;
-            }
-            if (!e)
-                return nullptr;
-            if (m == -1) {
-                result->arr.push_back(e), result->ty->arrsize++;
-            } else if (i < (unsigned)m) {
-                result->arr.push_back(e);
-            } else {
-                warning(getLoc(), "excess elements in initializer-list");
-            }
-            if (l.tok.tok == TComma)
+            case TRcurlyBracket:
+                --braces;
                 consume();
+                break;
+            default:
+                if (init) {
+                    warning(getLoc(), "excess elements in scalar initializer");
+                    (void)assignment_expression();
+                } else {
+                    if (!(init = assignment_expression()))
+                        return nullptr;
+                }
+                if (l.tok.tok == TComma) consume();
+            }
         }
-        if (sema.currentInitTy->isScalar())
-            result = result->arr.front();
-        return result;
+        if (!init)
+            init = wrap(ty, llvm::Constant::getNullValue(llvmTypeCache.wrap(ty)), loc, getLoc());
+        return castto(init, ty, Implict_Init);
+    }
+    Expr initializer_list() {
+        if (l.tok.tok != TLcurlyBracket)
+            return scalar_init_list();
+        consume(); // eat '{'
+        CType ty = sema.currentInitTy;
+        if (ty->getKind() == TYPRIM) 
+            return simple_initializer_list();
+        return nullptr;
     }
 
     Declator direct_declarator(CType base, enum DeclaratorFlags flags = D_Direct) {
@@ -3090,7 +3099,6 @@ ARGV_OK:;
             if (st.ty->hasTag(TYINLINE))
                 warning(current_declator_loc, "inline can only used in function declaration");
             if (l.tok.tok == TAssign) {
-                Expr init;
                 auto &var_info = sema.typedefs.getSym(idx);
                 var_info.tags |= ASSIGNED;
                 if (st.ty->getKind() == TYVLA) {
@@ -3100,15 +3108,21 @@ ARGV_OK:;
                 if (st.ty->hasTag(TYTYPEDEF))
                     return (void)type_error(current_declator_loc, "'typedef' may not be initialized");
                 consume();
-                {
-                    llvm::SaveAndRestore<CType> saved_ctype(sema.currentInitTy, st.ty);
-                    init = initializer_list();
-                }
+                sema.currentInitTy = st.ty;
+                Expr init = initializer_list();
                 if (!init)
                     return expect(current_declator_loc, "initializer-list");
                 result->vars.back().init = init;
-                if (st.ty->getKind() == TYARRAY && !st.ty->hassize)
-                    result->vars.back().ty = init->ty;
+                if (st.ty->getKind() == TYARRAY) {
+                    unsigned initSize = init->ty->arrsize;
+                    if (st.ty->hassize) {
+                        unsigned declSize = st.ty->arrsize;
+                        if (declSize < initSize)
+                            error("excess elements in array initializer");
+                    }
+                    st.ty->hassize = true;
+                    st.ty->arrsize = init->ty->arrsize;
+                }
                 if (init->k == EConstant && st.ty->hasTags(TYCONST | TYCONSTEXPR)) {
                     var_info.val = init->C; // for const and constexpr, their value can be fold to constant
                     var_info.tags |= CONST_VAR;

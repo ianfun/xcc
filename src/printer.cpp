@@ -150,6 +150,18 @@ raw_ostream &operator<<(llvm::raw_ostream &OS, const_Expr e) {
         OS << ' ' << show(e->bop) << ' ';
         maybe_print_paren(e->rhs, OS);
         return OS;
+    case EInitList:
+    {
+        OS << '{';
+        size_t Size = e->inits.size();
+        for (unsigned i = 0;i < Size;++i) {
+            const Initializer &it = e->inits[i];
+            OS << "field [" << it.idx << "] = " << it.value;
+            if (i != Size)
+                OS << ", ";
+        }
+        return OS << '}';
+    }
     case EUnary:
         if (e->uop == AddressOf && e->ty->p->getKind() == TYFUNCTION && !e->ty->hasTag(TYLVALUE))
             return maybe_print_paren(e->uoperand, OS), OS;

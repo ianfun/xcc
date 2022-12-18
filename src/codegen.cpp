@@ -897,6 +897,10 @@ private:
         if (options.g) setDebugLoc(e->getBeginLoc());
         switch (e->k) {
         case EConstant: return e->C;
+        case EInitList:
+        {
+            return nullptr;
+        } break;
         case EConstantArraySubstript:
             return llvm::ConstantExpr::getInBoundsGetElementPtr(wrap(e->ty->p), e->array,
                                                                 ConstantInt::get(type_cache.intptrTy, e->cidx));

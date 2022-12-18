@@ -235,6 +235,7 @@ struct Function: public DiagnosticHelper {
 	Value eval(Expr e) {
 		switch (e->k) {
             case EConstant: return e->C;
+            case EInitList: llvm_unreachable("");
             case EBlockAddress:
         	   return reinterpret_cast<Value>(getLabel(e->addr));
             case EConstantArraySubstript: 

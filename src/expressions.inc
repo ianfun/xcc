@@ -5,6 +5,7 @@ enum ExprKind: uint8_t {
     EUnary,
     EString,
     EConstantArraySubstript,
+    EInitList,
     EVoid,
     EVar,
     ECondition,
@@ -31,11 +32,10 @@ bool isSimple() const {
     case EStruct:
     case EArray:
       return true;
-    default: 
+    default:
       return false;
   }
 }
-bool hasSideEffects() const;
 const location_t *getParenLLoc() const;
 const location_t *getParenRLoc() const;
 location_t *getParenLLoc();
@@ -71,6 +71,11 @@ union alignas(void*) {
         uint64_t cidx;
         location_t casLoc;
         location_t casEndLoc;
+    };
+    struct alignas(void*) {
+      location_t initStartLoc;
+        location_t initEndLoc;
+        xvector<Initializer> inits;
     };
     struct alignas(void*) {
       Expr voidexpr;
@@ -175,6 +180,15 @@ struct ConstantArraySubstriptExpr {
         uint64_t cidx;
         location_t casLoc;
         location_t casEndLoc;
+  };
+};
+struct InitListExpr {
+    enum ExprKind k=EInitList;
+    CType ty;
+    struct alignas(void*) {
+          location_t initStartLoc;
+        location_t initEndLoc;
+        xvector<Initializer> inits;
   };
 };
 struct VoidExpr {
@@ -292,6 +306,7 @@ static uint8_t expr_size_map[] = {
     sizeof(UnaryExpr),
     sizeof(StringExpr),
     sizeof(ConstantArraySubstriptExpr),
+    sizeof(InitListExpr),
     sizeof(VoidExpr),
     sizeof(VarExpr),
     sizeof(ConditionExpr),
@@ -306,4 +321,4 @@ static uint8_t expr_size_map[] = {
     sizeof(SizeofExpr),
     sizeof(BlockAddressExpr)
 };
-static constexpr size_t expr_max_size = std::max({sizeof(ConstantExpr), sizeof(BinExpr), sizeof(UnaryExpr), sizeof(StringExpr), sizeof(ConstantArraySubstriptExpr), sizeof(VoidExpr), sizeof(VarExpr), sizeof(ConditionExpr), sizeof(CastExpr), sizeof(CallExpr), sizeof(SubscriptExpr), sizeof(ArrayExpr), sizeof(StructExpr), sizeof(MemberAccessExpr), sizeof(ArrToAddressExpr), sizeof(PostFixExpr), sizeof(SizeofExpr), sizeof(BlockAddressExpr)});
+static constexpr size_t expr_max_size = std::max({sizeof(ConstantExpr), sizeof(BinExpr), sizeof(UnaryExpr), sizeof(StringExpr), sizeof(ConstantArraySubstriptExpr), sizeof(InitListExpr), sizeof(VoidExpr), sizeof(VarExpr), sizeof(ConditionExpr), sizeof(CastExpr), sizeof(CallExpr), sizeof(SubscriptExpr), sizeof(ArrayExpr), sizeof(StructExpr), sizeof(MemberAccessExpr), sizeof(ArrToAddressExpr), sizeof(PostFixExpr), sizeof(SizeofExpr), sizeof(BlockAddressExpr)});

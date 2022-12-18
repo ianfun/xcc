@@ -114,6 +114,10 @@ struct StmtVisitor {
                 for (const auto it: e->arr)
                     VisitExpr(it);
                 break;
+            case EInitList:
+                for (const Initializer &it: e->inits)
+                    VisitExpr(it.value);
+                break;
             case EStruct:
                 for (const auto it: e->arr)
                     VisitExpr(it);
@@ -183,6 +187,7 @@ struct StmtReleaser: public StmtVisitor<StmtReleaser, true> {
         case ECall: e->callargs.free(); break;
         case EArray: e->arr.free(); break;
         case EStruct: e->arr2.free(); break;
+        case EInitList: e->inits.free();
         default: break;
         }
     }
