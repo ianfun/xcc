@@ -1111,8 +1111,7 @@ SIDE_EFFECT:
             warning("unused subscript expression");
             return comma(e->left, e->right);
         case EPostFix:
-        case EArray:
-        case EStruct:
+        case EBuiltinCall:
         case EString:
         case EMemberAccess:
         case EVar:
@@ -2516,7 +2515,7 @@ BREAK:
                 break;
             default:
                 if (init) {
-                    if (ty->isComplex() && !init->isComplex()) {
+                    if (ty->isComplex() && !init->ty->isComplex()) {
                         Expr lhs = init;
                         Expr rhs;
                         if (!(rhs = assignment_expression()))
@@ -2572,41 +2571,107 @@ designator:
     [ constant-expression ]
     . identifier
 */
+    Expr parse_designator_initializer(CType ty, SmallVectorImpl<Designator> &designators) {
+        for (;;) {
+            switch (l.tok.tok) {
+                case TAssign:
+                {
+                    llvm::SaveAndRestore<CType> tmp(sema.currentInitTy, ty);
+                    consume();
+                    Expr e = initializer_list();
+                    if (!e) return nullptr;
+                    return e;
+                }
+                case TLSquareBrackets:
+                {
+                    if (ty->getKind() != TYARRAY) {
+                        type_error(getLoc(), "field designator cannot initialize a non array type");
+                        return nullptr;
+                    }
+                    ty = ty->arrtype;
+                    consume();
+                    Expr indexExpr = constant_expression();
+                    if (!indexExpr) return nullptr;
+                    uint64_t index = force_eval(indexExpr);
+                    if (l.tok.tok == TEllipsis) {
+                        consume();
+                        Expr indexExpr2 = constant_expression();
+                        if (!indexExpr2) return nullptr;
+                        uint64_t index2 = force_eval(indexExpr);
+                        designators.push_back(Designator(index, index2));
+                    } else {
+                        designators.push_back(Designator(index));
+                    }
+                    if (l.tok.tok != TRSquareBrackets)
+                        return parse_error(getLoc(), "expect ']' after array designator"), nullptr;
+                    consume();
+                    break;
+                }
+                case TDot:
+                {
+                    if (!ty->isAgg()) {
+                        type_error(getLoc(), "field designator cannot initialize a non struct/union type");
+                        return nullptr;
+                    }
+                    consume();
+                    if (l.tok.tok != TIdentifier) {
+                        parse_error(getLoc(), "expect identifier in designator");
+                        return nullptr;
+                    }
+                    ty = ty->getFieldIndex(l.tok.s, designators);
+                    consume();
+                    break;
+                }
+                default: return parse_error(getLoc(), "expect '.', '[', or expression in initializer-list"), nullptr;
+            }
+        }
+    }
     Expr agg_init_list() {
         CType ty = sema.currentInitTy;
         xvector<Initializer> inits = xvector<Initializer>::get();
-        unsigned FieldIndex = 0;
-        for (;;) {
+        unsigned numElements = ty->getNumElements();
+        for (unsigned FieldIndex = 0;;++FieldIndex) {
+            if (FieldIndex > numElements) {
+                StringRef N;
+                if (ty->getKind() == TYARRAY)
+                    N = "array";
+                else if (ty->isUnion())
+                    N = "union";
+                else
+                    N = "struct";
+                type_error("excess elements in %r initializer", N);
+                numElements = -1;
+            }
             switch (l.tok.tok) {
-            case TRcurlyBracket:
-                consume();
-                break;
-            case TLSquareBrackets:
-            {
-                consume();
-                Expr indexExpr = constant_expression();
-                if (!indexExpr) return nullptr;
-                uint64_t index = force_eval(indexExpr);
-            }
-            case TDot:
-            {
-                if (!ty->isAgg()) {
-                    type_error("field designator cannot initialize a non struct/union type");
-                    return nullptr;
+                case TRcurlyBracket:
+                    consume();
+                    return ENEW(InitListExpr) {.ty = ty, .inits = inits};
+                case TDot:
+                case TLSquareBrackets:
+                {
+                    SmallVector<Designator, 2> designators;
+                    Expr e = parse_designator_initializer(ty, designators);
+                    if (!e) return nullptr;
+                    if (designators.size() > 2)
+                        inits.push_back(Initializer(e, designators));
+                    else
+                        inits.push_back(Initializer(e, designators.front()));
+                    FieldIndex = designators.front().getStart();
+                    break;
                 }
-                consume();
-                if (l.tok.tok != TIdentifier) {
-                    parse_error("expect identifier in designator");
-                    return nullptr;
+                default:
+                {
+                    llvm::SaveAndRestore<CType> tmp(sema.currentInitTy, ty->getTypeForIndex(FieldIndex));
+                    Expr e = initializer_list();
+                    if (!e) return nullptr;
+                    inits.push_back(Initializer(e, Designator(FieldIndex)));
+                    break;
                 }
-                consume();
             }
-            default:
-                inits.push_back(Initializer({.value = assignment_expression(), .idx = FieldIndex}));
-                ++FieldIndex;
+            if (l.tok.tok == TComma) {
+                consume();
             }
         }
-        return ENEW(InitListExpr) {.ty = ty, .inits = inits};
     }
     Declator direct_declarator(CType base, enum DeclaratorFlags flags = D_Direct) {
         switch (l.tok.tok) {
@@ -2761,6 +2826,7 @@ designator:
                                      .tag_name = Name,
                                      .tag_decl = new (getAllocator())(RecordDecl){}};
         result->setKind(TYTAG);
+        SmallVectorImpl<FieldDecl> &fields = result->getRecord()->fields;
         consume();
         if (l.tok.tok != TRcurlyBracket) {
             for (;;) {
@@ -2778,19 +2844,25 @@ designator:
                     consume();
                     continue;
                 } else {
+                    Declator e;
                     for (;;) {
-                        Declator e = struct_declarator(base);
+                        if (l.tok.tok == TSemicolon) {
+                            e = Declator(nullptr, base);
+                            goto PUT_FIELD;
+                        }
+                        e = struct_declarator(base);
                         if (!e.ty)
                             return parse_error(getLoc(), "expect struct-declarator"), nullptr;
                         if (e.name) {
-                            for (const auto &p : result->getRecord()->fields) {
+                            for (const auto &p : fields) {
                                 if (p.name == e.name) {
                                     type_error(getLoc(), "duplicate member %I", e.name);
                                     break;
                                 }
                             }
                         }
-                        result->getRecord()->fields.push_back(e);
+PUT_FIELD:
+                        fields.push_back(e);
                         if (l.tok.tok == TComma)
                             consume();
                         else {
@@ -3155,7 +3227,7 @@ ARGV_OK:;
                 sema.currentInitTy = st.ty;
                 Expr init = initializer_list();
                 if (!init)
-                    return expect(current_declator_loc, "initializer-list");
+                    return;
                 result->vars.back().init = init;
                 if (st.ty->getKind() == TYARRAY) {
                     unsigned initSize = init->ty->arrsize;
@@ -4135,6 +4207,7 @@ DOT:
                             << result->getSourceRange();
                         return result;
                     }
+                    isLvalue = ty->hasTag(TYLVALUE);
                 }
                 if (!(ty->isAgg() && !ty->isEnum())) {
                     type_error(opLoc, "member access is not struct or union") << result->getSourceRange();
@@ -4147,6 +4220,10 @@ DOT:
                 CType memberTy = ty->getFieldIndex(FieldName, idxs);
                 if (idxs.empty())
                     type_error("no member named '%R' in %T", FieldName, ty);
+                if (isLvalue) {
+                    memberTy = context.clone(memberTy);
+                    memberTy->addTag(TYLVALUE);
+                }
                 return ENEW(MemberAccessExpr) {.ty = memberTy, .obj = result, .idxs = idxs, .memberEndLoc = mem_loc_end};
             } break;
             case TLbracket: // function call

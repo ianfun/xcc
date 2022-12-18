@@ -195,8 +195,6 @@ struct Function: public DiagnosticHelper {
         	llvm_unreachable("");
         case EArrToAddress: return getAddress(e->voidexpr);
         case EString: llvm_unreachable("");
-        case EArray:
-        case EStruct: llvm_unreachable("");
         default:
             if (e->ty->hasTag(TYREPLACED_CONSTANT)) {
                 auto e2 = reinterpret_cast<ReplacedExpr *>(e);
@@ -235,6 +233,7 @@ struct Function: public DiagnosticHelper {
 	Value eval(Expr e) {
 		switch (e->k) {
             case EConstant: return e->C;
+            case EBuiltinCall: llvm_unreachable("unsupported builtin function");
             case EInitList: llvm_unreachable("");
             case EBlockAddress:
         	   return reinterpret_cast<Value>(getLabel(e->addr));
@@ -487,10 +486,6 @@ BINOP_FCMP:
             	llvm_unreachable("Call unsupported now");
             case ESubscript: 
             	llvm_unreachable("");
-            case EArray:
-                llvm_unreachable("array unsupported!");
-            case EStruct:
-                llvm_unreachable("struct unsupported!");
             case EMemberAccess:
             	llvm_unreachable("unsupported operation!");
             case EArrToAddress:

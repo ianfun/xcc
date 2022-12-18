@@ -363,8 +363,18 @@ struct OpaqueCType {
         assert(isAgg());
         this->tag_name = tag_name;
     }
+    CType getTypeForIndex(unsigned i) {
+        if (getKind() == TYARRAY)
+            return arrtype;
+        return getRecord()->fields[i].ty;
+    }
+    unsigned getNumElements() const {
+        if (getKind() == TYARRAY)
+            return hassize ? arrsize : unsigned(-1);
+        return getRecord()->fields.size();
+    }
     CType getFieldIndex(IdentRef Name, xvector<unsigned> &idxs) const {
-        SmallVectorImpl<FieldDecl> &fields = getRecord()->fields;
+        const SmallVectorImpl<FieldDecl> &fields = getRecord()->fields;
         for (unsigned i = 0;i < fields.size();++i) {
             if (!fields[i].name) {
                 assert(fields[i].ty->isAgg());
@@ -380,6 +390,28 @@ struct OpaqueCType {
             }
             else if (fields[i].name == Name) {
                 idxs.push_back(i);
+                return fields[i].ty;
+            }
+        }
+        return nullptr;
+    }
+    CType getFieldIndex(IdentRef Name, SmallVectorImpl<Designator> &idxs) const {
+        const SmallVectorImpl<FieldDecl> &fields = getRecord()->fields;
+        for (unsigned i = 0;i < fields.size();++i) {
+            if (!fields[i].name) {
+                assert(fields[i].ty->isAgg());
+                if (!fields[i].ty->isEnum()) {
+                    idxs.push_back(Designator(i));
+                    size_t oldSize = idxs.size();
+                    CType ty = fields[i].ty->getFieldIndex(Name, idxs);
+                    if (idxs.size() != oldSize) {
+                        return ty;
+                    }
+                    idxs.pop_back();
+                }
+            }
+            else if (fields[i].name == Name) {
+                idxs.push_back(Designator(i));
                 return fields[i].ty;
             }
         }

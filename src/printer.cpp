@@ -137,6 +137,14 @@ raw_ostream &operator<<(llvm::raw_ostream &OS, const_Expr e) {
     switch (e->k) {
     case EBlockAddress:
         return OS << "&&" << e->labelName->getKey();
+    case EBuiltinCall:
+        OS << e->builtin_func_name->getKey();
+        for (size_t i =0;i < e->buitin_call_args.size();++i) {
+            OS << e->buitin_call_args[i];
+            if (i != e->buitin_call_args.size())
+                OS << ", ";
+        }
+        return OS;
     case EString: 
         printConstant(e->string, OS); 
         return OS;
@@ -156,7 +164,25 @@ raw_ostream &operator<<(llvm::raw_ostream &OS, const_Expr e) {
         size_t Size = e->inits.size();
         for (unsigned i = 0;i < Size;++i) {
             const Initializer &it = e->inits[i];
-            OS << "field [" << it.idx << "] = " << it.value;
+            if (it.isSingle()) {
+                OS << "field [";
+                if (it.idx.isSingle())
+                    OS << it.idx.getStart();
+                else
+                    OS << it.idx.getStart() << " ... " << it.idx.getEnd();
+                OS << "] = " << it.value;
+            } else {
+                OS << "field ";
+                for (const Designator &that: it.getDesignators()) {
+                    OS << '[';
+                    if (that.isSingle())
+                        OS << that.getStart();
+                    else
+                        OS << that.getStart() << " ... " << that.getEnd();
+                    OS << ']';
+                }
+                OS << '=' << it.value;
+            }
             if (i != Size)
                 OS << ", ";
         }
@@ -200,23 +226,13 @@ raw_ostream &operator<<(llvm::raw_ostream &OS, const_Expr e) {
         OS << '[';
         maybe_print_paren(e->right, OS);
         return OS << ']';
-    case EArray:
-        OS << '{';
-        for (const auto e : e->arr)
-            OS << e << ',';
-        return OS << '}';
-    case EStruct:
-        OS << '{';
-        for (const auto e : e->arr2)
-            OS << e << ',';
-        return OS << '}';
     case EMemberAccess: 
     {
         CType ty = e->obj->ty;
         maybe_print_paren(e->obj, OS);
         for (unsigned i = 0;i < e->idxs.size();++i) {
             auto &it = ty->getRecord()->fields[e->idxs[i]];
-            OS << '.' << ty.name ? it.name->getKey() : "<anonymous>";
+            OS << '.' << (it.name ? it.name->getKey() : "<anonymous>");
             ty = it.ty;
         }
         return OS;

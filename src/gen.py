@@ -457,8 +457,6 @@ bool isSimple() const {
     case EString:
     case EConstantArraySubstript:
     case EConstant:
-    case EStruct:
-    case EArray:
       return true;
     default:
       return false;

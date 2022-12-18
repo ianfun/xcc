@@ -885,9 +885,34 @@ union TagDecl {
     bool hasValue() const { return struct_decl != nullptr; }
     operator bool() const { return hasValue(); }
 };
+struct Designator {
+    uint32_t start;
+    uint32_t end;
+    Designator(): start{uint32_t(-1)}, end{uint32_t(-1)} {}
+    Designator(uint32_t index): start{index}, end{uint32_t(-1)} {}
+    Designator(uint32_t start, uint32_t end): start{start}, end{end} {}
+    bool isInValid() const { return start == uint32_t(-1) && start == uint32_t(-1); }
+    bool isValid() const { return start != uint32_t(-1) && end != uint32_t(-1); }
+    bool isSingle() const { return (end + 1) == 0; }
+    bool isDouble() const { return end != uint32_t(-1); }
+    uint32_t getStart() const { return start; }
+    uint32_t getEnd() const { return end; }
+    uint32_t getRange() const { return start - end; }
+};
 struct Initializer {
     Expr value; // value
-    unsigned idx; // The index for the array/struct/union
+    xvector<Designator> idxs; // The index for the array/struct/union
+    Designator idx; // -1 if use idxs
+    Initializer(Expr value, Designator idx): value{value}, idxs{xvector<Designator>::get_empty()}, idx{idx} {}
+    Initializer(Expr value, ArrayRef<Designator> idxs): value{value}, idxs{xvector<Designator>::get(idxs)}, idx{Designator()} {}
+    bool isSingle() const { return idxs.p == nullptr; }
+    Designator getDesignator() const {
+        assert(isSingle());
+        return idx;
+    }
+    ArrayRef<Designator> getDesignators() const {
+        return idxs;
+    }
 };
 // Simple 'case' statement with one value
 struct SwitchCase {
@@ -980,8 +1005,7 @@ location_t OpaqueExpr::getBeginLoc() const {
     case EMemberAccess: return obj->getBeginLoc();
     case EArrToAddress: return arr3->getBeginLoc();
     case EPostFix: return poperand->getBeginLoc();
-    case EArray: return ArrayStartLoc;
-    case EStruct: return StructStartLoc;
+    case EBuiltinCall: return builtin_call_start_loc;
     case EVoid: return voidStartLoc;
     case EConstantArraySubstript: return casLoc;
     }
@@ -1002,14 +1026,13 @@ location_t OpaqueExpr::getEndLoc() const {
     case EString: return stringEndLoc;
     case EVoid: return voidexpr->getEndLoc();
     case ECast: return castval->getEndLoc();
-    case EVar: return varLoc + varName->getKey().size() - 1;
+    case EVar: return varLoc + varName->getKeyLength() - 1;
     case EMemberAccess: return memberEndLoc;
     case EArrToAddress: return arr3->getEndLoc();
     case ECondition: return cright->getEndLoc();
     case ECall: return callEnd;
     case EPostFix: return postFixEndLoc;
-    case EArray: return ArrayEndLoc;
-    case EStruct: return StructEndLoc;
+    case EBuiltinCall: return builtin_call_start_loc + builtin_func_name->getKeyLength() - 1;
     }
     llvm_unreachable("invalid Expr");
 }

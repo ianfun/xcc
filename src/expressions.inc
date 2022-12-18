@@ -12,13 +12,12 @@ enum ExprKind: uint8_t {
     ECast,
     ECall,
     ESubscript,
-    EArray,
-    EStruct,
     EMemberAccess,
     EArrToAddress,
     EPostFix,
     ESizeof,
-    EBlockAddress
+    EBlockAddress,
+    EBuiltinCall
 };
 struct OpaqueExpr {
 OpaqueExpr()=delete;
@@ -29,8 +28,6 @@ bool isSimple() const {
     case EString:
     case EConstantArraySubstript:
     case EConstant:
-    case EStruct:
-    case EArray:
       return true;
     default:
       return false;
@@ -102,18 +99,8 @@ union alignas(void*) {
       Expr left, right;
     };
     struct alignas(void*) {
-      xvector<Expr> arr;
-        location_t ArrayStartLoc;
-        location_t ArrayEndLoc;
-    };
-    struct alignas(void*) {
-      xvector<Expr> arr2;
-        location_t StructStartLoc;
-        location_t StructEndLoc;
-    };
-    struct alignas(void*) {
       Expr obj;
-        unsigned idx;
+        xvector<unsigned> idxs;
         location_t memberEndLoc;
     };
     struct alignas(void*) {
@@ -133,6 +120,11 @@ union alignas(void*) {
       label_t addr;
         location_t block_loc_begin;
         IdentRef labelName;
+    };
+    struct alignas(void*) {
+      IdentRef builtin_func_name;
+        location_t builtin_call_start_loc;
+        xvector<Expr> buitin_call_args;
     };
 };
 };
@@ -239,30 +231,12 @@ struct SubscriptExpr {
           Expr left, right;
   };
 };
-struct ArrayExpr {
-    enum ExprKind k=EArray;
-    CType ty;
-    struct alignas(void*) {
-          xvector<Expr> arr;
-        location_t ArrayStartLoc;
-        location_t ArrayEndLoc;
-  };
-};
-struct StructExpr {
-    enum ExprKind k=EStruct;
-    CType ty;
-    struct alignas(void*) {
-          xvector<Expr> arr2;
-        location_t StructStartLoc;
-        location_t StructEndLoc;
-  };
-};
 struct MemberAccessExpr {
     enum ExprKind k=EMemberAccess;
     CType ty;
     struct alignas(void*) {
           Expr obj;
-        unsigned idx;
+        xvector<unsigned> idxs;
         location_t memberEndLoc;
   };
 };
@@ -300,6 +274,15 @@ struct BlockAddressExpr {
         IdentRef labelName;
   };
 };
+struct BuiltinCallExpr {
+    enum ExprKind k=EBuiltinCall;
+    CType ty;
+    struct alignas(void*) {
+          IdentRef builtin_func_name;
+        location_t builtin_call_start_loc;
+        xvector<Expr> buitin_call_args;
+  };
+};
 static uint8_t expr_size_map[] = {
     sizeof(ConstantExpr),
     sizeof(BinExpr),
@@ -313,12 +296,11 @@ static uint8_t expr_size_map[] = {
     sizeof(CastExpr),
     sizeof(CallExpr),
     sizeof(SubscriptExpr),
-    sizeof(ArrayExpr),
-    sizeof(StructExpr),
     sizeof(MemberAccessExpr),
     sizeof(ArrToAddressExpr),
     sizeof(PostFixExpr),
     sizeof(SizeofExpr),
-    sizeof(BlockAddressExpr)
+    sizeof(BlockAddressExpr),
+    sizeof(BuiltinCallExpr)
 };
-static constexpr size_t expr_max_size = std::max({sizeof(ConstantExpr), sizeof(BinExpr), sizeof(UnaryExpr), sizeof(StringExpr), sizeof(ConstantArraySubstriptExpr), sizeof(InitListExpr), sizeof(VoidExpr), sizeof(VarExpr), sizeof(ConditionExpr), sizeof(CastExpr), sizeof(CallExpr), sizeof(SubscriptExpr), sizeof(ArrayExpr), sizeof(StructExpr), sizeof(MemberAccessExpr), sizeof(ArrToAddressExpr), sizeof(PostFixExpr), sizeof(SizeofExpr), sizeof(BlockAddressExpr)});
+static constexpr size_t expr_max_size = std::max({sizeof(ConstantExpr), sizeof(BinExpr), sizeof(UnaryExpr), sizeof(StringExpr), sizeof(ConstantArraySubstriptExpr), sizeof(InitListExpr), sizeof(VoidExpr), sizeof(VarExpr), sizeof(ConditionExpr), sizeof(CastExpr), sizeof(CallExpr), sizeof(SubscriptExpr), sizeof(MemberAccessExpr), sizeof(ArrToAddressExpr), sizeof(PostFixExpr), sizeof(SizeofExpr), sizeof(BlockAddressExpr), sizeof(BuiltinCallExpr)});

@@ -213,11 +213,11 @@ private:
         return Insert(llvm::GetElementPtrInst::CreateInBounds(PointeeType, Ptr, IdxList, "", insertBB));
     }
     llvm::GetElementPtrInst *structGEP(llvm::Type *StructTy, llvm::Value *Val, xvector<unsigned> idxs) {
-        llvm::Value **idxs = type_cache.alloc.Allocate<llvm::Value*>(e->idxs.size());
-        for (const unsigned i: e->idxs) {
-            idxs[i] = llvm::ConstantInt::get(cast<llvm::IntegerType>(type_cache.integer_types[5]), i);
+        llvm::Value **vals = type_cache.alloc.Allocate<llvm::Value*>(idxs.size());
+        for (const unsigned i: idxs) {
+            vals[i] = llvm::ConstantInt::get(cast<llvm::IntegerType>(type_cache.integer_types[5]), i);
         }
-        return gep(StructTy, Val, llvm::makeArrayRef(idxs, idxs.size()));
+        return gep(StructTy, Val, llvm::makeArrayRef(vals, idxs.size()));
     }
     llvm::PHINode *phi(llvm::Type *Ty, unsigned NumReservedValues) {
         return Insert(llvm::PHINode::Create(Ty, NumReservedValues, "", insertBB));
@@ -796,8 +796,6 @@ private:
         } break;
         }
     }
-    llvm::Value *getStruct(Expr e) { return nullptr; }
-    llvm::Value *getArray(Expr e) { return nullptr; }
     llvm::GlobalVariable *CreateGlobalString(StringRef bstr, llvm::Type *&ty) {
         auto str = llvm::ConstantDataArray::getString(getLLVMContext(), bstr, true);
         ty = str->getType();
@@ -826,17 +824,8 @@ private:
         if (options.g) setDebugLoc(e->getBeginLoc());
         switch (e->k) {
         case EVar: return vars[e->sval];
-        case EBuiltinCall: {
-            StringRef Name = e->builtin_func_name->getKey();
-            StringRef Prefix = llvm::Triple::getArchTypePrefix(options.triple.getArch());
-            unsigned ID = llvm::Intrinsic::getIntrinsicForClangBuiltin(Prefix, Name);
-            if (ID == llvm::Intrinsic::not_intrinsic)
-                ID = llvm::Intrinsic::getIntrinsicForMSBuiltin(Prefix.data(), Name);
-            llvm::Function *F = llvm::Intrinsic::getDeclaration(*module, ID);
-            return F;
-        }
         case EMemberAccess: {
-            llv::Value *agg = getAddress(e->obj);
+            llvm::Value *agg = getAddress(e->obj);
             llvm::Type *ty = wrap(e->obj->ty);
             return structGEP(ty, agg, e->idxs);
         }
@@ -858,18 +847,6 @@ private:
         case EArrToAddress: return getAddress(e->voidexpr);
         case EString:
             return createString(e);
-        case EArray:
-        case EStruct: {
-            auto v = e->k == EArray ? getArray(e) : getStruct(e);
-            if (!currentfunction) {
-                auto g = new llvm::GlobalVariable(*module, v->getType(), false, InternalLinkage, nullptr, "");
-                // g->setInitializer(v);
-                return g;
-            }
-            auto local = createAlloca(v->getType());
-            store(local, v);
-            return local;
-        }
         default:
             if (e->ty->hasTag(TYREPLACED_CONSTANT)) {
                 auto e2 = reinterpret_cast<ReplacedExpr *>(e);
@@ -914,13 +891,23 @@ private:
         {
             return nullptr;
         } break;
+        case EBuiltinCall: {
+            StringRef Name = e->builtin_func_name->getKey();
+            StringRef Prefix = llvm::Triple::getArchTypePrefix(options.triple.getArch());
+            unsigned ID = llvm::Intrinsic::getIntrinsicForClangBuiltin(Prefix.data(), Name);
+            if (ID == llvm::Intrinsic::not_intrinsic)
+                ID = llvm::Intrinsic::getIntrinsicForMSBuiltin(Prefix.data(), Name);
+            llvm::Function *F = llvm::Intrinsic::getDeclaration(module.get(), ID);
+            return F;
+        }
         case EMemberAccess: 
         {
+
             llvm::Type *ty = wrap(e->obj->ty);
             if (e->obj->k == EUnary && e->obj->uop == Dereference) {
                 return structGEP(ty, getAddress(e->obj), e->idxs);
             }
-            return extractValue(ty, gen(e->obj), e->idxs);
+            return extractValue(gen(e->obj), e->idxs);
         }
         case EConstantArraySubstript:
             return llvm::ConstantExpr::getInBoundsGetElementPtr(wrap(e->ty->p), e->array,
@@ -949,17 +936,6 @@ private:
             llvm::Type *ty;
             auto v = subscript(e, ty);
             return load(v, ty);
-        }
-        case EMemberAccess: {
-            bool isVar = e->k == EVar;
-            auto ty = wrap(e->obj->ty);
-            auto base = isVar ? getAddress(e->obj) : gen(e->obj);
-            if (isVar || e->obj->ty->getKind() == TYPOINTER) {
-                auto pMember = gep(
-                    ty, base, {llvm::ConstantInt::get(type_cache.integer_types[context.getIntLog2()], e->idx)});
-                return load(pMember, wrap(e->ty), e->obj->ty->getAlignAsMaybeAlign());
-            }
-            return extractValue(load(base, ty, e->obj->ty->getAlignAsMaybeAlign()), e->idx);
         }
         case EString: return createString(e);
         case EBin: {
@@ -1429,8 +1405,6 @@ BINOP_SHIFT:
             llvm::CallInst *r = call(ty, f, ArrayRef<llvm::Value *>(buf, l));
             return r;
         }
-        case EStruct: return getStruct(e);
-        case EArray: return getArray(e);
         default: llvm_unreachable("bad enum kind!");
         }
     }

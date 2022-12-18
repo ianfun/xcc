@@ -24,7 +24,23 @@ template <typename T> struct xvector: public xvectorBase {
         res.p->_capacity = init_size;
         return res;
     }
-    static xvector<T> get_empty() { return xvector<T>{.p = nullptr}; }
+    static xvector<T> get_empty() {
+        xvector<T> res;
+        res.p = nullptr;
+        return res;
+    }
+    static xvector<T> get(const ArrayRef<T> &inits) {
+        xvector<T> res = get_with_length(inits.size());
+        for (size_t i = 0;i < inits.size();++i)
+            res[i] = inits[i];
+        return res;
+    }
+    static xvector<T> get(const std::initializer_list<T> &inits) {
+        xvector<T> res = get_with_length(inits.size());
+        for (size_t i = 0;i < inits.size();++i)
+            res[i] = inits[i];
+        return res;
+    }
     static xvector<T> get_with_capacity(size_t init_size) {
         xvector<T> res;
         res.p = reinterpret_cast<p_xvector_impl>(allocate_buffer(sizeof(_xvector_impl) + init_size * sizeof(T)));
