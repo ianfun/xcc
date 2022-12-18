@@ -212,8 +212,12 @@ private:
     llvm::GetElementPtrInst *gep(llvm::Type *PointeeType, llvm::Value *Ptr, ArrayRef<llvm::Value*> IdxList) {
         return Insert(llvm::GetElementPtrInst::CreateInBounds(PointeeType, Ptr, IdxList, "", insertBB));
     }
-    llvm::GetElementPtrInst *structGEP(llvm::Type *StructTy, llvm::Value *Val, unsigned idx) {
-        return gep(StructTy, Val, {type_cache.i32_0, llvm::ConstantInt::get(type_cache.integer_types[5], idx)});
+    llvm::GetElementPtrInst *structGEP(llvm::Type *StructTy, llvm::Value *Val, xvector<unsigned> idxs) {
+        llvm::Value **idxs = type_cache.alloc.Allocate<llvm::Value*>(e->idxs.size());
+        for (const unsigned i: e->idxs) {
+            idxs[i] = llvm::ConstantInt::get(cast<llvm::IntegerType>(type_cache.integer_types[5]), i);
+        }
+        return gep(StructTy, Val, llvm::makeArrayRef(idxs, idxs.size()));
     }
     llvm::PHINode *phi(llvm::Type *Ty, unsigned NumReservedValues) {
         return Insert(llvm::PHINode::Create(Ty, NumReservedValues, "", insertBB));
@@ -822,10 +826,19 @@ private:
         if (options.g) setDebugLoc(e->getBeginLoc());
         switch (e->k) {
         case EVar: return vars[e->sval];
+        case EBuiltinCall: {
+            StringRef Name = e->builtin_func_name->getKey();
+            StringRef Prefix = llvm::Triple::getArchTypePrefix(options.triple.getArch());
+            unsigned ID = llvm::Intrinsic::getIntrinsicForClangBuiltin(Prefix, Name);
+            if (ID == llvm::Intrinsic::not_intrinsic)
+                ID = llvm::Intrinsic::getIntrinsicForMSBuiltin(Prefix.data(), Name);
+            llvm::Function *F = llvm::Intrinsic::getDeclaration(*module, ID);
+            return F;
+        }
         case EMemberAccess: {
-            auto basep = e->k == EMemberAccess ? getAddress(e->obj) : gen(e->obj);
-            auto ty = wrap(e->obj->ty);
-            return structGEP(ty, basep, e->idx);
+            llv::Value *agg = getAddress(e->obj);
+            llvm::Type *ty = wrap(e->obj->ty);
+            return structGEP(ty, agg, e->idxs);
         }
         case EUnary:
             switch (e->uop) {
@@ -833,7 +846,7 @@ private:
             case Dereference: return gen(e->uoperand);
             case C__real__:
             case C__imag__: {
-                auto ty = wrap(e->uoperand->ty);
+                llvm::Type *ty = wrap(e->uoperand->ty);
                 return gep(ty, getAddress(e->uoperand), {type_cache.i32_0, e->uop == C__real__ ? type_cache.i32_0 : type_cache.i32_1});
             }
             default: llvm_unreachable("");
@@ -901,6 +914,14 @@ private:
         {
             return nullptr;
         } break;
+        case EMemberAccess: 
+        {
+            llvm::Type *ty = wrap(e->obj->ty);
+            if (e->obj->k == EUnary && e->obj->uop == Dereference) {
+                return structGEP(ty, getAddress(e->obj), e->idxs);
+            }
+            return extractValue(ty, gen(e->obj), e->idxs);
+        }
         case EConstantArraySubstript:
             return llvm::ConstantExpr::getInBoundsGetElementPtr(wrap(e->ty->p), e->array,
                                                                 ConstantInt::get(type_cache.intptrTy, e->cidx));

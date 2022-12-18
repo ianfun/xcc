@@ -414,7 +414,7 @@ struct EvalHelper : public DiagnosticHelper {
                     << e->getSourceRange();
             return CI->getValue().getLimitedValue();
         }
-        type_error(e->getBeginLoc(), "not a integer constant: %E", e) << e->getSourceRange();
+        type_error(e->getBeginLoc(), "expect integer constant expression") << e->getSourceRange();
         return 0;
     }
     [[nodiscard]] uint64_t try_eval(Expr e, bool &ok) {

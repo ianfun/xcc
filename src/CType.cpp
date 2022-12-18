@@ -363,3 +363,25 @@ struct OpaqueCType {
         assert(isAgg());
         this->tag_name = tag_name;
     }
+    CType getFieldIndex(IdentRef Name, xvector<unsigned> &idxs) const {
+        SmallVectorImpl<FieldDecl> &fields = getRecord()->fields;
+        for (unsigned i = 0;i < fields.size();++i) {
+            if (!fields[i].name) {
+                assert(fields[i].ty->isAgg());
+                if (!fields[i].ty->isEnum()) {
+                    idxs.push_back(i);
+                    size_t oldSize = idxs.size();
+                    CType ty = fields[i].ty->getFieldIndex(Name, idxs);
+                    if (idxs.size() != oldSize) {
+                        return ty;
+                    }
+                    idxs.pop_back();
+                }
+            }
+            else if (fields[i].name == Name) {
+                idxs.push_back(i);
+                return fields[i].ty;
+            }
+        }
+        return nullptr;
+    }

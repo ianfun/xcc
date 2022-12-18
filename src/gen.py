@@ -213,11 +213,12 @@ exprs = {
 	"ECast": ("enum CastOp castop", "Expr castval",),
 	"ECall": ("Expr callfunc", "xvector<Expr> callargs", "location_t callEnd", ),
 	"ESubscript": ("Expr left, right",),
-	"EMemberAccess": ("Expr obj", "unsigned idx", "location_t memberEndLoc",),
+	"EMemberAccess": ("Expr obj", "xvector<unsigned> idxs", "location_t memberEndLoc",),
 	"EArrToAddress": ("Expr arr3",),
 	"EPostFix": ("enum PostFixOp pop", "Expr poperand", "location_t postFixEndLoc", ),
 	"ESizeof": ("CType theType", "location_t sizeof_loc_begin", "location_t sizeof_loc_end",),
 	"EBlockAddress": ("label_t addr", "location_t block_loc_begin", "IdentRef labelName"),
+	"EBuiltinCall": ("IdentRef builtin_func_name", "location_t builtin_call_start_loc", "xvector<Expr> buitin_call_args"),
 }
 ctypes = {
 	"TYPRIM": (),

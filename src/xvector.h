@@ -116,6 +116,10 @@ template <typename T> struct xvector: public xvectorBase {
     T *begin() { return p->_data; }
     const T *end() const { return p->_data + p->_length; }
     T *end() { return p->_data + p->_length; }
+
+    operator ArrayRef<T>() const {
+        return ArrayRef<T>(data(), size());
+    }
 };
 
 static_assert(sizeof(xvector<int>) == sizeof(void *), "sizeof xvector<T> should equals to sizeof pointer");

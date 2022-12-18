@@ -210,7 +210,17 @@ raw_ostream &operator<<(llvm::raw_ostream &OS, const_Expr e) {
         for (const auto e : e->arr2)
             OS << e << ',';
         return OS << '}';
-    case EMemberAccess: return maybe_print_paren(e->obj, OS), OS << '.' << e->ty->getRecord()->fields[e->idx].name;
+    case EMemberAccess: 
+    {
+        CType ty = e->obj->ty;
+        maybe_print_paren(e->obj, OS);
+        for (unsigned i = 0;i < e->idxs.size();++i) {
+            auto &it = ty->getRecord()->fields[e->idxs[i]];
+            OS << '.' << ty.name ? it.name->getKey() : "<anonymous>";
+            ty = it.ty;
+        }
+        return OS;
+    }    
     case EArrToAddress: return maybe_print_paren(e->arr3, OS), OS;
     case EPostFix: 
         maybe_print_paren(e->poperand, OS);

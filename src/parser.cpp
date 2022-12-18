@@ -2448,31 +2448,6 @@ BREAK:
         parseLiteralCache.clear();
         return C;
     }
-/*
-braced-initializer:
-    { }
-    { initializer-list }
-    { initializer-list , }
-
-initializer:
-    assignment-expression
-    braced-initializer
-
-initializer-list:
-    designationopt initializer
-    initializer-list , designationopt initializer
-
-designation:
-    designator-list =
-
-designator-list:
-    designator
-    designator-list designator
-
-designator:
-    [ constant-expression ]
-    . identifier
-*/
     Expr scalar_init_list() {
         CType ty = sema.currentInitTy;
         if (!ty)
@@ -2541,12 +2516,21 @@ designator:
                 break;
             default:
                 if (init) {
+                    if (ty->isComplex() && !init->isComplex()) {
+                        Expr lhs = init;
+                        Expr rhs;
+                        if (!(rhs = assignment_expression()))
+                            return nullptr;
+                        init = complex_pair(lhs, rhs, ty);
+                        goto L_OUT;
+                    }
                     warning(getLoc(), "excess elements in scalar initializer");
                     (void)assignment_expression();
                 } else {
                     if (!(init = assignment_expression()))
                         return nullptr;
                 }
+                L_OUT:
                 if (l.tok.tok == TComma) consume();
             }
         }
@@ -2561,9 +2545,69 @@ designator:
         CType ty = sema.currentInitTy;
         if (ty->getKind() == TYPRIM) 
             return simple_initializer_list();
-        return nullptr;
+        return agg_init_list();
     }
+/*
+braced-initializer:
+    { }
+    { initializer-list }
+    { initializer-list , }
 
+initializer:
+    assignment-expression
+    braced-initializer
+
+initializer-list:
+    designation(opt) initializer
+    initializer-list , designation(opt) initializer
+
+designation:
+    designator-list =
+
+designator-list:
+    designator
+    designator-list designator
+
+designator:
+    [ constant-expression ]
+    . identifier
+*/
+    Expr agg_init_list() {
+        CType ty = sema.currentInitTy;
+        xvector<Initializer> inits = xvector<Initializer>::get();
+        unsigned FieldIndex = 0;
+        for (;;) {
+            switch (l.tok.tok) {
+            case TRcurlyBracket:
+                consume();
+                break;
+            case TLSquareBrackets:
+            {
+                consume();
+                Expr indexExpr = constant_expression();
+                if (!indexExpr) return nullptr;
+                uint64_t index = force_eval(indexExpr);
+            }
+            case TDot:
+            {
+                if (!ty->isAgg()) {
+                    type_error("field designator cannot initialize a non struct/union type");
+                    return nullptr;
+                }
+                consume();
+                if (l.tok.tok != TIdentifier) {
+                    parse_error("expect identifier in designator");
+                    return nullptr;
+                }
+                consume();
+            }
+            default:
+                inits.push_back(Initializer({.value = assignment_expression(), .idx = FieldIndex}));
+                ++FieldIndex;
+            }
+        }
+        return ENEW(InitListExpr) {.ty = ty, .inits = inits};
+    }
     Declator direct_declarator(CType base, enum DeclaratorFlags flags = D_Direct) {
         switch (l.tok.tok) {
         case TIdentifier: {
@@ -4077,8 +4121,6 @@ DOT:
                 consume();
                 if (l.tok.tok != TIdentifier)
                     return expect(opLoc, "identifier"), nullptr;
-                location_t mem_loc_begin = getLoc();
-                location_t mem_loc_end = getEndLoc();
                 if (isarrow) {
                     if (k != TYPOINTER) {
                         type_error(opLoc, "member reference type %T is not a pointer; did you mean to use '.'", ty)
@@ -4098,24 +4140,14 @@ DOT:
                     type_error(opLoc, "member access is not struct or union") << result->getSourceRange();
                     return result;
                 }
-                const auto &fields = ty->getRecord()->fields;
-                for (size_t i = 0; i < fields.size(); ++i) {
-                    Declator pair = fields[i];
-                    if (l.tok.s == pair.name) {
-                        result = ENEW(MemberAccessExpr){
-                            .ty = pair.ty, .obj = result, .idx = (unsigned)i, .memberEndLoc = getLoc()};
-                        if (isLvalue) {
-                            result->ty = context.clone(result->ty);
-                            result->ty->addTag(TYLVALUE);
-                        }
-                        consume();
-                        goto CONTINUE;
-                    }
-                }
-                type_error(opLoc, "struct/union %I has no member %I", result->ty->getTagName(), l.tok.s)
-                    << SourceRange(mem_loc_begin, mem_loc_end);
-                return nullptr;
-CONTINUE:;
+                IdentRef FieldName = l.tok.s;
+                location_t mem_loc_end = getEndLoc();
+                consume();
+                xvector<unsigned> idxs = xvector<unsigned>::get_with_capacity(1);
+                CType memberTy = ty->getFieldIndex(FieldName, idxs);
+                if (idxs.empty())
+                    type_error("no member named '%R' in %T", FieldName, ty);
+                return ENEW(MemberAccessExpr) {.ty = memberTy, .obj = result, .idxs = idxs, .memberEndLoc = mem_loc_end};
             } break;
             case TLbracket: // function call
             {
