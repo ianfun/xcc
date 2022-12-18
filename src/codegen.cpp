@@ -64,8 +64,8 @@ private:
         if (it.second) {
             llvm::GlobalVariable *GV = new llvm::GlobalVariable(*module, init->getType(), true, llvm::GlobalValue::PrivateLinkage, init, ".cstr");
             GV->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
-            GV->setConstant(true);
-            GV->setAlignment(options.DL.getPreferredAlign(GV));
+            // GV->setAlignment(options.DL.getPreferredAlign(GV));
+            GV->setAlignment(options.DL.getABITypeAlign(init->getType()));
             it.first->second = GV;
         }
         return it.first->second;

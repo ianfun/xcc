@@ -4,7 +4,7 @@
 
     do {
         tok = parser.l.lexAndLoc();
-        tok.dump(llvm::errs(), SM);
+        tok.dump(llvm::errs());
         llvm::errs() << '\n';
     } while (tok.tok != xcc::TEOF);
 

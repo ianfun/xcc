@@ -502,7 +502,6 @@ private:
         setCurPtr();
     }
     uint16_t lastc = 256, lastc2 = 256;
-    inline char advance_next() { return cur_buffer_ptr[cur_loc++]; }
     // Translation phases 1
     char stream_read() {
         // for support '\r' end-of-lines
@@ -549,6 +548,10 @@ private:
         }
     }
 public:
+    inline char advance_next() { return cur_buffer_ptr[cur_loc++]; }
+    const char *getCurLexBufferPtr() { return &cur_buffer_ptr[cur_loc]; }
+    const char *getPrevLexBufferPtr() { return &cur_buffer_ptr[cur_loc - 1]; }
+    void advanceBufferPtr(location_t N) { cur_loc += N; }
     bool nextFile() {
         grow_include_stack.pop_back();
         if (grow_include_stack.empty())

@@ -161,7 +161,6 @@ struct Lexer : public EvalHelper {
         return n;
     }
     Codepoint lexEscape(const unsigned char *&s, location_t TheLoc) {
-        s++;
         switch (*s++) {
         case 'a': return 7;
         case 'b': return 8;
@@ -436,7 +435,7 @@ R:
     //
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-    TokenV lexPPNumberEnd() {
+    TokenV lexPPNumberEnd(const char *BufferPtr) {
         switch (c) {
         case 'p':
         case 'P':
@@ -445,13 +444,13 @@ R:
             eat();
             if (c == '+' || c == '-')
                 eat();
-            return lexPPNumberEnd();
+            return lexPPNumberEnd(BufferPtr);
         }
         default: {
             if (c == '\'')
                 eat();
             if (isalnum(c) || c == '.') {
-                return lexPPNumber();
+                return lexPPNumber(BufferPtr);
             }
             if (c == '\\') {
                 eat();
@@ -459,22 +458,22 @@ R:
                     lexUChar(4);
                 else if (c == 'U')
                     lexUChar(8);
-                return lexPPNumberEnd();
+                return lexPPNumberEnd(BufferPtr);
             }
             endLoc = SM.getLoc() - 2;
-            return PPNumber;
+            return TokenV(PPNumber, BufferPtr);
         }
         }
     }
-    TokenV lexPPNumber() {
+    TokenV lexPPNumber(const char *BufferPtr) {
         do {
             eat();
             if (c == '\'')
                 eat();
         } while (isalnum(c) || c == '\'');
-        return lexPPNumberEnd();
+        return lexPPNumberEnd(BufferPtr);
     }
-    TokenV lexStringLit(enum StringPrefix enc) {
+    TokenV lexStringLit(const char *BufferPtr) {
         eat();
         for (;c != '\"';) {
             if (c == '\\') {
@@ -484,10 +483,10 @@ R:
             }
         }
         eat();
-        return TStringLit;
+        endLoc = SM.getLoc() - 2;
+        return TokenV(TStringLit, BufferPtr);
     }
     void lexString(SmallVectorImpl<char> &buffer, const TokenV &theTok) {
-        assert(buffer.empty() && "buffer must be empty");
         const unsigned char *s = reinterpret_cast<const unsigned char*>(theTok.getStringLiteral().data());
         do {} while (*s++ != '\"');
         for (;;) {
@@ -960,7 +959,7 @@ STD_INCLUDE:
             case 'u':
                 eat();
                 if (c == '"')
-                    return lexStringLit(Prefix_u);
+                    return lexStringLit(SM.getPrevLexBufferPtr() - 1);
                 if (c == '\'')
                     return lexCharLit(Prefix_u);
                 if (c == '8') {
@@ -970,7 +969,7 @@ STD_INCLUDE:
                             return lexCharLit(Prefix_u8);
                         return lexIdent("u8");
                     }
-                    return lexStringLit(Prefix_u8);
+                    return lexStringLit(SM.getPrevLexBufferPtr() - 2);
                 }
                 return lexIdent("u");
             case 'U':
@@ -980,7 +979,7 @@ STD_INCLUDE:
                         return lexCharLit(Prefix_U);
                     return lexIdent("U");
                 }
-                return lexStringLit(Prefix_U);
+                return lexStringLit(SM.getPrevLexBufferPtr() - 1);
             case 'L':
                 eat();
                 if (c != '"') {
@@ -988,19 +987,20 @@ STD_INCLUDE:
                         return lexCharLit(Prefix_L);
                     return lexIdent("L");
                 }
-                return lexStringLit(Prefix_L);
+                return lexStringLit(SM.getPrevLexBufferPtr() - 1);
             case '.':
+            {
+                const char *Ptr = SM.getCurLexBufferPtr();
                 eat(); // first
-                if (c == '.') {
-                    eat(); // second
-                    if (c != '.')
-                        return TEllipsis2;
-                    eat(); // third
+                if (Ptr[0] == '.' && Ptr[1] == '.') {
+                    SM.advanceBufferPtr(1);
+                    eat();
                     return TEllipsis;
                 }
                 if (llvm::isDigit(c))
-                    return lexPPNumber();
+                    return lexPPNumber(Ptr - 1);
                 return TDot;
+            }
             case '0':
             case '1':
             case '2':
@@ -1010,7 +1010,7 @@ STD_INCLUDE:
             case '6':
             case '7':
             case '8':
-            case '9': return lexPPNumber();
+            case '9': return lexPPNumber(SM.getPrevLexBufferPtr());
             case '\'': return lexCharLit(Prefix_none);
             case '(': eat(); return TLbracket;
             case ')': eat(); return TRbracket;
@@ -1024,7 +1024,7 @@ STD_INCLUDE:
             case ';': eat(); return TSemicolon;
             case '@': eat(); return TMouse;
             case '"':
-                return lexStringLit(Prefix_none);
+                return lexStringLit(SM.getPrevLexBufferPtr());
                 TOK2('*', '=', TAsignMul, TMul)
                 TOK2('=', '=', TEq, TAssign)
                 TOK2('^', '=', TAsignBitXor, TXor)

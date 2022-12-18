@@ -41,14 +41,14 @@ int main(int argc_, const char **argv_)
     if (theDriver.BuildCompilation(argv, options, SM, ret))
         return ret;
 
-    options.createTarget(engine);
-
-    SM.setTrigraphsEnabled(options.trigraphs);
-
     llvm::InitializeAllAsmParsers();
     llvm::InitializeAllAsmPrinters();
     llvm::InitializeAllTargetMCs();
     llvm::InitializeAllDisassemblers();
+
+    options.createTarget(engine);
+
+    SM.setTrigraphsEnabled(options.trigraphs);
 
     // create LLVMContext - this will delete all modules when it deleted(dtor)
     llvm::LLVMContext llvmcontext;

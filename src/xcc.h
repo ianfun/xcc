@@ -1111,7 +1111,8 @@ struct TokenV {
         struct LocTree *tree;
     };
     TokenV(Token tok = TNul, location_t loc = 0) : tok{tok}, loc{loc} {}
-    TokenV(struct LocTree *tree) :  tok{PPMacroTraceLoc}, loc{0} { this->tree = tree; }
+    TokenV(struct LocTree *tree) :  tok{PPMacroTraceLoc}, loc{0}, tree{tree} {}
+    TokenV(Token tok, const char *str): tok{tok}, str{str} {}
     bool operator!=(const TokenV &other) const { return !(*this == other); }
     bool operator==(const TokenV &other) const {
         Token x = this->tok;
@@ -1198,8 +1199,8 @@ struct TokenV {
             else 
                 OS << show(tok); 
             break;
-        case PPNumber: OS << str; break;
-        case TStringLit: OS << str; break;
+        case PPNumber: OS << getPPNumberLit(); break;
+        case TStringLit: OS << getStringLiteral(); break;
         case TCharLit:
             if (isprint(i)) {
                 OS << '\'' << i << '\'';
