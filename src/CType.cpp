@@ -310,7 +310,7 @@ struct OpaqueCType {
     }
     bool isUnionOrStruct() const {
         assert(isAgg());
-        return isTag(TagType_Struct) || isTag(TagType_Union);
+        return !isTag(TagType_Enum);
     }
     const TagDecl getTagDecl() const {
         assert(isAgg());
@@ -331,6 +331,10 @@ struct OpaqueCType {
     EnumDecl *getEnum() {
         assert(isEnum());
         return tag_decl.getEnum();
+    }
+    bool hasTagName() const {
+        assert(isAgg());
+        return tag_name != nullptr;
     }
     IdentRef getTagName() const {
         assert(isAgg());
@@ -394,3 +398,12 @@ struct OpaqueCType {
         }
         return nullptr;
     }
+    CType getFieldIndexType(ArrayRef<unsigned> idxs) {
+        if (idxs.empty()) return this;
+        if (getKind() == TYARRAY) {
+            return arrtype->getFieldIndexType(idxs.drop_front(1));
+        }
+        assert(isUnionOrStruct());
+        return getRecord()->fields[idxs.front()].ty->getFieldIndexType(idxs.drop_front(1));
+    }
+

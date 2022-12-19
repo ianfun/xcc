@@ -212,12 +212,16 @@ private:
     llvm::GetElementPtrInst *gep(llvm::Type *PointeeType, llvm::Value *Ptr, ArrayRef<llvm::Value*> IdxList) {
         return Insert(llvm::GetElementPtrInst::CreateInBounds(PointeeType, Ptr, IdxList, "", insertBB));
     }
-    llvm::GetElementPtrInst *structGEP(llvm::Type *StructTy, llvm::Value *Val, xvector<unsigned> idxs) {
-        llvm::Value **vals = type_cache.alloc.Allocate<llvm::Value*>(idxs.size());
-        for (const unsigned i: idxs) {
-            vals[i] = llvm::ConstantInt::get(cast<llvm::IntegerType>(type_cache.integer_types[5]), i);
-        }
-        return gep(StructTy, Val, llvm::makeArrayRef(vals, idxs.size()));
+    llvm::Value *structGEP(llvm::Type *StructTy, llvm::Value *Ptr, ArrayRef<unsigned> idxs) {
+        while (idxs.size() && !idxs.back())
+            idxs = idxs.drop_back();
+        if (idxs.empty()) return Ptr;
+        llvm::Value **vals = type_cache.alloc.Allocate<llvm::Value*>(idxs.size() + 1);
+        vals[0] = ConstantInt::get(type_cache.intptrTy, 0);
+        llvm::IntegerType *i32Ty = cast<llvm::IntegerType>(type_cache.integer_types[5]);
+        for (size_t i = 0;i < idxs.size();++i)
+            vals[i+1] = llvm::ConstantInt::get(i32Ty, idxs[i]);
+        return gep(StructTy, Ptr, llvm::makeArrayRef(vals, idxs.size() + 1));
     }
     llvm::PHINode *phi(llvm::Type *Ty, unsigned NumReservedValues) {
         return Insert(llvm::PHINode::Create(Ty, NumReservedValues, "", insertBB));
@@ -690,10 +694,10 @@ private:
             break;
         case SVarDecl: {
             for (const auto &it : s->vars) {
-                auto name = it.name;
-                auto varty = it.ty;
-                auto init = it.init;
-                auto idx = it.idx;
+                IdentRef name = it.name;
+                CType varty = it.ty;
+                Expr init = it.init;
+                unsigned idx = it.idx;
                 if (options.g) setDebugLoc(it.loc);
                 auto align = varty->getAlignAsMaybeAlign();
                 if (varty->hasTag(TYTYPEDEF)) {
@@ -731,7 +735,12 @@ private:
                     GV->setAlignment(align);
                     GV->setAlignment(options.DL.getPreferredAlign(GV));
                     if (!(tags & TYEXTERN)) {
-                        llvm::Constant *ginit = init ? cast<llvm::Constant>(gen(init)) : llvm::Constant::getNullValue(ty);
+                        llvm::Constant *ginit = 
+                           init ? 
+                           (init->k == EInitList) ? 
+                                buildAggGlobalInit(init, ty) : 
+                                cast<llvm::Constant>(gen(init)) : 
+                            llvm::Constant::getNullValue(ty);
                         GV->setInitializer(ginit), GV->setDSOLocal(true);
                     }
                     if (tags & TYTHREAD_LOCAL)
@@ -749,9 +758,12 @@ private:
                     vars[idx] = GV;
                 } else {
                     if (LLVM_UNLIKELY(scope_index_is_unnamed_alloca(idx))) {
-                        assert(init);
-                        gen(init);
-                        break;
+                        if (init->k == EInitList) {
+                            scope_index_restore_unnamed_alloca(idx);
+                        } else {
+                            gen(init);
+                            break;
+                        }
                     }
                     bool isVLA = false;
                     llvm::Value *alloca_size;
@@ -788,12 +800,38 @@ private:
                     if (align.hasValue())
                         val->setAlignment(align.valueOrOne());
                     if (init) {
-                        auto initv = gen(init);
-                        store(val, initv, align);
+                        if (init->k == EInitList) {
+                            buildAggLocalInit(ty, init, val);
+                        } else {
+                            auto initv = gen(init);
+                            store(val, initv, align);
+                        }
                     }
                 }
             }
         } break;
+        }
+    }
+    llvm::Constant *buildAggGlobalInit(Expr e, llvm::Type *T) {
+        llvm_unreachable("un-implemented");
+        return nullptr;
+    }
+    void buildAggLocalInit(llvm::Type *T, Expr e, llvm::Value *val) {
+        SmallVector<unsigned> idxs;
+        for (const Initializer &it : e->inits) {
+            ArrayRef<Designator> designators = it.getDesignatorsOneOrMore();
+            idxs.resize_for_overwrite(designators.size());
+            for (size_t i = 0;i < designators.size();++i)
+                idxs[i] = designators[i].getStart();
+            llvm::Value *p = structGEP(T, val, idxs);
+            if (it.value->k == EInitList) {
+                llvm::Type *elemTy = wrap(it.value->ty);
+                buildAggLocalInit(elemTy, it.value, p);
+            } else {
+                llvm::Value *v = gen(it.value);
+                store(p, v);
+            }
+            idxs.clear();
         }
     }
     llvm::GlobalVariable *CreateGlobalString(StringRef bstr, llvm::Type *&ty) {
@@ -889,6 +927,7 @@ private:
         case EConstant: return e->C;
         case EInitList:
         {
+            llvm_unreachable("un-implemented");
             return nullptr;
         } break;
         case EBuiltinCall: {

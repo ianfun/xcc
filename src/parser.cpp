@@ -2857,18 +2857,29 @@ designator:
             if (!(base = specifier_qualifier_list()))
                 return expect(getLoc(), "specifier-qualifier-list"), nullptr;
             for (;;) {
+                current_declator_loc = getLoc();
                 Declator e = struct_declarator(base);
                 if (!e.ty)
-                    return parse_error(getLoc(), "expect struct-declarator"), nullptr;
+                    return parse_error(current_declator_loc, "expect struct-declarator"), nullptr;
+                if (e.ty->isIncomplete())
+                    type_error(current_declator_loc, "field has incomplete type %T", e.ty);
+                else if (e.ty->isVLA())
+                    type_error(current_declator_loc, "fields must have a constant size: 'variable length array in structure' extension will never be supported");
                 if (e.name) {
                     for (const auto &p : fields) {
                         if (p.name == e.name) {
-                            type_error(getLoc(), "duplicate member %I", e.name);
+                            type_error(current_declator_loc, "duplicate member %I", e.name);
                             break;
                         }
                     }
+                } else {
+                    if (e.ty->isAgg() && e.ty->hasTagName()) {
+                        warning(current_declator_loc, "declaration does not declare anything");
+                        goto SKIP;
+                    }
                 }
                 fields.push_back(e);
+SKIP:
                 if (l.tok.tok == TComma)
                     consume();
                 else {
@@ -3126,6 +3137,8 @@ designator:
             consume();
             if (base->getAlignLog2Value())
                 warning(loc, "'_Alignas' can only used in variables");
+            if (base->isAgg() && (!base->hasTagName()) && base->isUnionOrStruct())
+                warning(loc, "declaration does not declare anything");
             return;
         }
         for (;;) {

@@ -913,6 +913,9 @@ struct Initializer {
     ArrayRef<Designator> getDesignators() const {
         return idxs;
     }
+    ArrayRef<Designator> getDesignatorsOneOrMore() const {
+        return isSingle() ? ArrayRef<Designator>(&idx, 1) : ArrayRef<Designator>(idxs);
+    }
 };
 // Simple 'case' statement with one value
 struct SwitchCase {
@@ -1046,6 +1049,7 @@ static constexpr uint64_t build_float(FloatKind kind) {
 }
 static void scope_index_set_unnamed_alloca(unsigned &i) { i |= 1U << 31; }
 static bool scope_index_is_unnamed_alloca(unsigned i) { return i & 1U << 31; }
+static void scope_index_restore_unnamed_alloca(unsigned &i) { i &= (unsigned(-1) >> 1); }
 static bool is_declaration_specifier(Token a) { return a >= Kextern && a <= Kvolatile; }
 
 static bool type_equal(CType a, CType b) {
