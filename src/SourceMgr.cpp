@@ -103,13 +103,14 @@ struct IncludeFile {
     ContentCache *cache;
     location_t where_I_included;
     location_t startLoc;
+    location_t last_read_loc;
     location_t getFileSize() const { return cache->getFileSize(); }
     location_t getStartLoc() const { return startLoc; }
     location_t getEndLoc() const { return startLoc + getFileSize(); }
     location_t getIncludePos() const { return where_I_included; }
     const char *getBufferStart() const { return cache->getBufferStart(); }
-    IncludeFile(ContentCache *cache, location_t startLoc = 0, location_t includePos = 0)
-        : cache{cache}, where_I_included{includePos}, startLoc{startLoc} {}
+    IncludeFile(ContentCache *cache, location_t startLoc, location_t includePos)
+        : cache{cache}, where_I_included{includePos}, startLoc{startLoc}, last_read_loc{startLoc} {}
 };
 struct SourceMgr : public DiagnosticHelper {
     char buf[STREAM_BUFFER_SIZE];
@@ -125,6 +126,7 @@ struct SourceMgr : public DiagnosticHelper {
     bool trigraphs = false;
     unsigned current_line = 1;
     location_t cur_loc = 0;
+    location_t cur_start_loc = 0;
     const char *cur_buffer_ptr = nullptr;
     void setLine(unsigned line) { current_line = line; }
     StringRef getFileName() const { return includeStack[grow_include_stack.back()].cache->getName(); }
@@ -483,21 +485,23 @@ public:
         includeStack.emplace_back(cache, getInsertPos(), includePos);
         addBuffer();
     }
-    IncludeFile *addScratchBuffer(llvm::MemoryBuffer *Buffer) {
+    IncludeFile *addScratchBuffer(llvm::MemoryBuffer *Buffer, location_t includePos = 0) {
         ContentCache *cache = new ContentCache(Buffer);
         cache->setNameAsBufferName();
         cached_strings.push_back(cache);
-        includeStack.emplace_back(cache, getInsertPos(), 0);
-        addBuffer();
+        includeStack.emplace_back(cache, getInsertPos(), includePos);
         return &includeStack.back();
     }
 private:
     inline void setCurPtr() {
-        IncludeFile file = includeStack[grow_include_stack.back()];
-        cur_loc = file.getStartLoc();
+        const IncludeFile &file = includeStack[grow_include_stack.back()];
+        cur_start_loc = file.getStartLoc();
+        cur_loc = file.last_read_loc;
         cur_buffer_ptr = file.getBufferStart();
     }
     inline void addBuffer() {
+        if (grow_include_stack.size()) 
+            includeStack[grow_include_stack.back()].last_read_loc = cur_loc;
         grow_include_stack.push_back(includeStack.size() - 1);
         setCurPtr();
     }
@@ -548,7 +552,9 @@ private:
         }
     }
 public:
-    inline char advance_next() { return cur_buffer_ptr[cur_loc++]; }
+    inline char advance_next() { 
+        return cur_buffer_ptr[cur_loc++ - cur_start_loc];
+    }
     const char *getCurLexBufferPtr() { return &cur_buffer_ptr[cur_loc]; }
     const char *getPrevLexBufferPtr() { return &cur_buffer_ptr[cur_loc - 1]; }
     void advanceBufferPtr(location_t N) { cur_loc += N; }

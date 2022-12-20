@@ -11,14 +11,12 @@ struct ScratchBuffer {
     ScratchBuffer(SourceMgr &SM): SM{SM} {}
     TokenV getToken(const char *Buf, unsigned Len) {
         TokenV theTok = TStringLit;
-        if (BytesUsed+Len+2 > ScratchBufSize)
-            AllocScratchBuffer(Len+2);
+        if (BytesUsed+Len+1 > ScratchBufSize)
+            AllocScratchBuffer(Len+1);
+        memcpy((void*)(theTok.str = CurBuffer+BytesUsed), Buf, Len);
+        location_t newLoc = curFile->getStartLoc() + BytesUsed;
+        BytesUsed += Len;
         CurBuffer[BytesUsed++] = '\n';
-        theTok.str = CurBuffer+BytesUsed;
-        memcpy(CurBuffer+BytesUsed, Buf, Len);
-        BytesUsed += Len+1;
-        CurBuffer[BytesUsed-1] = '\0';
-        location_t newLoc = curFile->getStartLoc() + BytesUsed - Len - 1;
         theTok.setLoc(newLoc);
         theTok.setLength(Len);
         return theTok;
@@ -1046,6 +1044,96 @@ STD_INCLUDE:
             eat();
         }
     }
+
+template <typename T> static void StringifyImpl(T &Str, char Quote) {
+  typename T::size_type i = 0, e = Str.size();
+  while (i < e) {
+    if (Str[i] == '\\' || Str[i] == Quote) {
+      Str.insert(Str.begin() + i, '\\');
+      i += 2;
+      ++e;
+    } else if (Str[i] == '\n' || Str[i] == '\r') {
+      // Replace '\r\n' and '\n\r' to '\\' followed by 'n'.
+      if ((i < e - 1) && (Str[i + 1] == '\n' || Str[i + 1] == '\r') &&
+          Str[i] != Str[i + 1]) {
+        Str[i] = '\\';
+        Str[i + 1] = 'n';
+      } else {
+        // Replace '\n' and '\r' to '\\' followed by 'n'.
+        Str[i] = '\\';
+        Str.insert(Str.begin() + i + 1, 'n');
+        ++e;
+      }
+      i += 2;
+    } else
+      ++i;
+  }
+}
+    std::string Stringify(StringRef Str, bool Charify) {
+        std::string Result = std::string(Str);
+        char Quote = Charify ? '\'' : '"';
+        StringifyImpl(Result, Quote);
+        return Result;
+    }
+    TokenV createStringify(ArrayRef<TokenV> tokens) {
+        SmallString<64> Str;
+        Str.push_back('\"');
+        for (const TokenV &it: tokens) {
+            switch (it.tok) {
+                case PPNumber:
+                {
+                    Str += it.getPPNumberLit();
+                    break;
+                }
+                case TStringLit:
+                {
+                    std::string s = Stringify(it.getStringLiteral(), true);
+                } break;
+                case TCharLit:
+                {
+                    switch (it.i) {
+                        case 7:
+                            Str += ("\\a");
+                            break;
+                        case 8:
+                            Str += ("\\b");
+                            break;
+                        case 12:
+                            Str += ("\\f");
+                            break;
+                        case 10:
+                            Str += ("\\n");
+                            break;
+                        case 13:
+                            Str += ("\\r");
+                            break;
+                        case 9:
+                            Str += ("\\t");
+                            break;
+                        case 11:
+                            Str += ("\\v");
+                            break;
+                        default:
+                            Str.push_back('\\');
+                            Str.push_back('x');
+                            Str.push_back(hexed(it.i) >> 4);
+                            Str.push_back(hexed(it.i));
+                            break;
+                    }
+                } break;
+                default: 
+                {
+                    if (it.tok >= kw_start) 
+                        Str += it.s->getKey();
+                    else 
+                        Str += show(it.tok); 
+                    break;
+                } break;
+            }
+        }
+        Str.push_back('\"');
+        return ScratchBuf.getToken(Str.data(), Str.size());
+    }
     void checkMacro() {
         IdentRef name = tok.s;
         Token saved_tok;
@@ -1068,10 +1156,10 @@ STD_INCLUDE:
             int N;
             if (saved_tok == PP__DATE__)
                 // Mmm dd yyyy
-                N = snprintf(buffer, sizeof(buffer), "%s %2d %4d", months[t->tm_mon], t->tm_mday, t->tm_year + 1900);
+                N = snprintf(buffer, sizeof(buffer), "\"%s %2d %4d\"", months[t->tm_mon], t->tm_mday, t->tm_year + 1900);
             else
                 // hh:mm:ss
-                N = snprintf(buffer, sizeof(buffer), "%02d:%02d:%02d", t->tm_hour, t->tm_min, t->tm_sec);
+                N = snprintf(buffer, sizeof(buffer), "\"%02d:%02d:%02d\"", t->tm_hour, t->tm_min, t->tm_sec);
             tok = ScratchBuf.getToken(buffer, N);
             return;
         }
@@ -1108,9 +1196,9 @@ STD_INCLUDE:
                 if (tokens.size()) {
                     beginExpandMacro(it->second);
                     for (size_t i = tokens.size(); i--;) {
-                        TokenV theTok = tokens[i]; // copy ctor
+                        TokenV theTok = tokens[i];
                         if (theTok.tok != TSpace) {
-                            if (tok.tok >= kw_start) {
+                            if (theTok.tok >= kw_start) {
                                 if (isMacroInUse(theTok.s)) {
                                     // https://gcc.gnu.org/onlinedocs/cpp/Self-Referential-Macros.html
                                     if (theTok.tok == PPIdent)
@@ -1177,9 +1265,14 @@ STD_INCLUDE:
                                     IdentRef s = theTok.s;
                                     for (unsigned j = 0; j < params.size(); j++) {
                                         if (s == params[j]) {
+                                            if (i && tokens[i - 1].tok == PPSharp) {
+                                                i--;
+                                                tokenq.push_back(createStringify(args[j]));
+                                                goto CONTINUE;
+                                            }
                                             for (const auto &it : args[j])
                                                 tokenq.push_back(it);
-                                            goto BREAK;
+                                            goto CONTINUE;
                                         }
                                     }
                                     if (isMacroInUse(s)) {
@@ -1188,10 +1281,12 @@ STD_INCLUDE:
                                     }
                                     tokenq.push_back(theTok);
                                 } else {
+                                    if (theTok.tok == PPSharp)
+                                        pp_error(getLoc(), "'#' is not followed by a macro parameter");
                                     tokenq.push_back(theTok);
                                 }
-BREAK:;
                             }
+                            CONTINUE: ;
                         }
                         tokenq.push_back(SM.getLocTree());
                     }

@@ -224,7 +224,7 @@ ctypes = {
 	"TYPRIM": (),
 	"TYPOINTER": ("CType p",),
 	"TYTAG": ("unsigned idx", "enum TagKind tag", "IdentRef tag_name", "TagDecl tag_decl",),
-	"TYBITFIELD": ("CType bittype", "unsigned bitsize",),
+	"TYBITFIELD": ("CType bittype", "unsigned bitsize", "unsigned bitoffset"),
 	"TYARRAY": ("CType arrtype", "bool hassize", "unsigned arrsize",),
 	"TYFUNCTION": ("CType ret", "xvector<Param> params", "bool isVarArg",),
 	"TYVLA": ("CType vla_arraytype", "Expr vla_expr"),

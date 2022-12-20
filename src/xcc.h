@@ -863,11 +863,11 @@ struct FieldDecl : public Declator {
     FieldDecl(IdentRef Name = nullptr, CType ty = nullptr) : Declator(Name, ty) { }
     FieldDecl(const Declator &decl) : Declator(decl) { }
 };
-
 // Record - A struct or a union
 // https://clang.llvm.org/doxygen/classclang_1_1RecordDecl.html
 struct RecordDecl {
     SmallVector<FieldDecl, 4> fields;
+//    ArrayRef<unsigned> LLVMTypeMap;
 };
 // Tag - A record or enum
 // https://clang.llvm.org/doxygen/classclang_1_1TagDecl.html

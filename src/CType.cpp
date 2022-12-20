@@ -264,6 +264,17 @@ struct OpaqueCType {
         default: return false;
         }
     }
+    bool isBitField() const {
+        return getKind() == TYBITFIELD;
+    }
+    unsigned getBitFieldSize() const {
+        assert(isBitField());
+        return bitsize;
+    }
+    CType getBitFieldRealType() const {
+        assert(isBitField());
+        return bittype;
+    }
     bool isBitInt() const { return getKind() == TYBITINT; }
     unsigned getBitIntBits() const {
         assert(isBitInt());

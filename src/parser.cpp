@@ -90,6 +90,33 @@ struct Parser : public EvalHelper {
     SmallString<64> parseLiteralCache;
 
   private:
+/*
+    static ArrayRef<unsigned> createLLVMTypeMap(CType ty) {
+        SmallVectorImpl<FieldDecl> &fields = ty->getRecord()->fields;
+        ArrayRef<unsigned> Map{new (getAllocator())unsigned[fields.size()]};
+        unsigned idx = -1;
+        unsigned i = 0;
+        unsigned bitFieldOffset = 0;
+        for (const FieldDecl &it : fields) {
+            if (it.ty->isBitField()) {
+                unsigned sizeBits = it.ty->getBitFieldSize();
+                if (sizeBits == 0)
+                    continue;
+                if (bitFieldOffset == 0) {
+                    idx++;
+                    goto NORMAL;
+                }
+                bitFieldOffset += it.ty->bitoffset;
+
+            } else {
+                idx++;
+            }
+NORMAL:
+            Map[i++] = idx;
+        }
+        return Map;
+    }
+*/
     llvm::Type *wrapFloating(CType ty) { return llvmTypeCache.wrapFloating(ty); }
     llvm::StructType *wrapComplexForInteger(const_CType ty) { return llvmTypeCache.wrapComplexForInteger(ty); }
     llvm::StructType *wrapComplex(const_CType ty) { return llvmTypeCache.wrapComplex(ty); }
