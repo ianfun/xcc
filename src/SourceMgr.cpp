@@ -25,8 +25,7 @@ struct ContentCache {
     StringRef Name;
     ContentCache() = delete;
     ContentCache(llvm::MemoryBuffer *Buffer, const StringRef &Name = StringRef())
-        : Buffer{Buffer}, lineOffsetMapping{nullptr}, Name{Name} {
-    }
+        : Buffer{Buffer}, lineOffsetMapping{nullptr}, Name{Name} {}
     ContentCache(const ContentCache &) = delete;
     void setNameAsBufferName() {
         this->Name = Buffer->getBufferIdentifier();
@@ -103,14 +102,22 @@ struct IncludeFile {
     ContentCache *cache;
     location_t where_I_included;
     location_t startLoc;
-    location_t last_read_loc;
+    location_t offset;
+    const char *BufferPtr;
     location_t getFileSize() const { return cache->getFileSize(); }
     location_t getStartLoc() const { return startLoc; }
+    location_t getLoc() const { return startLoc + offset; }
     location_t getEndLoc() const { return startLoc + getFileSize(); }
     location_t getIncludePos() const { return where_I_included; }
-    const char *getBufferStart() const { return cache->getBufferStart(); }
+    const char *getBufferStart() const { return BufferPtr; }
     IncludeFile(ContentCache *cache, location_t startLoc, location_t includePos)
-        : cache{cache}, where_I_included{includePos}, startLoc{startLoc}, last_read_loc{startLoc} {}
+        : cache{cache}, where_I_included{includePos}, startLoc{startLoc}, offset{0}, BufferPtr{cache->getBufferStart()} {}
+    inline char read() {
+        return BufferPtr[offset++];
+    }
+    inline bool isEOF() const {
+        return offset >= getFileSize();
+    }
 };
 struct SourceMgr : public DiagnosticHelper {
     char buf[STREAM_BUFFER_SIZE];
@@ -125,9 +132,7 @@ struct SourceMgr : public DiagnosticHelper {
     StringRef lastDir = StringRef();
     bool trigraphs = false;
     unsigned current_line = 1;
-    location_t cur_loc = 0;
-    location_t cur_start_loc = 0;
-    const char *cur_buffer_ptr = nullptr;
+    IncludeFile *cur_file = nullptr;
     void setLine(unsigned line) { current_line = line; }
     StringRef getFileName() const { return includeStack[grow_include_stack.back()].cache->getName(); }
     ~SourceMgr() {
@@ -141,11 +146,9 @@ struct SourceMgr : public DiagnosticHelper {
     }
     void setFileName(StringRef Name) { includeStack[grow_include_stack.back()].cache->setName(Name); }
     bool isFileEOF() const { 
-        const IncludeFile last = includeStack[grow_include_stack.back()];
-        location_t endLoc = last.getEndLoc();
-        return cur_loc >= endLoc || (cur_loc == endLoc - 1);
+        return cur_file->isEOF();
     }
-    location_t getLoc() const { return cur_loc; }
+    location_t getLoc() const { return cur_file->getLoc(); }
     inline LocTree *getLocTree() const { return tree; }
     void beginExpandMacro(PPMacroDef *M, xcc_context &context) {
         location_map[getLoc()] = (tree = new (context.getAllocator()) LocTree(tree, M));
@@ -457,6 +460,9 @@ public:
     bool empty_active() const {
         return grow_include_stack.empty();
     }
+    unsigned active_files() const {
+        return grow_include_stack.size();
+    }
     // this function does not save the string, so the called must pass as constant global string or alloced somewhere.
     void addStdin(location_t includePos = 0) {
         llvm::ErrorOr<std::unique_ptr<llvm::MemoryBuffer>> MemberBufferOrErr = llvm::MemoryBuffer::getSTDIN();
@@ -472,7 +478,15 @@ public:
     }
     // this function does not save the string, so the called must pass as constant global string or alloced somewhere.
     void addString(StringRef s, StringRef Name = "<string>", location_t includePos = 0) {
-        ContentCache *cache = new ContentCache(llvm::MemoryBuffer::getMemBuffer(s, Name, false).release());
+        ContentCache *cache = new ContentCache(llvm::MemoryBuffer::getMemBuffer(s, Name, true).release());
+        cache->setNameAsBufferName();
+        cached_strings.push_back(cache);
+        includeStack.emplace_back(cache, getInsertPos(), includePos);
+        addBuffer();
+    }
+    // copy the input string into new memory
+    void addStringAndCopy(StringRef s, StringRef Name = "<string>", location_t includePos = 0) {
+        ContentCache *cache = new ContentCache(llvm::MemoryBuffer::getMemBufferCopy(s, Name).release());
         cache->setNameAsBufferName();
         cached_strings.push_back(cache);
         includeStack.emplace_back(cache, getInsertPos(), includePos);
@@ -494,14 +508,9 @@ public:
     }
 private:
     inline void setCurPtr() {
-        const IncludeFile &file = includeStack[grow_include_stack.back()];
-        cur_start_loc = file.getStartLoc();
-        cur_loc = file.last_read_loc;
-        cur_buffer_ptr = file.getBufferStart();
+        cur_file = &includeStack[grow_include_stack.back()];
     }
     inline void addBuffer() {
-        if (grow_include_stack.size()) 
-            includeStack[grow_include_stack.back()].last_read_loc = cur_loc;
         grow_include_stack.push_back(includeStack.size() - 1);
         setCurPtr();
     }
@@ -553,17 +562,17 @@ private:
     }
 public:
     inline char advance_next() { 
-        return cur_buffer_ptr[cur_loc++ - cur_start_loc];
+        return cur_file->read();
     }
-    const char *getCurLexBufferPtr() { return &cur_buffer_ptr[cur_loc]; }
-    const char *getPrevLexBufferPtr() { return &cur_buffer_ptr[cur_loc - 1]; }
-    void advanceBufferPtr(location_t N) { cur_loc += N; }
+    const char *getCurLexBufferPtr() { return cur_file->getBufferStart() + cur_file->offset; }
+    const char *getPrevLexBufferPtr() { return cur_file->getBufferStart() + cur_file->offset - 1; }
+    void advanceBufferPtr(location_t N) { cur_file->offset += N; }
     bool nextFile() {
         grow_include_stack.pop_back();
         if (grow_include_stack.empty())
             return true;
         setCurPtr();
-        lastc = lastc2 = 0;
+        lastc = lastc2 = 256;
         return false;
     }
     char skip_read() {

@@ -1189,6 +1189,9 @@ struct TokenV {
     location_t getEndLoc() const {
         return loc + length;
     }
+    unsigned getLength() const {
+        return length;
+    }
     SourceRange getSourceRange() const {
         return SourceRange(getLoc(), getEndLoc());
     }

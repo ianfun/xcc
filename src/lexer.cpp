@@ -9,8 +9,8 @@ struct ScratchBuffer {
     unsigned BytesUsed = ScratchBufSize;
     char *CurBuffer = nullptr;
     ScratchBuffer(SourceMgr &SM): SM{SM} {}
-    TokenV getToken(const char *Buf, unsigned Len) {
-        TokenV theTok = TStringLit;
+    TokenV getToken(const char *Buf, unsigned Len, Token kind = TStringLit) {
+        TokenV theTok = kind;
         if (BytesUsed+Len+1 > ScratchBufSize)
             AllocScratchBuffer(Len+1);
         memcpy((void*)(theTok.str = CurBuffer+BytesUsed), Buf, Len);
@@ -20,6 +20,9 @@ struct ScratchBuffer {
         theTok.setLoc(newLoc);
         theTok.setLength(Len);
         return theTok;
+    }
+    TokenV getToken(StringRef str, Token kind = TStringLit) {
+        return getToken(str.data(), str.size(), kind);
     }
     void AllocScratchBuffer(unsigned RequestLen) {
         if (RequestLen < ScratchBufSize)
@@ -488,6 +491,73 @@ R:
                 return true;
         return false;
     }
+    template <unsigned Len>
+    void getTokenSpelling(const TokenV &tok, SmallString<Len> &result) {
+        switch (tok.tok) {
+        case TCharLit:
+        {
+            const char *BufferPtr = SM.getBufferForLoc(tok.getLoc());
+            if (!BufferPtr) {
+                formatChar(tok.i, result);
+            } else {
+                result += StringRef(BufferPtr, tok.getLength());
+            }
+        } break;
+        case TStringLit:
+            result += tok.getStringLiteral();
+            break;
+        case PPNumber:
+            result += tok.getPPNumberLit();
+            break;
+        default:
+            if (tok.tok >= kw_start)
+                result += tok.s->getKey();
+            else 
+                result += show(tok.tok);
+            break;
+        }
+    }
+    TokenV paste_tokens(const TokenV &Lhs, const TokenV &Rhs) {
+        SmallString<32> Str;
+        // common case: paste two identfiers
+        if (Lhs.tok > kw_start && Rhs.tok > kw_start) {
+            TokenV it = PPIdent;
+            Str += Lhs.s->getKey();
+            Str += Rhs.s->getKey();
+            it.s = context.table.get(Str, PPIdent);
+            it.tok = std::min(PPIdent, it.s->second.getToken());
+            it.setLoc(Lhs.getLoc());
+            it.setEndLoc(Rhs.getEndLoc());
+            return it;
+        }
+        getTokenSpelling(Lhs, Str);
+        getTokenSpelling(Rhs, Str);
+        Str.push_back(0);
+
+        unsigned oldSize = SM.active_files();
+
+        char oldC = this->c;
+        this->c = ' ';
+        isPPMode = false;
+
+        StringRef source_string = StringRef(Str.data(), Str.size() - 1);
+
+        SM.addStringAndCopy(source_string, "<token pasting>");
+
+        TokenV theTok = lexAndLoc();
+
+        if (this->c != 0)
+            pp_error(Lhs.loc, "pasting formed %R, an invalid preprocessing token", source_string);
+
+        if (SM.active_files() != oldSize)
+            SM.nextFile();
+
+        updateLoc();
+        this->c = oldC;
+        isPPMode = true;
+
+        return theTok;
+    }
 public:
     void cpp() {
         if (tokenq.empty())
@@ -567,14 +637,15 @@ public:
     TokenV lex() {
         for (;;) {
             if (c == '\0' || c == 26) {
-                if (SM.nextFile())
-                    return isPPMode = false, TEOF;
                 if (!SM.isFileEOF()) {
                     warning(loc, "null character ignored");
                     eat();
                     continue;
                 }
-                return isPPMode = false, TEOF;
+                if (SM.nextFile())
+                    return isPPMode = false, TEOF;
+                eat();
+                continue;
             }
             updateLoc();
             if (c == '#') {
@@ -681,9 +752,8 @@ RUN:
                     if (theMacro->tokens.size()) {
                         if (theMacro->tokens.front().tok == PPSharpSharp)
                             parse_error(loc, "%s", "'##' cannot appear at start of macro expansion"), ok = false;
-                        if (theMacro->tokens.size() >= 2)
-                            if (theMacro->tokens.back().tok == PPSharpSharp)
-                                parse_error(loc, "'##' cannot appear at end of macro expansion"), ok = false;
+                        else if (theMacro->tokens.back().tok == PPSharpSharp)
+                            parse_error(loc, "'##' cannot appear at end of macro expansion"), ok = false;
                     }
                     if (ok) {
                         IdentRef Name = theMacro->getName();
@@ -786,13 +856,8 @@ STD_INCLUDE:
                         for (;;) {
                             eat();
                             if (c == is_std) {
-                                for (;;) {
+                                for (;c != '\0' && c != '\n';) {
                                     eat();
-                                    if (c == '\0') {
-                                        break;
-                                    }
-                                    if (c == '\n')
-                                        break;
                                 }
                                 if (path.empty()) {
                                     pp_error("%s", "empty filename in #include");
@@ -1075,6 +1140,66 @@ template <typename T> static void StringifyImpl(T &Str, char Quote) {
         StringifyImpl(Result, Quote);
         return Result;
     }
+    void formatChar(unsigned i, SmallVectorImpl<char> &Str) {
+        switch (i) {
+            case 7:
+                Str.push_back('\\');
+                Str.push_back('a');
+                break;
+            case 8:
+                Str.push_back('\\');
+                Str.push_back('b');
+                break;
+            case 12:
+                Str.push_back('\\');
+                Str.push_back('f');
+                break;
+            case 10:
+                Str.push_back('\\');
+                Str.push_back('n');
+                break;
+            case 13:
+                Str.push_back('\\');
+                Str.push_back('r');
+                break;
+            case 9:
+                Str.push_back('\\');
+                Str.push_back('t');;
+                break;
+            case 11:
+                Str.push_back('\\');
+                Str.push_back('v');
+                break;
+            default:
+                Str.push_back('\\');
+                Str.push_back('x');
+                Str.push_back(hexed(i) >> 4);
+                Str.push_back(hexed(i));
+                break;
+        }
+    }
+    void maybe_paste_tokens(size_t begin, size_t end) {
+        for (;;) {
+            if (begin == end)
+                return;
+            begin++;
+            if (begin == end)
+                return;
+            const TokenV &H = tokenq[begin];
+            if (H.tok == PPSharpSharp) {
+                begin++;
+                if (begin == end)
+                    return;
+                TokenV &R = tokenq[begin - 2];
+                auto it = tokenq.begin() + begin;
+                *it = paste_tokens(*it, R);
+                it -= 2;
+                it = tokenq.erase(it);
+                tokenq.erase(it);
+                end--;
+            }
+        }
+    }
     TokenV createStringify(ArrayRef<TokenV> tokens) {
         SmallString<64> Str;
         Str.push_back('\"');
@@ -1091,35 +1216,7 @@ template <typename T> static void StringifyImpl(T &Str, char Quote) {
                 } break;
                 case TCharLit:
                 {
-                    switch (it.i) {
-                        case 7:
-                            Str += ("\\a");
-                            break;
-                        case 8:
-                            Str += ("\\b");
-                            break;
-                        case 12:
-                            Str += ("\\f");
-                            break;
-                        case 10:
-                            Str += ("\\n");
-                            break;
-                        case 13:
-                            Str += ("\\r");
-                            break;
-                        case 9:
-                            Str += ("\\t");
-                            break;
-                        case 11:
-                            Str += ("\\v");
-                            break;
-                        default:
-                            Str.push_back('\\');
-                            Str.push_back('x');
-                            Str.push_back(hexed(it.i) >> 4);
-                            Str.push_back(hexed(it.i));
-                            break;
-                    }
+                    formatChar(it.i, Str);
                 } break;
                 default: 
                 {
@@ -1132,7 +1229,7 @@ template <typename T> static void StringifyImpl(T &Str, char Quote) {
             }
         }
         Str.push_back('\"');
-        return ScratchBuf.getToken(Str.data(), Str.size());
+        return ScratchBuf.getToken(Str);
     }
     void checkMacro() {
         IdentRef name = tok.s;
@@ -1144,7 +1241,7 @@ template <typename T> static void StringifyImpl(T &Str, char Quote) {
             SmallString<13> str;
             raw_svector_ostream OS(str);
             OS << val;
-            tok = ScratchBuf.getToken(str.data(), str.size());
+            tok = ScratchBuf.getToken(str);
             return;
         }
         case PP__DATE__:
@@ -1167,7 +1264,7 @@ template <typename T> static void StringifyImpl(T &Str, char Quote) {
             SmallString<128> str;
             raw_svector_ostream OS(str);
             OS << '"' << SM.getFileName() << '"';
-            tok = ScratchBuf.getToken(str.data(), str.size());
+            tok = ScratchBuf.getToken(str);
             return;
         }
         case PP_Pragma: {
@@ -1195,6 +1292,7 @@ template <typename T> static void StringifyImpl(T &Str, char Quote) {
                 ArrayRef<TokenV> tokens = m->getTokens();
                 if (tokens.size()) {
                     beginExpandMacro(it->second);
+                    size_t start = tokenq.size();
                     for (size_t i = tokens.size(); i--;) {
                         TokenV theTok = tokens[i];
                         if (theTok.tok != TSpace) {
@@ -1208,6 +1306,8 @@ template <typename T> static void StringifyImpl(T &Str, char Quote) {
                             tokenq.push_back(theTok);
                         }
                     }
+                    size_t End = tokenq.size();
+                    maybe_paste_tokens(start, End);
                     tokenq.push_back(SM.getLocTree());
                 }
                 return cpp();
@@ -1258,6 +1358,7 @@ template <typename T> static void StringifyImpl(T &Str, char Quote) {
                     ArrayRef<TokenV> tokens = m->getTokens();
                     if (tokens.size()) {
                         beginExpandMacro(it->second);
+                        size_t start = tokenq.size();
                         for (size_t i = tokens.size(); i--;) {
                             TokenV theTok = tokens[i];
                             if (theTok.tok != TSpace) {
@@ -1288,6 +1389,8 @@ template <typename T> static void StringifyImpl(T &Str, char Quote) {
                             }
                             CONTINUE: ;
                         }
+                        size_t End = tokenq.size();
+                        maybe_paste_tokens(start, End);
                         tokenq.push_back(SM.getLocTree());
                     }
                     return cpp();

@@ -303,9 +303,9 @@ def gen_tokens():
 		ops.append((name, show, s))
 	def P(name, show, b = False):
 		ppkeywords.append((name, show, b))
-	T("TNul", "(null)")
-	T("TNewLine", "(new-line)")
-	T("TSpace", "(space)")
+	T("TNul", "\\0")
+	T("TNewLine", "\\n")
+	T("TSpace", " ")
 	T("TNot", "!")
 	T("TDoubleQ", "\"")
 	T("TBash", "~")

@@ -102,7 +102,7 @@ NO_LOC:
             OS.resetColor();
             OS << "in expansion of macro ";
             OS.changeColor(llvm::raw_ostream::Colors::SAVEDCOLOR, true);
-            OS << def->getName();
+            OS << def->getName()->getKey();
             OS.changeColor(llvm::raw_ostream::Colors::SAVEDCOLOR, false);
             OS << '\n';
             printSource(loc); // print where the macro is defined
