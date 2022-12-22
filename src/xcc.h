@@ -1320,6 +1320,39 @@ static unsigned scalarRank(const_CType ty) {
     return scalarRank(ty);
 }
 
+namespace Builtin {
+    enum ID {
+        NotBuiltin,
+#define BUILTIN(ID, TYPE, ATTRS) BI##ID,
+#define LIBBUILTIN(ID, TYPE, ATTRS, HEADER) BI##ID,
+#define ATOMIC_BUILTIN BUILTIN
+#include "Builtins.def"
+#undef LIBBUILTIN
+#undef ATOMIC_BUILTIN
+#undef BUILTIN
+        FirstTSBuiltin
+    };
+    struct Info {
+        const char *Name, *Type, *Attributes, *Header;
+    };
+    template <size_t N>
+    static size_t getLength() {
+
+    }
+    static ArrayRef<Info> getXCCBuiltins() {
+        static const Info BuiltinInfos[] = {
+#define ATOMIC_BUILTIN BUILTIN
+#define BUILTIN(ID, TYPE, ATTRS) {#ID, TYPE, ATTRS, nullptr},
+#define LIBBUILTIN(ID, TYPE, ATTRS, HEADER) {#ID, TYPE, ATTRS, HEADER},
+#include "Builtins.def"
+#undef LIBBUILTIN
+#undef ATOMIC_BUILTIN
+#undef BUILTIN
+        };
+        return ArrayRef<Info>(BuiltinInfos);
+    }
+}
+
 #ifdef XCC_JIT
 #include "JIT.cpp"
 #endif
@@ -1335,9 +1368,6 @@ static unsigned scalarRank(const_CType ty) {
 #include "StmtVisitor.cpp"
 #include "parser.cpp"
 #include "lexerDefinition.cpp"
-#ifdef XCC_TARGET
-#include "Target/TargetInfo.h"
-#endif
 #include "CompilerInstance.cpp"
 #include "interpreter/interpreter.cpp"
 #ifdef XCC_TOOLCHAIN

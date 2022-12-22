@@ -123,8 +123,10 @@ union alignas(void*) {
     };
     struct alignas(void*) {
       IdentRef builtin_func_name;
+        llvm::Intrinsic::ID ID;
         location_t builtin_call_start_loc;
         xvector<Expr> buitin_call_args;
+        llvm::FunctionType *builtin_func_type;
     };
 };
 };
@@ -279,8 +281,10 @@ struct BuiltinCallExpr {
     CType ty;
     struct alignas(void*) {
           IdentRef builtin_func_name;
+        llvm::Intrinsic::ID ID;
         location_t builtin_call_start_loc;
         xvector<Expr> buitin_call_args;
+        llvm::FunctionType *builtin_func_type;
   };
 };
 static uint8_t expr_size_map[] = {

@@ -64,6 +64,8 @@ struct xcc_context {
     }
     IdentifierTable table; // contains allocator!
     llvm::DenseMap<type_tag_t, CType> prim_ctype_map;
+    // C23: _Bitint
+    llvm::DenseMap<std::pair<unsigned, uint8_t>, CType> bitIntMap;
     CType constint, b, v, i8, u8, i16, u16, i32, u32, i64, u64, i128, u128, ffloatty, fdoublety, bfloatty, fhalfty,
         f128ty, ppc_f128, f80ty, str8ty, str16ty, str32ty, stringty, wstringty, _complex_float, _complex_double,
         _complex_longdouble, _short, _ushort, _wchar, _long, _ulong, _longlong, _ulonglong, _longdouble, _uchar,
@@ -96,6 +98,15 @@ struct xcc_context {
     [[nodiscard]] CType getBlockAddressType() const {
         return void_ptr_ty;
     }
+    [[nodiscard]] CType getBitIntType(unsigned width, CType base) {
+        auto it = bitIntMap.insert({std::make_pair(width, base->getIntegerKind().asLog2()), nullptr});
+        if (it.second) {
+            CType ty = TNEW(BitintType) {.bitint_base = base, .bits = width};
+            ty->setKind(TYBITINT);
+            it.first->second = ty;
+        }
+        return it.first->second;
+    } 
     [[nodiscard]] CType lookupType(const_CType ty, type_tag_t tags) {
         if (ty->isFloating()) {
             switch (ty->getFloatKind().asEnum()) {
@@ -222,6 +233,56 @@ struct xcc_context {
         (void)memcpy(mem, src, size);
         return mem;
     }
+    [[nodiscard]] CType fromLLVMType(const llvm::Type *Ty) {
+        switch (Ty->getTypeID()) {
+            case llvm::Type::HalfTyID:
+                return getFPHalf();
+            case llvm::Type::BFloatTyID:
+                return getBFloat();
+            case llvm::Type::FloatTyID:
+                return getFloat();
+            case llvm::Type::DoubleTyID:
+                return getDobule();
+            case llvm::Type::X86_FP80TyID:
+                return getFP80();
+            case llvm::Type::FP128TyID:
+                return getFloat128();
+            case llvm::Type::PPC_FP128TyID:
+                return getPPCFloat128();
+            case llvm::Type::VoidTyID:
+                return getVoid();
+             case llvm::Type::ArrayTyID:
+            {
+                const llvm::ArrayType *ty = cast<llvm::ArrayType>(Ty);
+                return getFixArrayType(fromLLVMType(ty->getElementType()), ty->getNumElements());
+            }
+            case llvm::Type::LabelTyID:
+            case llvm::Type::MetadataTyID:
+            case llvm::Type::X86_MMXTyID:
+            case llvm::Type::X86_AMXTyID:
+            case llvm::Type::TokenTyID:
+            case llvm::Type::StructTyID:
+            case llvm::Type::FixedVectorTyID: // TODO: ...
+            case llvm::Type::ScalableVectorTyID:
+            default:
+                break;
+            case llvm::Type::IntegerTyID:
+                return getIntTypeFromBitSize(cast<llvm::IntegerType>(Ty)->getBitWidth());
+            case llvm::Type::FunctionTyID:
+            {
+                const llvm::FunctionType *FT = cast<llvm::FunctionType>(Ty);
+                CType ty = TNEW(FunctionType){.ret = fromLLVMType(FT->getReturnType()), .params = xvector<Param>::get_with_length(FT->getNumParams()), .isVarArg = FT->isVarArg()};
+                ty->setKind(TYFUNCTION);
+                size_t i = 0;
+                for (const llvm::Type *it: FT->params()) 
+                    ty->params[i] = Param(nullptr, fromLLVMType(it));
+                return ty;
+            }
+            case llvm::Type::PointerTyID:
+                return getVoidPtrType();
+        }
+        llvm_unreachable("unsupported type");
+    }
     [[nodiscard]] CType getIntTypeFromBitSize(unsigned bitSize) {
         switch (bitSize) {
         case 128: return u128;
@@ -231,7 +292,7 @@ struct xcc_context {
         case 8: return u8;
         case 1: return b;
         }
-        llvm_unreachable("unhandled size");
+        return getBitIntType(bitSize, getUInt());
     }
     [[nodiscard]] Expr createParenExpr(Expr e, location_t L, location_t R) {
         const size_t Size = expr_size_map[e->k];

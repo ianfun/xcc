@@ -3921,6 +3921,76 @@ NEXT:
         }
         return nullptr;
     }
+    Expr maybe_builtin_call(IdentRef Name, SourceRange range) {
+        StringRef NameStr = Name->getKey();
+        if (!NameStr.startswith("__builtin_")) return nullptr;
+        StringRef Prefix = llvm::Triple::getArchTypePrefix(options.triple.getArch());
+        llvm::Intrinsic::ID ID = llvm::Intrinsic::getIntrinsicForClangBuiltin(Prefix.data(), NameStr);
+        if (ID == llvm::Intrinsic::not_intrinsic)
+            ID = llvm::Intrinsic::getIntrinsicForMSBuiltin(Prefix.data(), NameStr);
+        if (ID == llvm::Intrinsic::not_intrinsic)
+            return nullptr;
+        if (l.tok.tok != TLbracket) {
+            type_error(range.getStart(), "builtin functions must be directly called") << range;
+            return getIntZero();
+        }
+        consume();
+        xvector<Expr> callArgs = xvector<Expr>::get();
+        if (l.tok.tok != TRbracket) {
+            bool Error = false;
+            for (;;) {
+                Expr e = assignment_expression();
+                if (!e)
+                    return nullptr;
+                if (e->ty->isAgg()) {
+                    type_error("use aggregate type when calling builtin function");
+                    Error |= true;
+                }
+                callArgs.push_back(e);
+                if (l.tok.tok == TComma)
+                    consume();
+                else if (l.tok.tok == TRbracket) {
+                    consume();
+                    break;
+                }
+            }
+            if (Error)
+                return getIntZero();
+        } else {
+            consume();
+        }
+        SmallVector<llvm::Type*> argTypes;
+        argTypes.resize_for_overwrite(callArgs.size());
+        for (size_t i = 0;i < argTypes.size();i++)
+            argTypes[i] = llvmTypeCache.wrap(callArgs[i]->ty);
+        llvm::FunctionType *FTy = llvm::Intrinsic::getType(getLLVMContext(), ID, argTypes);
+        size_t i = 0;
+        for (llvm::Type *PT: FTy->params()) {
+            llvm::Type *AT = argTypes[i];
+            if (!PT->canLosslesslyBitCastTo(AT)) {
+                if (PT->isIntegerTy() && AT->isIntegerTy()) {
+                    unsigned ATW = cast<llvm::IntegerType>(AT)->getBitWidth();
+                    unsigned BTW = cast<llvm::IntegerType>(PT)->getBitWidth();
+                    Expr &it = callArgs[i];
+                    CType to = context.getIntTypeFromBitSize(ATW);
+                    if (ATW > BTW) {
+                        it = (it->k == EConstant)
+                                   ? wrap(to, (it->ty->isSigned() ? &llvm::ConstantExpr::getSExt : &llvm::ConstantExpr::getZExt)(it->C, PT, false), it->getBeginLoc(), it->getEndLoc())
+                                   : make_cast(it, it->ty->isSigned() ? SExt : ZExt, to);
+                    } else { 
+                        assert(ATW < BTW);
+                        it = (it->k == EConstant)
+                            ? wrap(to, llvm::ConstantExpr::getTrunc(it->C, PT), it->getBeginLoc(), it->getEndLoc())
+                            : make_cast(it, Trunc, to);
+                    }
+                } else {
+                    type_error(range.getStart(), "no matching call to builtin function: expect %T(%L) for argument %u, got %T(%L)", context.fromLLVMType(PT), PT, i + 1, callArgs[i]->ty, AT) << range;
+                }
+            }
+            i++;
+        }
+        return ENEW(BuiltinCallExpr) {.ty = context.fromLLVMType(FTy->getReturnType()), .builtin_func_name = Name , .ID = ID, .builtin_call_start_loc = range.getStart(), .buitin_call_args = callArgs, .builtin_func_type = FTy};
+    }
     Expr primary_expression() {
         Expr result;
         location_t loc = getLoc();
@@ -3979,6 +4049,8 @@ NEXT:
                 if (!it) {
                     SourceRange range(loc, endLoc);
                     SourceRange declRange;
+                    Expr builtin_call = maybe_builtin_call(sym, range);
+                    if (builtin_call) return builtin_call;
                     IdentRef Name = try_suggest_identfier(sym, declRange);
                     if (Name) {
                         type_error(loc, "use of undeclared identifier %I; did you mean %I?", sym)
@@ -4684,11 +4756,12 @@ ONE_CASE:
             if (!(ret = expression()))
                 return;
             checkSemicolon();
-
-            if (sema.currentfunction->ret->isVoid()) 
-                error(loc, "function should return a value in a function return void");
-            else 
+            if (sema.currentfunction->ret->isVoid()) {
+                if (!ret->ty->isVoid())
+                    error(loc, "function should return a value in a function return void");
+            } else {
                 ret = castto(ret, sema.currentfunction->ret, Implict_Return);
+            }
             insertStmt(SNEW(ReturnStmt) {.ret = ret, .ret_loc = loc});
             return setUnreachable(loc, UR_return);
         }

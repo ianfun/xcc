@@ -218,7 +218,7 @@ exprs = {
 	"EPostFix": ("enum PostFixOp pop", "Expr poperand", "location_t postFixEndLoc", ),
 	"ESizeof": ("CType theType", "location_t sizeof_loc_begin", "location_t sizeof_loc_end",),
 	"EBlockAddress": ("label_t addr", "location_t block_loc_begin", "IdentRef labelName"),
-	"EBuiltinCall": ("IdentRef builtin_func_name", "location_t builtin_call_start_loc", "xvector<Expr> buitin_call_args"),
+	"EBuiltinCall": ("IdentRef builtin_func_name", "llvm::Intrinsic::ID ID", "location_t builtin_call_start_loc", "xvector<Expr> buitin_call_args", "llvm::FunctionType *builtin_func_type"),
 }
 ctypes = {
 	"TYPRIM": (),

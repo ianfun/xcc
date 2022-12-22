@@ -80,5 +80,6 @@ struct Options {
         );
         if (!this->machine)
             llvm::report_fatal_error("Failed to create TargetMachine");
+        this->DL = this->machine->createDataLayout();
     }
 };

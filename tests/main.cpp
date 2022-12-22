@@ -1,5 +1,4 @@
 #define XCC_TOOLCHAIN
-#define XCC_TARGET
 
 #include "../src/xcc.h"
 #include "../src/xInitLLVM.cpp"

@@ -164,40 +164,40 @@ private:
     llvm::ReturnInst *ret(llvm::Value *Val = nullptr) {
         return Insert(llvm::ReturnInst::Create(getLLVMContext(), Val, insertBB));
     }
-    llvm::CastInst *createCast(llvm::Instruction::CastOps Op, llvm::Value *V, llvm::Type *DestTy) {
+    [[nodiscard]] llvm::CastInst *createCast(llvm::Instruction::CastOps Op, llvm::Value *V, llvm::Type *DestTy) {
         return Insert(llvm::CastInst::Create(Op, V, DestTy, "", insertBB));
     }
-    llvm::CastInst *ptrtoint(llvm::Value *V, llvm::Type *DestTy) {
+    [[nodiscard]] llvm::CastInst *ptrtoint(llvm::Value *V, llvm::Type *DestTy) {
         return createCast(llvm::Instruction::PtrToInt, V, DestTy);
     }
-    llvm::BinaryOperator *createNot(llvm::Value *V) {
+    [[nodiscard]] llvm::BinaryOperator *createNot(llvm::Value *V) {
         return binop(llvm::Instruction::Xor, V, llvm::Constant::getAllOnesValue(V->getType()));
     }
-    llvm::BinaryOperator *neg(llvm::Value *V) {
+    [[nodiscard]] llvm::BinaryOperator *neg(llvm::Value *V) {
         return binop(llvm::Instruction::Sub, llvm::Constant::getNullValue(V->getType()), V);
     }
-    llvm::UnaryOperator *fneg(llvm::Value *V) {
+    [[nodiscard]] llvm::UnaryOperator *fneg(llvm::Value *V) {
         return Insert(llvm::UnaryOperator::Create(llvm::Instruction::FNeg, V, "", insertBB));
     }
-    llvm::AllocaInst *createAlloca(llvm::Type *Ty) {
+    [[nodiscard]] llvm::AllocaInst *createAlloca(llvm::Type *Ty) {
         unsigned AddrSpace = options.DL.getAllocaAddrSpace();
         llvm::Align Align = options.DL.getPrefTypeAlign(Ty);
         return Insert(new llvm::AllocaInst(Ty, AddrSpace, nullptr, Align, "", insertBB));
     }
-    llvm::AllocaInst *createAlloca(llvm::Type *Ty, llvm::Align Align) {
+    [[nodiscard]] llvm::AllocaInst *createAlloca(llvm::Type *Ty, llvm::Align Align) {
         unsigned AddrSpace = options.DL.getAllocaAddrSpace();
         return Insert(new llvm::AllocaInst(Ty, AddrSpace, nullptr, Align, "", insertBB));
     }
-    llvm::BinaryOperator *udiv(llvm::Value *LHS, llvm::Value *RHS) {
+    [[nodiscard]] llvm::BinaryOperator *udiv(llvm::Value *LHS, llvm::Value *RHS) {
         return binop(llvm::Instruction::UDiv, LHS, RHS);
     }
-    llvm::BinaryOperator *sdiv(llvm::Value *LHS, llvm::Value *RHS) {
+    [[nodiscard]] llvm::BinaryOperator *sdiv(llvm::Value *LHS, llvm::Value *RHS) {
         return binop(llvm::Instruction::SDiv, LHS, RHS);
     }
     llvm::UnreachableInst *createUnreachable() {
         return Insert(new llvm::UnreachableInst(getLLVMContext(), insertBB));
     }
-    llvm::ICmpInst *createLogicalNot(llvm::Value *Val) {
+    [[nodiscard]] llvm::ICmpInst *createLogicalNot(llvm::Value *Val) {
         llvm::Constant *C;
         llvm::Type *Ty = Val->getType();
         if (llvm::IntegerType *IT = dyn_cast<llvm::IntegerType>(Ty)) {
@@ -209,10 +209,10 @@ private:
         }
         return icmp(llvm::ICmpInst::ICMP_EQ, Val, C);
     }
-    llvm::GetElementPtrInst *gep(llvm::Type *PointeeType, llvm::Value *Ptr, ArrayRef<llvm::Value*> IdxList) {
+    [[nodiscard]] llvm::GetElementPtrInst *gep(llvm::Type *PointeeType, llvm::Value *Ptr, ArrayRef<llvm::Value*> IdxList) {
         return Insert(llvm::GetElementPtrInst::CreateInBounds(PointeeType, Ptr, IdxList, "", insertBB));
     }
-    llvm::Value *structGEP(llvm::Type *StructTy, llvm::Value *Ptr, ArrayRef<unsigned> idxs) {
+    [[nodiscard]] llvm::Value *structGEP(llvm::Type *StructTy, llvm::Value *Ptr, ArrayRef<unsigned> idxs) {
         while (idxs.size() && !idxs.back())
             idxs = idxs.drop_back();
         if (idxs.empty()) return Ptr;
@@ -223,49 +223,49 @@ private:
             vals[i+1] = llvm::ConstantInt::get(i32Ty, idxs[i]);
         return gep(StructTy, Ptr, llvm::makeArrayRef(vals, idxs.size() + 1));
     }
-    llvm::PHINode *phi(llvm::Type *Ty, unsigned NumReservedValues) {
+    [[nodiscard]] llvm::PHINode *phi(llvm::Type *Ty, unsigned NumReservedValues) {
         return Insert(llvm::PHINode::Create(Ty, NumReservedValues, "", insertBB));
     }
-    llvm::SelectInst *select(llvm::Value *Cond, llvm::Value *T, llvm::Value *F) {
+    [[nodiscard]] llvm::SelectInst *select(llvm::Value *Cond, llvm::Value *T, llvm::Value *F) {
         return Insert(llvm::SelectInst::Create(Cond, T, F, "", insertBB));
     }
-    llvm::ICmpInst *icmp(llvm::CmpInst::Predicate Pred, llvm::Value *LHS, llvm::Value *RHS) {
+    [[nodiscard]] llvm::ICmpInst *icmp(llvm::CmpInst::Predicate Pred, llvm::Value *LHS, llvm::Value *RHS) {
         return Insert(new llvm::ICmpInst(*insertBB, Pred, LHS, RHS));
     }
-    llvm::BinaryOperator *binop(llvm::Instruction::BinaryOps Op, llvm::Value *LHS, llvm::Value *RHS) {
+    [[nodiscard]] llvm::BinaryOperator *binop(llvm::Instruction::BinaryOps Op, llvm::Value *LHS, llvm::Value *RHS) {
         return Insert(llvm::BinaryOperator::Create(Op, LHS, RHS, "", insertBB));
     }
-    llvm::BinaryOperator *createOr(llvm::Value *LHS, llvm::Value *RHS) {
+    [[nodiscard]] llvm::BinaryOperator *createOr(llvm::Value *LHS, llvm::Value *RHS) {
         return binop(llvm::Instruction::Or, LHS, RHS);
     }
-    llvm::BinaryOperator *createAnd(llvm::Value *LHS, llvm::Value *RHS) {
+    [[nodiscard]] llvm::BinaryOperator *createAnd(llvm::Value *LHS, llvm::Value *RHS) {
         return binop(llvm::Instruction::And, LHS, RHS);
     }
-    llvm::BinaryOperator *add(llvm::Value *LHS, llvm::Value *RHS) {
+    [[nodiscard]] llvm::BinaryOperator *add(llvm::Value *LHS, llvm::Value *RHS) {
         return binop(llvm::Instruction::Add, LHS, RHS);
     }
-    llvm::BinaryOperator *sub(llvm::Value *LHS, llvm::Value *RHS) {
+    [[nodiscard]] llvm::BinaryOperator *sub(llvm::Value *LHS, llvm::Value *RHS) {
         return binop(llvm::Instruction::Sub, LHS, RHS);
     }
-    llvm::BinaryOperator *fadd(llvm::Value *LHS, llvm::Value *RHS) {
+    [[nodiscard]] llvm::BinaryOperator *fadd(llvm::Value *LHS, llvm::Value *RHS) {
         return binop(llvm::Instruction::Add, LHS, RHS);
     }
-    llvm::BinaryOperator *fsub(llvm::Value *LHS, llvm::Value *RHS) {
+    [[nodiscard]] llvm::BinaryOperator *fsub(llvm::Value *LHS, llvm::Value *RHS) {
         return binop(llvm::Instruction::FSub, LHS, RHS);
     }
-    llvm::BinaryOperator *fmul(llvm::Value *LHS, llvm::Value *RHS) {
+    [[nodiscard]] llvm::BinaryOperator *fmul(llvm::Value *LHS, llvm::Value *RHS) {
         return binop(llvm::Instruction::FMul, LHS, RHS);
     }
-    llvm::BinaryOperator *mul(llvm::Value *LHS, llvm::Value *RHS) {
+    [[nodiscard]] llvm::BinaryOperator *mul(llvm::Value *LHS, llvm::Value *RHS) {
         return binop(llvm::Instruction::Mul, LHS, RHS);
     }
-    llvm::CmpInst *fcmp(llvm::FCmpInst::Predicate Pred, llvm::Value *LHS, llvm::Value *RHS) {
+    [[nodiscard]] llvm::CmpInst *fcmp(llvm::FCmpInst::Predicate Pred, llvm::Value *LHS, llvm::Value *RHS) {
         return Insert(new llvm::FCmpInst(*insertBB, Pred, LHS, RHS));
     }
-    llvm::InsertValueInst *insertValue(llvm::Value *Agg, llvm::Value *Val, ArrayRef<unsigned> idxs) {
+    [[nodiscard]] llvm::InsertValueInst *insertValue(llvm::Value *Agg, llvm::Value *Val, ArrayRef<unsigned> idxs) {
         return Insert(llvm::InsertValueInst::Create(Agg, Val, idxs, "", insertBB));
     }
-    llvm::AtomicRMWInst *atomicRMW(llvm::AtomicRMWInst::BinOp Op, llvm::Value *Ptr, llvm::Value *Val, llvm::Align Align,
+    [[nodiscard]] llvm::AtomicRMWInst *atomicRMW(llvm::AtomicRMWInst::BinOp Op, llvm::Value *Ptr, llvm::Value *Val, llvm::Align Align,
         llvm::AtomicOrdering Ordering = llvm::AtomicOrdering::SequentiallyConsistent,
         llvm::SyncScope::ID SSID = llvm::SyncScope::System) {
         return Insert(new llvm::AtomicRMWInst(Op, Ptr, Val, Align, Ordering, SSID, insertBB));
@@ -282,7 +282,7 @@ private:
     llvm::CallInst *call(llvm::FunctionCallee Func, ArrayRef<llvm::Value*> Args = {}) {
         return Insert(llvm::CallInst::Create(Func, Args, {}, "", insertBB));
     }
-    llvm::ExtractValueInst* extractValue(llvm::Value *Agg, ArrayRef<unsigned> idxs) {
+    [[nodiscard]] llvm::ExtractValueInst* extractValue(llvm::Value *Agg, ArrayRef<unsigned> idxs) {
         return Insert(llvm::ExtractValueInst::Create(Agg, idxs, "", insertBB));
     }
     llvm::StoreInst* store(llvm::Value *p, llvm::Value *v) { 
@@ -300,24 +300,24 @@ private:
             s->setAlignment(*align);
         return s;
     }
-    llvm::LoadInst *load(llvm::Value *p, llvm::Type *Ty) {
+    [[nodiscard]] llvm::LoadInst *load(llvm::Value *p, llvm::Type *Ty) {
         assert(p);
         assert(Ty);
         return Insert(new llvm::LoadInst(Ty, p, "", insertBB));
     }
-    llvm::LoadInst *load(llvm::Value *p, llvm::Type *Ty, llvm::Align align) {
+    [[nodiscard]] llvm::LoadInst *load(llvm::Value *p, llvm::Type *Ty, llvm::Align align) {
         llvm::LoadInst *i = load(p, Ty);
         i->setAlignment(align);
         return i;
     }
-    llvm::LoadInst *load(llvm::Value *p, llvm::Type *Ty, llvm::MaybeAlign align) {
+    [[nodiscard]] llvm::LoadInst *load(llvm::Value *p, llvm::Type *Ty, llvm::MaybeAlign align) {
         llvm::LoadInst *i = load(p, Ty);
         if (align.hasValue())
             i->setAlignment(*align);
         return i;
     }
-    const llvm::Instruction *getTerminator() { return insertBB->getTerminator(); }
-    llvm::ValueAsMetadata *mdNum(uint64_t num) {
+    [[nodiscard]] const llvm::Instruction *getTerminator() { return insertBB->getTerminator(); }
+    [[nodiscard]] llvm::ValueAsMetadata *mdNum(uint64_t num) {
         llvm::Value *v = llvm::ConstantInt::get(llvm::Type::getInt32Ty(getLLVMContext()), num);
         return llvm::ValueAsMetadata::get(v);
     }
@@ -660,7 +660,20 @@ private:
             this->labels.clear();
             this->currentfunction = nullptr;
         } break;
-        case SReturn: ret(s->ret ? gen(s->ret) : nullptr); break;
+        case SReturn: 
+        {
+            if (!s->ret) {
+                ret();
+                break;
+            }
+            if (currentfunction->getFunctionType()->getReturnType()->isVoidTy()) {
+                gen(s->ret);
+                ret();
+                break;
+            }
+            ret(gen(s->ret));
+            break;
+        }
         case SNamedLabel:
         case SLabel: {
             auto BB = labels[s->label];
@@ -931,13 +944,19 @@ private:
             return nullptr;
         } break;
         case EBuiltinCall: {
-            StringRef Name = e->builtin_func_name->getKey();
-            StringRef Prefix = llvm::Triple::getArchTypePrefix(options.triple.getArch());
-            unsigned ID = llvm::Intrinsic::getIntrinsicForClangBuiltin(Prefix.data(), Name);
-            if (ID == llvm::Intrinsic::not_intrinsic)
-                ID = llvm::Intrinsic::getIntrinsicForMSBuiltin(Prefix.data(), Name);
-            llvm::Function *F = llvm::Intrinsic::getDeclaration(module.get(), ID);
-            return F;
+            const xvector<Expr> &Args = e->buitin_call_args;
+            llvm::Value **callArgs = type_cache.alloc.Allocate<llvm::Value*>(Args.size());
+            ArrayRef<llvm::Type*> paramTypes = e->builtin_func_type->params();
+            for (size_t i = 0;i < Args.size();++i) {
+                llvm::Value *V = gen(Args[i]);
+                if (V->getType() != paramTypes[i]) {
+                    V = createCast(llvm::Instruction::BitCast, V, paramTypes[i]);
+                }
+                callArgs[i] = V;
+            }
+            std::string Name = llvm::Intrinsic::getName(e->ID, paramTypes, module.get(), e->builtin_func_type);
+            llvm::FunctionCallee FC = module->getOrInsertFunction(Name, e->builtin_func_type);
+            return call(FC, llvm::makeArrayRef(callArgs, Args.size()));
         }
         case EMemberAccess: 
         {
