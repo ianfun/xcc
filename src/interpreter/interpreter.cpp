@@ -1,9 +1,41 @@
 namespace intepreter {
 
-using Value = llvm::Constant*;
-using Address = llvm::Constant**;
-using llvm::ConstantExpr;
+typedef union Value {
+    uint64_t I;
+    void *P;
+    double D;
+    float F;
+    static inline union Value fromU64(uint64_t val) {
+        union Value V;
+        V.I = val;
+        return V;
+    }
+    static inline union Value fromFloat(float val) {
+        union Value V;
+        V.F = val;
+        return V;
+    }
+    static inline union Value fromDouble(double val) {
+        union Value V;
+        V.D = val;
+        return V;
+    }
+    static union Value fromPointer(void *val) {
+        union Value V;
+        V.P = val;
+        return V;
+    }
+    static union Value getZero();
+    static union Value getVoid() {
+        return getZero();
+    }
+} Value, *Address;
 
+Value Value::getZero() {
+    Value V;
+    memset(&V, 0, sizeof(V));
+    return V;
+}
 
 struct ExecutionSession {
 	SmallVector<Value> globals;
@@ -18,12 +50,17 @@ struct CallFrame {
 	CallFrame(unsigned num_locals): locals{new Value[num_locals]} {}
 	~CallFrame() { delete [] locals; }
 };
-
+static bool is_double(CType ty) {
+    return ty->getFloatKind().getBitWidth() <= 32;
+}
+static bool is_double(Expr e) {
+    return is_double(e->ty);
+}
 struct Function: public DiagnosticHelper {
 	Stmt pc = nullptr, next_pc = nullptr;
 	ExecutionSession &session;
 	Stmt function_stmt;
-	Value retVal = nullptr;
+	Value retVal = Value::getVoid();
 	LLVMTypeConsumer &type_cache;
 	const StmtEndMap stmt_map;
 	CallFrame frame;
@@ -56,11 +93,6 @@ struct Function: public DiagnosticHelper {
 	Address getGlobalAddr(unsigned idx) {
 		return &session.globals[idx];
 	}
-	Value getVarValue(unsigned idx) {
-		if (idx >= function_stmt->localStart)
-			return getLocal(idx);
-		return getGlobal(idx);
-	}
 	Address getVarAddress(unsigned idx) {
 		if (idx >= function_stmt->localStart)
 			return getLocalAddr(idx);
@@ -77,23 +109,18 @@ struct Function: public DiagnosticHelper {
 	// https://en.wikipedia.org/wiki/Instruction_cycle
 	void loop() {
 		for (;;) {
-			// fetch
 			fetch();
 			if (!pc) break;
-			// decode
 			decode();	
-			// execute
 			execute(); 
-			// repeat
 			continue;
 		}
 	}
 	void fetch() {
-		if (pc->next) {
+		if (pc->next) 
             pc = pc->next;
-		} else {
+		else 
             pc = stmt_map.getNext(pc);
-        }
 	}
 	void decode() {
 		opCode = pc->k;
@@ -110,16 +137,16 @@ struct Function: public DiagnosticHelper {
                 break;
             case SSwitch:
             {
-                APInt test = cast<llvm::ConstantInt>(eval(pc->itest))->getValue();
+                uint64_t test = eval(pc->itest).I;
                 for (const auto &it : pc->gnu_switchs) {
-                    test -= *it.CaseStart;
-                    if (test.ule(it.range)) {
+                    test -= it.CaseStart->getLimitedValue();
+                    if (test <= it.range.getLimitedValue()) {
                         pc = getLabel(it.label);
                         break;
                     }
                 }
                 for (const auto &it : pc->switchs) {
-                    if (test == *it.CaseStart) {
+                    if (test == it.CaseStart->getLimitedValue()) {
                         pc = getLabel(it.label);
                         break;
                     }
@@ -162,7 +189,7 @@ struct Function: public DiagnosticHelper {
                				// TODO: xxx
                				continue;
                			}
-               			Value init = it.init ? eval(it.init) : llvm::Constant::getNullValue(type_cache.wrap(it.ty));
+               			Value init = it.init ? eval(it.init) : Value::getZero();
                			if (it.ty->isGlobalStorage()) {
                				setGlobal(it.idx, init);
                			} else {
@@ -186,7 +213,7 @@ struct Function: public DiagnosticHelper {
         case EUnary:
             switch (e->uop) {
             case AddressOf: return getAddress(e->uoperand);
-            case Dereference: return reinterpret_cast<Address>(eval(e->uoperand));
+            case Dereference: return reinterpret_cast<Address>(eval(e->uoperand).P);
             case C__real__:
             case C__imag__: llvm_unreachable("");
             default: llvm_unreachable("");
@@ -205,60 +232,62 @@ struct Function: public DiagnosticHelper {
         }
 	}
     bool eval_cond(Expr e) {
-        Value V = eval(e);
-		if (const ConstantInt *CI = dyn_cast<ConstantInt>(V))
-			return !CI->isZero();
-        if (const ConstantFP *CF = dyn_cast<ConstantFP>(V))
-            return !CF->isZero(); // negative or positive
-        if (e->ty->isComplex()) {
-            llvm_unreachable("");
-        }
-        return !V->isNullValue();
+        return eval(e).I != 0;
 	}
-	Value atomicOp(enum BinOp op, Value l, Value r) {
-		switch (op) {
-   		case AtomicrmwAdd:
-   			return llvm::ConstantExpr::getAdd(l, r);
-   		case AtomicrmwSub:
-   			return llvm::ConstantExpr::getSub(l, r);
-   		case AtomicrmwAnd:
-   			return llvm::ConstantExpr::getAnd(l, r);
-   		case AtomicrmwOr: 
-   			return llvm::ConstantExpr::getOr(l, r);
-    	case AtomicrmwXor:
-    		return llvm::ConstantExpr::getXor(l, r);
-    	default: llvm_unreachable("invalid atomic op");
-		}
+	Value atomicOp(enum BinOp op, Value l, Value r, CType ty) {
+        if (ty->isInteger()) {
+		  switch (op) {
+   		    case AtomicrmwAdd:
+   		    	return Value::fromU64(l.I + r.I);
+   		    case AtomicrmwSub:
+   		    	return Value::fromU64(l.I - r.I);
+   		    case AtomicrmwAnd:
+   		    	return Value::fromU64(l.I & r.I);
+   		    case AtomicrmwOr: 
+   		    	return Value::fromU64(l.I | r.I);
+    	    case AtomicrmwXor:
+    	    	return Value::fromU64(l.I ^ r.I);
+    	    default: llvm_unreachable("invalid atomic op");
+            }
+        }
+        llvm_unreachable("");
 	}
 	Value eval(Expr e) {
 		switch (e->k) {
-            case EConstant: return e->C;
+            case EConstant:
+            {
+                const llvm::Constant * const C = e->C;
+                if (const ConstantInt *CI = dyn_cast<ConstantInt>(C)) {
+                    return Value::fromU64(CI->getValue().getLimitedValue());
+                }
+                if (const ConstantFP *CF = dyn_cast<ConstantFP>(C)) {
+                    const APFloat &F = CF->getValue();
+                    switch (APFloat::SemanticsToEnum(F.getSemantics())) {
+                        case APFloat::S_IEEEhalf:
+                        case APFloat::S_BFloat:
+                        case APFloat::S_IEEEsingle:
+                            return Value::fromFloat(F.convertToFloat());
+                        default:
+                            return Value::fromDouble(F.convertToDouble());
+                    }
+                }
+            }
             case EBuiltinCall: llvm_unreachable("unsupported builtin function");
             case EInitList: llvm_unreachable("");
             case EBlockAddress:
-        	   return reinterpret_cast<Value>(getLabel(e->addr));
+        	   return Value::fromPointer(getLabel(e->addr));
             case EConstantArraySubstript: 
-                return llvm::ConstantExpr::getInBoundsGetElementPtr(
-                    type_cache.wrap(e->ty->p), 
-                    e->array,
-                    ConstantInt::get(type_cache.intptrTy, e->cidx)
-                );;
-            case EString: return e->string;
+                llvm_unreachable("");
+            case EString: llvm_unreachable("");
             case EBin:
     {
         enum BinOp bop = e->bop;
         switch (bop) {
         default: break;
         case LogicalOr:
-            return llvm::ConstantInt::getBool(
-                type_cache.ctx, 
-                eval_cond(e->lhs) || eval_cond(e->rhs)
-            );
+            return Value::fromU64(eval_cond(e->lhs) || eval_cond(e->rhs));
         case LogicalAnd:
-            return llvm::ConstantInt::getBool(
-                type_cache.ctx, 
-                eval_cond(e->lhs) && eval_cond(e->rhs)
-            );
+            return Value::fromU64(eval_cond(e->lhs) && eval_cond(e->rhs));
         case Assign:
             {
                 // limit sequence points to left => right
@@ -275,7 +304,7 @@ struct Function: public DiagnosticHelper {
                 Address addr = getAddress(e->lhs);
                 Value prev = *addr;
                 Value r = eval(e->rhs);
-                *addr = atomicOp(bop, prev, r);
+                *addr = atomicOp(bop, prev, r, e->ty);
                 return prev;
             }
         }
@@ -294,191 +323,160 @@ struct Function: public DiagnosticHelper {
             case AtomicrmwAnd:
             llvm_unreachable("invalid control follow");
     case UAdd:
+        return Value::fromU64(lhs.I + rhs.I);
     case SAdd:
-        if (const ConstantInt *CI = dyn_cast<ConstantInt>(lhs)) {
-            if (const ConstantInt* CI2 = dyn_cast<ConstantInt>(rhs)) {
-                return llvm::ConstantInt::get(type_cache.ctx, CI->getValue() + CI2->getValue());
-            }
-        }
-        return llvm::ConstantExpr::getAdd(lhs, rhs);
+        return Value::fromU64((int64_t)lhs.I + (int64_t)rhs.I);
     case FAdd:
-        if (const ConstantFP *CF = dyn_cast<ConstantFP>(lhs)) {
-            if (const ConstantFP *CF2 = dyn_cast<ConstantFP>(rhs)) {
-                return llvm::ConstantFP::get(type_cache.ctx, CF->getValue() + CF2->getValue());
-            }
-        }
-        return llvm::ConstantExpr::get(llvm::Instruction::FAdd, lhs, rhs);
+        if (is_double(e))
+            return Value::fromDouble(lhs.D + rhs.D);
+        return Value::fromFloat(lhs.F + rhs.F);
     case CAdd:
     case CFAdd:
         llvm_unreachable("");
     case USub:
+        return Value::fromU64(lhs.I - rhs.I);
     case SSub:
-        if (const ConstantInt *CI = dyn_cast<ConstantInt>(lhs)) {
-            if (const ConstantInt* CI2 = dyn_cast<ConstantInt>(rhs)) {
-                return llvm::ConstantInt::get(type_cache.ctx, CI->getValue() - CI2->getValue());
-            }
-        }
-        return llvm::ConstantExpr::getSub(lhs, rhs);
+        return Value::fromU64((int64_t)lhs.I - (int64_t)rhs.I);
     case FSub:
-        if (const ConstantFP *CF = dyn_cast<ConstantFP>(lhs)) {
-            if (const ConstantFP *CF2 = dyn_cast<ConstantFP>(rhs)) {
-                return llvm::ConstantFP::get(type_cache.ctx, CF->getValue() - CF2->getValue());
-            }
-        }
-        return llvm::ConstantExpr::get(llvm::Instruction::FSub, lhs, rhs);
+        if (is_double(e))
+            return Value::fromDouble(lhs.D - rhs.D);
+        return Value::fromFloat(lhs.F - rhs.F);
     case CSub:
     case CFSub: llvm_unreachable("");
     case SMul:
+        return Value::fromU64((int64_t)lhs.I * (int64_t)rhs.I);
     case UMul:
-        if (const ConstantInt *CI = dyn_cast<ConstantInt>(lhs)) {
-            if (const ConstantInt* CI2 = dyn_cast<ConstantInt>(rhs)) {
-                return llvm::ConstantInt::get(type_cache.ctx, CI->getValue() * CI2->getValue());
-            }
-        }
-        return llvm::ConstantExpr::getMul(lhs, rhs);
+        return Value::fromU64(lhs.I * rhs.I);
     case FMul:
-        if (const ConstantFP *CF = dyn_cast<ConstantFP>(lhs)) {
-            if (const ConstantFP *CF2 = dyn_cast<ConstantFP>(rhs)) {
-                return llvm::ConstantFP::get(type_cache.ctx, CF->getValue() * CF2->getValue());
-            }
-        }
-        return llvm::ConstantExpr::get(llvm::Instruction::FMul, lhs, rhs);
+        if (is_double(e))
+            return Value::fromDouble(lhs.D * rhs.D);
+        return Value::fromFloat(lhs.F * rhs.F);
     case CMul:
     case CFMul: llvm_unreachable("");
     case UDiv:
+        return Value::fromU64(lhs.I / rhs.I);
     case SDiv:
-        if (const ConstantInt *CI = dyn_cast<ConstantInt>(lhs)) {
-            if (const ConstantInt *CI2 = dyn_cast<ConstantInt>(rhs)) {
-                APInt val = (bop == SDiv) ? 
-                    CI->getValue().sdiv(CI2->getValue()) : 
-                    CI->getValue().udiv(CI2->getValue());
-                return llvm::ConstantInt::get(type_cache.ctx, val);
-            }
-        }
-        return llvm::ConstantExpr::get(bop == UDiv ? llvm::Instruction::UDiv : llvm::Instruction::SDiv, lhs, rhs);
+        return Value::fromU64((int64_t)lhs.I / (int64_t)rhs.I);
     case FDiv:
-        if (const ConstantFP *CF = dyn_cast<ConstantFP>(lhs)) {
-            if (const ConstantFP *CF2 = dyn_cast<ConstantFP>(rhs)) {
-                return llvm::ConstantFP::get(type_cache.ctx, CF->getValue() / CF2->getValue());
-            }
-        }
-        return llvm::ConstantExpr::get(llvm::Instruction::FDiv, lhs, rhs);
+        if (is_double(e))
+            return Value::fromDouble(lhs.D / rhs.D);
+        return Value::fromFloat(lhs.F / rhs.F);
     case CSDiv:
     case CUDiv:
-    case CFDiv:
+    case CFDiv: llvm_unreachable("");
     case URem:
-        if (const ConstantInt *CI = dyn_cast<ConstantInt>(lhs)) {
-            if (const ConstantInt* CI2 = dyn_cast<ConstantInt>(rhs)) {
-                return llvm::ConstantInt::get(type_cache.ctx, CI->getValue().urem(CI2->getValue()));
-            }
-        }
-        return llvm::ConstantExpr::get(llvm::Instruction::URem, lhs, rhs);
+        return Value::fromU64(lhs.I % rhs.I);
     case SRem:
-        if (const ConstantInt *CI = dyn_cast<ConstantInt>(lhs)) {
-            if (const ConstantInt* CI2 = dyn_cast<ConstantInt>(rhs)) {
-                return llvm::ConstantInt::get(type_cache.ctx, CI->getValue().srem(CI2->getValue()));
-            }
-        }
-        return llvm::ConstantExpr::get(llvm::Instruction::SRem, lhs, rhs);
+        return Value::fromU64((int64_t)lhs.I % (int64_t)rhs.I);
     case FRem:
-        if (const ConstantFP *CF = dyn_cast<ConstantFP>(lhs)) {
-            if (const ConstantFP *CF2 = dyn_cast<ConstantFP>(rhs)) {
-                APFloat F = CF->getValue();
-                F.remainder(CF2->getValue());
-                return llvm::ConstantFP::get(type_cache.ctx, F);
-            }
-        }
-        return llvm::ConstantExpr::get(llvm::Instruction::FRem, lhs, rhs);
+        llvm_unreachable("FRem is un-implemented");
     case Shr:
-        if (const ConstantInt *CI = dyn_cast<ConstantInt>(lhs)) {
-            if (const ConstantInt* CI2 = dyn_cast<ConstantInt>(rhs)) {
-                return llvm::ConstantInt::get(type_cache.ctx, CI->getValue().lshr(CI2->getValue()));
-            }
-        }
-        return llvm::ConstantExpr::getLShr(lhs, rhs);
+        return Value::fromU64(lhs.I >> rhs.I);
     case AShr:
-        if (const ConstantInt *CI = dyn_cast<ConstantInt>(lhs)) {
-            if (const ConstantInt* CI2 = dyn_cast<ConstantInt>(rhs)) {
-                return llvm::ConstantInt::get(type_cache.ctx, CI->getValue().ashr(CI2->getValue()));
-            }
-        }
-        return llvm::ConstantExpr::getAShr(lhs, rhs);
+        return Value::fromU64((int64_t)lhs.I >> (int64_t)rhs.I);
     case Shl:
-        if (const ConstantInt *CI = dyn_cast<ConstantInt>(lhs)) {
-            if (const ConstantInt* CI2 = dyn_cast<ConstantInt>(rhs)) {
-                return llvm::ConstantInt::get(type_cache.ctx, CI->getValue().shl(CI2->getValue()));
-            }
-        }
-        return llvm::ConstantExpr::getShl(lhs, rhs);
+        return Value::fromU64(lhs.I << rhs.I);
     case And:
-        if (const ConstantInt *CI = dyn_cast<ConstantInt>(lhs)) {
-            if (const ConstantInt* CI2 = dyn_cast<ConstantInt>(rhs)) {
-                return llvm::ConstantInt::get(type_cache.ctx, CI->getValue() & CI2->getValue());
-            }
-        }
-        return llvm::ConstantExpr::getAnd(lhs, rhs);
+        return Value::fromU64(lhs.I & rhs.I);
     case Xor:
-        if (const ConstantInt *CI = dyn_cast<ConstantInt>(lhs)) {
-            if (const ConstantInt* CI2 = dyn_cast<ConstantInt>(rhs)) {
-                return llvm::ConstantInt::get(type_cache.ctx, CI->getValue() ^ CI2->getValue());
-            }
-        }
-        return llvm::ConstantExpr::getXor(lhs, rhs);
+        return Value::fromU64(lhs.I ^ rhs.I);
     case Or:
-        if (const ConstantInt *CI = dyn_cast<ConstantInt>(lhs)) {
-            if (const ConstantInt* CI2 = dyn_cast<ConstantInt>(rhs)) {
-                return llvm::ConstantInt::get(type_cache.ctx, CI->getValue() | CI2->getValue());
-            }
-        }
-        return llvm::ConstantExpr::getOr(lhs, rhs);
+        return Value::fromU64(lhs.I | rhs.I);
     case SAddP:
-        return llvm::ConstantExpr::getGetElementPtr(type_cache.wrap(e->ty->p), lhs, rhs);
+        llvm_unreachable("");
     case PtrDiff:
         llvm_unreachable("");
     case Comma:
         return rhs;
     case Complex_CMPLX:
         llvm_unreachable("");
-    case EQ: pop = static_cast<unsigned>(llvm::CmpInst::ICMP_EQ); goto BINOP_ICMP;
-    case NE: pop = static_cast<unsigned>(llvm::CmpInst::ICMP_NE); goto BINOP_ICMP;
-    case UGT: pop = static_cast<unsigned>(llvm::CmpInst::ICMP_UGT); goto BINOP_ICMP;
-    case UGE: pop = static_cast<unsigned>(llvm::CmpInst::ICMP_UGE); goto BINOP_ICMP;
-    case ULT: pop = static_cast<unsigned>(llvm::CmpInst::ICMP_ULT); goto BINOP_ICMP;
-    case ULE: pop = static_cast<unsigned>(llvm::CmpInst::ICMP_ULE); goto BINOP_ICMP;
-    case SGT: pop = static_cast<unsigned>(llvm::CmpInst::ICMP_SGT); goto BINOP_ICMP;
-    case SGE: pop = static_cast<unsigned>(llvm::CmpInst::ICMP_SGE); goto BINOP_ICMP;
-    case SLT: pop = static_cast<unsigned>(llvm::CmpInst::ICMP_SLT); goto BINOP_ICMP;
+    case EQ:
+        return Value::fromU64(lhs.I == rhs.I);
+    case NE: 
+        return Value::fromU64(lhs.I != rhs.I);
+    case UGT:
+        return Value::fromU64(lhs.I > rhs.I);
+    case UGE:
+        return Value::fromU64(lhs.I >= rhs.I);
+    case ULT:
+        return Value::fromU64(lhs.I < rhs.I);
+    case ULE:
+        return Value::fromU64(lhs.I <= rhs.I);
+    case SGT:
+        return Value::fromU64((int64_t)lhs.I > (int64_t)rhs.I);
+    case SGE:
+        return Value::fromU64((int64_t)lhs.I >= (int64_t)rhs.I);
+    case SLT:
+        return Value::fromU64((int64_t)lhs.I < (int64_t)rhs.I);
     case SLE:
-        pop = static_cast<unsigned>(llvm::CmpInst::ICMP_SLE);
-        goto BINOP_ICMP;
-BINOP_ICMP:
-        return llvm::ConstantExpr::getICmp(pop, lhs, rhs);
-    case FEQ: pop = static_cast<unsigned>(llvm::FCmpInst::FCMP_OEQ); goto BINOP_FCMP;
-    case FNE: pop = static_cast<unsigned>(llvm::FCmpInst::FCMP_ONE); goto BINOP_FCMP;
-    case FGT: pop = static_cast<unsigned>(llvm::FCmpInst::FCMP_OGT); goto BINOP_FCMP;
-    case FGE: pop = static_cast<unsigned>(llvm::FCmpInst::FCMP_OGE); goto BINOP_FCMP;
-    case FLT: pop = static_cast<unsigned>(llvm::FCmpInst::FCMP_OLT); goto BINOP_FCMP;
+        return Value::fromU64((int64_t)lhs.I <= (int64_t)rhs.I);
+    case FEQ:
+        if (is_double(e))
+            return Value::fromDouble(lhs.D == rhs.D);
+        return Value::fromFloat(lhs.F == rhs.F);
+    case FNE:
+        if (is_double(e))
+            return Value::fromDouble(lhs.D != rhs.D);
+        return Value::fromFloat(lhs.F != rhs.F);
+    case FGT:
+        if (is_double(e))
+            return Value::fromDouble(lhs.D > rhs.D);
+        return Value::fromFloat(lhs.F > rhs.F);
+    case FGE:
+        if (is_double(e))
+            return Value::fromDouble(lhs.D >= rhs.D);
+        return Value::fromFloat(lhs.F >= rhs.F);
+    case FLT:
+        if (is_double(e))
+            return Value::fromDouble(lhs.D < rhs.D);
+        return Value::fromFloat(lhs.F < rhs.F);
     case FLE:
-        pop = static_cast<unsigned>(llvm::FCmpInst::FCMP_OLE);
-        goto BINOP_FCMP;
-BINOP_FCMP:
-        return llvm::ConstantExpr::getFCmp(pop, lhs, rhs);
+        if (is_double(e))
+            return Value::fromDouble(lhs.D <= rhs.D);
+        return Value::fromFloat(lhs.F <= rhs.F);
     case CEQ:
     case CNE:
-        llvm_unreachable("invalid UnaryOp");
+        llvm_unreachable("");
     }   
     }
             case EUnary:
                 
             case EVoid: 
-                return (void)eval(e->voidexpr), nullptr;
-            case EVar: return getVarValue(e->sval);
+                return (void)eval(e->voidexpr), Value::getVoid();
+            case EVar:
+            {
+                Address p = getVarAddress(e->sval);
+                switch (e->ty->getKind()) {
+                case TYPRIM:
+                    if (e->ty->isInteger()) {
+                        switch (e->ty->getIntegerKind().asLog2()) {
+                        case 0:
+                        case 1: return Value::fromU64(*reinterpret_cast<bool*>(p));
+                        case 3: return Value::fromU64(*reinterpret_cast<uint8_t*>(p));
+                        case 4: return Value::fromU64(*reinterpret_cast<uint16_t*>(p));
+                        case 5: return Value::fromU64(*reinterpret_cast<uint32_t*>(p));
+                        case 6: return Value::fromU64(*reinterpret_cast<uint64_t*>(p));
+                        default: llvm::report_fatal_error("int128 unsupported");
+                        }
+                    }
+                    switch (e->ty->getFloatKind().asEnum()) {
+                    case F_Half:
+                    case F_BFloat:
+                    case F_Float: return Value::fromFloat(*reinterpret_cast<float*>(p));
+                    case F_Double: return Value::fromDouble(*reinterpret_cast<double*>(p));
+                    case F_x87_80:
+                    case F_Quadruple:
+                    case F_PPC128: // return Value::fromLongDouble(*reinterpret_cast<long double*>(p));
+                    default: llvm::report_fatal_error("Unsupported floating number in this machine");
+                    }
+                default: llvm_unreachable("un-implemented");
+                }
+            }
             case ECondition:
         	return eval_cond(e->cond) ? eval(e->cleft) : eval(e->cright);
             case ECast:
             {
-            	Value val = eval(e->castval);
-            	return llvm::ConstantFoldCastOperand(getCastOp(e->castop), val, val->getType(), session.DL);
+            	llvm_unreachable("");
             }
             case ESizeof:
             	llvm_unreachable("VLA unsupported now");
@@ -542,7 +540,7 @@ struct IncrementalExecutor
 	std::unique_ptr<Function> compile(Stmt s) {
 		return std::make_unique<Function>(CI.getDiags(), session, s, CI.getTypeCache());
 	}
-	llvm::Constant *runFunction(Stmt s, const ArrayRef<Value> &args) {
+	Value runFunction(Stmt s, const ArrayRef<Value> &args) {
 		Function F(CI.getDiags(), session, s, CI.getTypeCache());
 		return F(args);
 	}
