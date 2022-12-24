@@ -3,6 +3,7 @@
 # the super C++ code generator!
 
 import sys
+from genBuiltins import C_LIB_BUILTINS, COMPILER_BUILTINS
 
 type_tags = (
 	"TYAUTO",
@@ -266,17 +267,6 @@ def switchGen(d, f, de):
 				f.write(tab2 + "case '\\0': return " + v + ";\n")
 		f.write(tab2 + "default: return " + de + ";\n" + tab + "}\n")
 	printer(root, 1)
-
-class Monad:
-	__slots__ = ()
-	_instance = None
-	@staticmethod
-	def get():
-		if Monad._instance is None:
-			Monad._instance = Monad()
-		return Monad._instance
-	def __rshift__(self, other):
-		return other
 
 def gen_keywords():
 	verbose("generating keywords...")
@@ -653,8 +643,29 @@ def gen_ctypes():
 	verbose("done.\n")
 	return Monad.get()
 
-def main():
-	import argparse, sys
+def gen_builtins_table():
+	verbose("generating builtins table")
+	f = open("compiler_builtins.inc", "w")
+	f.write("static const char *const builtin_header_table = {\n    ")
+	f.write('"\n    "'.join((header for (header, attr) in value_list) for (key, value_list) in C_LIB_BUILTINS))
+	f.write('\"\n}\n')
+	f.write("static const char *const builtin_attr_table = {\n    ")
+	f.write('"\n    "'.join((attr for (header, attr) in value_list) for (key, value_list) in C_LIB_BUILTINS))
+	for (name, args, attr) in COMPILER_BUILTINS:
+		f.write('"%s",' % attr)
+	f.write('\n};')
+	verbose("done.\n")
+
+class Monad:
+	def __init__(self, fn):
+		self.fn = fn
+	def run(self):
+		return self.fn()
+	def __rshift__(self, other):
+		return Monad(lambda: (self.fn() or True) and other.fn())
+
+def main()->Monad:
+	import argparse
 	parser = argparse.ArgumentParser(description="the super C++ code generator\nselect targets to generate, or '--all' generate all")
 	parser.add_argument("-all", action='store_true', help="generate all targets")
 	parser.add_argument("-keywords", action='store_true', help="generate keywords")
@@ -664,31 +675,35 @@ def main():
 	parser.add_argument("-stmt", action='store_true', help="generate Stmt")
 	parser.add_argument("-ctypes", action='store_true', help="generate ctypes")
 	parser.add_argument("-directive", action='store_true', help="generate directives")
+	parser.add_argument("-builtins", action="store_true", help="generate builtins table")
 	if len(sys.argv) == 1:
-		parser.print_help()
-		parser.error("no targets to generate")
-		return Monad.get()
+		return Monad(
+			lambda: 
+				Monad(parser.print_help) >> 
+					Monad(lambda: parser.error("no targets to generate"))
+		)
 	args = parser.parse_args()
 	if args.all:
-		return (gen_keywords() >> 
-				gen_tokens() >> 
-				gen_type_tags() >> 
-				gen_expr() >> 
-				gen_stmt() >> 
-				gen_ctypes())
+		return Monad(gen_keywords) >> 
+				gen_tokens >> 
+				gen_type_tags >> 
+				gen_expr >> 
+				gen_stmt >> 
+				gen_ctypes >> 
+				gen_builtins_table
 	if args.keywords:
-		gen_keywords()
+		return Monad(gen_keywords)
 	if args.expr:
-		gen_expr()
+		return Monad(gen_expr)
 	if args.stmt:
-		gen_stmt()
+		return Monad(gen_stmt)
 	if args.ctypes:
-		gen_ctypes()
+		return Monad(gen_ctypes)
 	if args.type_tags:
-		gen_type_tags()
+		return Monad(gen_type_tags)
 	if args.tokens:
-		gen_tokens()
-	return Monad.get()
+		return Monad(gen_tokens)
+	assert False
 
 if __name__ == '__main__':
-  main()
+  main().run()
