@@ -16,7 +16,7 @@ C_LIB_BUILTINS = {
 		("vsscanf", "fS:1:"),
 		("fopen", "f"),
 		("fread", "f"),
-		("fwrite","f"),
+		("fwrite", "f"),
 	),
 	"wchar.h": (
 		("wcschr", "f"),
@@ -45,19 +45,19 @@ C_LIB_BUILTINS = {
 		("toupper", "fnU"),
 	),
 	"stdlib.h": (
-		("abort","fr"),
+		("abort", "fr"),
 		("calloc", "f"),
 		("exit", "fr"),
 		("_Exit", "fr"),
 		("malloc", "f"),
 		("realloc", "f"),
-		("free","f"),
+		("free", "f"),
 		("strtod", "f"),
 		("strtof", "f"),
-		("strtold","f"),
+		("strtold", "f"),
 		("strtol", "f"),
 		("strtoll", "f"),
-		("strtoul","f"),
+		("strtoul", "f"),
 		("strtoull",  "f"),
 		("aligned_alloc", "f"),
 		("alloca", "f"),
@@ -81,7 +81,7 @@ C_LIB_BUILTINS = {
 		("strncpy", "f"),
 		("strcmp", "f"),
 		("strncmp", "f"),
-		("strcat," "f"),
+		("strcat", "f"),
 		("strncat", "f"),
 		("strxfrm", "f"),
 		("memchr", "f"),
@@ -97,7 +97,7 @@ C_LIB_BUILTINS = {
 		("strlen", "f"),
 		("memccpy", "f"),
 		("mempcpy", "f"),
-		("stpcpy," "f"),
+		("stpcpy", "f"),
 		("stpncpy", "f"),
 		("strdup",  "f"),
 		("strndup", "f"),
@@ -1126,3 +1126,31 @@ COMPILER_BUILTINS = (
     ("__builtin_subcl", "ULiULiCULiCULiCULi*", "n"),
     ("__builtin_subcll", "ULLiULLiCULLiCULLiCULLi*", "n"),
 )
+def valid():
+	if not isinstance(C_LIB_BUILTINS, dict):
+		return print("expect dict", C_LIB_BUILTINS)
+	for header, value_list in C_LIB_BUILTINS.items():
+		if not isinstance(value_list, tuple):
+			return print("expect tuple", value_list)
+		for b in value_list:
+			if not isinstance(b, tuple):
+				return print("expect tuple", b)
+			(name, attr) = b
+			if not isinstance(name, str):
+				return print("expect str", name, b)
+			if not isinstance(attr, str):
+				return print("expect str", attr, b)
+	if not isinstance(COMPILER_BUILTINS, tuple):
+		return print("expect tuple", COMPILER_BUILTINS)
+	for b in COMPILER_BUILTINS:
+		if not (
+			isinstance(b, tuple) and
+			(len(b) == 3) and
+			isinstance(b[0], str) and
+			isinstance(b[1], str) and
+			isinstance(b[2], str)
+			):
+			return print("expect (str, str, str)", b)
+	return True
+
+assert valid(), "broken builtins table"

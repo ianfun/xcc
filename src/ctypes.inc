@@ -24,6 +24,7 @@ enum CTypeKind: uint8_t {
     struct alignas(void*) {
         CType bittype;
         unsigned bitsize;
+        unsigned bitoffset;
     };
     struct alignas(void*) {
         CType arrtype;
@@ -68,6 +69,7 @@ struct BitfieldType{
     struct alignas(void*) {
         CType bittype;
         unsigned bitsize;
+        unsigned bitoffset;
     };
 };
 struct ArrayType{

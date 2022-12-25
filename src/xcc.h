@@ -271,19 +271,19 @@ template <typename T> struct WithAlloc {
     T &operator[](size_t i) { return data[i]; }
     T *operator->() { return data; }
 };
-enum StringPrefix : uint8_t {
+enum StringPrefix : unsigned char {
     Prefix_none, // An integer character constant has type int.
     Prefix_u8,   // A UTF-8 character constant has type char8_t. (unsigned)
     Prefix_L,    // A wchar_t character constant prefixed by the letter L has type wchar_t
     Prefix_u,    // A UTF-16 character constant has type char16_t (unsigned)
     Prefix_U,    // A UTF-32 character constant has type char32_t (unsigned)
 };
-enum PostFixOp {
+enum PostFixOp: unsigned char {
     PostfixIncrement = 1,
     PostfixDecrement
 };
 // https://github.com/llvm-mirror/clang/blob/master/include/clang/AST/OperationKinds.def
-enum UnaryOp {
+enum UnaryOp: unsigned char {
     UNeg = 1,
     SNeg,
     FNeg,
@@ -297,7 +297,7 @@ enum UnaryOp {
     C__imag__,
     ToBool
 };
-enum BinOp {
+enum BinOp: unsigned char {
     // Arithmetic operators
 
     // unsigned addition
@@ -407,7 +407,7 @@ enum BinOp {
     CEQ,
     CNE
 };
-enum CastOp {
+enum CastOp: unsigned char {
     Trunc = 1,
     ZExt,
     SExt,
@@ -680,6 +680,7 @@ struct IntegerKind {
 };
 static constexpr uint64_t build_integer(IntegerKind kind, bool Signed = false), build_float(FloatKind kind);
 
+#include "compiler_builtins.inc"
 #include "Arena.cpp"
 #include "tokens.inc"
 #include "IdentifierTable.h"
@@ -1133,24 +1134,22 @@ static bool isConstant(const_Expr e) {
         default: return false;
     }
 }
-// A token with a location(may have length) and a value.
-// This structure is currently only 16 bytes in 64 bit machine to make it faster to tokenize and cheaper to store tokens in a macro.
 struct TokenV {
-    Token tok: 8; // 1 bytes
-    unsigned length: 24; // 3 bytes
-    location_t loc; // 4 bytes
-    union { // pointer size
+    union {
         const char *str;
         IdentRef s;
         struct {
-            uint8_t i;
-            uint8_t itag;
+            Codepoint i;
+            enum StringPrefix itag;
         };
         struct LocTree *tree;
     };
-    TokenV(Token tok = TNul, location_t loc = 0) : tok{tok}, loc{loc} {}
-    TokenV(struct LocTree *tree) :  tok{PPMacroTraceLoc}, loc{0}, tree{tree} {}
-    TokenV(Token tok, const char *str): tok{tok}, str{str} {}
+    location_t length;
+    location_t loc;
+    Token tok;
+    TokenV(Token tok = TNul, location_t loc = 0) : loc{loc}, tok{tok} {}
+    TokenV(struct LocTree *tree): tree{tree}, loc{0}, tok{PPMacroTraceLoc} {}
+    TokenV(Token tok, const char *str): str{str}, tok{tok} {}
     bool operator!=(const TokenV &other) const { return !(*this == other); }
     bool operator==(const TokenV &other) const {
         Token x = this->tok;
@@ -1231,7 +1230,7 @@ struct TokenV {
     StringRef getPPNumberLit() const {
         return StringRef(str, length);
     }
-    enum StringPrefix getCharPrefix() const { return static_cast<enum StringPrefix>(itag); }
+    enum StringPrefix getCharPrefix() const { return itag; }
     void dump(raw_ostream &OS = llvm::errs()) const {
         switch (tok) {
         default:
@@ -1318,39 +1317,6 @@ static unsigned scalarRank(const_CType ty) {
     if (ty->isComplex())
         return scalarRankNoComplex(ty) + 1000; // a dummy number
     return scalarRank(ty);
-}
-
-namespace Builtin {
-    enum ID {
-        NotBuiltin,
-#define BUILTIN(ID, TYPE, ATTRS) BI##ID,
-#define LIBBUILTIN(ID, TYPE, ATTRS, HEADER) BI##ID,
-#define ATOMIC_BUILTIN BUILTIN
-#include "Builtins.def"
-#undef LIBBUILTIN
-#undef ATOMIC_BUILTIN
-#undef BUILTIN
-        FirstTSBuiltin
-    };
-    struct Info {
-        const char *Name, *Type, *Attributes, *Header;
-    };
-    template <size_t N>
-    static size_t getLength() {
-
-    }
-    static ArrayRef<Info> getXCCBuiltins() {
-        static const Info BuiltinInfos[] = {
-#define ATOMIC_BUILTIN BUILTIN
-#define BUILTIN(ID, TYPE, ATTRS) {#ID, TYPE, ATTRS, nullptr},
-#define LIBBUILTIN(ID, TYPE, ATTRS, HEADER) {#ID, TYPE, ATTRS, HEADER},
-#include "Builtins.def"
-#undef LIBBUILTIN
-#undef ATOMIC_BUILTIN
-#undef BUILTIN
-        };
-        return ArrayRef<Info>(BuiltinInfos);
-    }
 }
 
 #ifdef XCC_JIT

@@ -387,7 +387,7 @@ R:
         if (!enc::IsUTF8(lexIdnetBuffer.str()))
             warning(loc, "identfier is not UTF-8 encoded");
         theTok.s = context.table.get(lexIdnetBuffer.str(), PPIdent);
-        theTok.tok = std::min(theTok.tok, theTok.s->second.getToken());
+        theTok.tok = std::min(theTok.tok, theTok.s->second);
         lexIdnetBuffer.clear();
         return theTok;
     }
@@ -525,7 +525,7 @@ R:
             Str += Lhs.s->getKey();
             Str += Rhs.s->getKey();
             it.s = context.table.get(Str, PPIdent);
-            it.tok = std::min(PPIdent, it.s->second.getToken());
+            it.tok = std::min(PPIdent, it.s->second);
             it.setLoc(Lhs.getLoc());
             it.setEndLoc(Rhs.getEndLoc());
             return it;
@@ -669,7 +669,7 @@ RUN:
                     goto BAD_RET;
                 }
                 IdentRef saved_name = tok.s;
-                Token saved_tok = saved_name->second.getToken();
+                Token saved_tok = saved_name->second;
                 if (saved_tok != PPinclude) {
                     tok = lex();
                     if (tok.tok == TSpace)
@@ -722,7 +722,7 @@ RUN:
                                 }
                                 continue;
                             }
-                            if (tok.s->second.getToken() == PP__VA_ARGS__) {
+                            if (tok.s->second == PP__VA_ARGS__) {
                                 theMacro->setVarArgs();
                                 tok = lex();
                                 if (tok.tok != TRbracket) {
@@ -1234,7 +1234,7 @@ template <typename T> static void StringifyImpl(T &Str, char Quote) {
     void checkMacro() {
         IdentRef name = tok.s;
         Token saved_tok;
-        switch ((saved_tok = name->second.getToken())) {
+        switch ((saved_tok = name->second)) {
         case PP__LINE__:
         case PP__COUNTER__: {
             unsigned val = saved_tok == PP__LINE__ ? SM.current_line : counter++;

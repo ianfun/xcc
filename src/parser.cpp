@@ -3180,7 +3180,7 @@ SKIP:
 #if CC_PRINT_CDECL_FUNCTION
                 print_cdecl(st.name->getKey(), st.ty, llvm::errs(), true);
 #endif
-                if (st.name->second.getToken() == PP_main) {
+                if (st.name->second == PP_main) {
                     auto Size = st.ty->params.size();
                     if (Size) {
                         if (Size != 2)
@@ -5526,7 +5526,7 @@ ONE_CASE:
             if (!getInsertPoint()->isTerminator()) {
                 Stmt s = getInsertPoint();
                 location_t loc2 = getLoc();
-                if (sema.pfunc->second.getToken() == PP_main) {
+                if (sema.pfunc->second == PP_main) {
                     insertStmt(SNEW(ReturnStmt){.ret = getIntZero()});
                 } else {
                     if (!(sema.currentfunction->ret->isVoid())) {
