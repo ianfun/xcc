@@ -3927,19 +3927,21 @@ NEXT:
     Expr compiler_builtin_call(IdentRef Name, SourceRange range) {
         unsigned ID = Name->second;
         if (l.tok.tok != TLbracket) return nullptr;
-        if (ID > (unsigned)Kend_compiler_builtin_functions || ID < (unsigned)Kstart_builtin_functions) return nullptr;
         consume();
-        // 'printf', 'cos', ..., libary builtins needs header
-        if (ID <= (unsigned)Kend_lib_builtin_functions) {
-            const char *Header = getLibHeader(Kstart_builtin_functions);
+        // call to undeclared function, implict called
+        if (ID > (unsigned)Kend_compiler_builtin_functions || ID < (unsigned)Kstart_builtin_functions) {
+            warning(range.getStart(), "call to undeclared function %I; ISO C99 and later do not support implicit function declarations", Name);
+        }
+        // call to 'printf', 'cos', etc..., suggest include a header
+        else if (ID <= (unsigned)Kend_lib_builtin_functions) {
+            const char *Header = getLibHeader(ID - (unsigned)Kstart_builtin_functions);
             warning(range.getStart(),
                 "call to undeclared library function %I"
                 "; ISO C99 and later do not support implicit function declarations", Name
             ) << range;
             note("include the header <%s> or explicitly provide a declaration for %I", Header, Name);
         }
-        ID -= (unsigned)Kstart_builtin_functions;
-        // '__builtin_' or '__sync_' functions
+        // else '__builtin_' or '__sync_' functions
         xvector<Expr> callArgs = xvector<Expr>::get();
         for (;l.tok.tok != TRbracket;) {
             Expr e = assignment_expression();
@@ -3954,21 +3956,33 @@ NEXT:
         CType ty;
         if (ID <= Kend_lib_builtin_functions) {
             ty = context.getImplictFunctionType();
-            for (Expr &arg: callArgs) {
+            for (Expr &arg: callArgs)
                 default_argument_promotions(arg);
-            }
-            return ENEW(CallImplictFunctionExpr) {.ty = ty->ret, .imt_args = callArgs, .imt_name = Name, .imt_start_loc = range.getStart(), .imt_end_loc = endLoc};
+            return ENEW(CallImplictFunctionExpr) {.ty = ty->ret, .imt_args = callArgs, .imt_name = Name, .imt_ID = Token(ID), .imt_start_loc = range.getStart(), .imt_end_loc = endLoc};
         }
         unsigned IntegerConstantArgs = 0;
         enum GetBuiltinTypeError Error;
-        ty = context.GetBuiltinType(ID, Error, &IntegerConstantArgs);
-        size_t i = 0;
-        for (const Param &p: ty->params) {
-            ++i;
-            if (!compatible(p.ty, callArgs[i]->ty)) {
-                type_error(range.getStart(), "incompatible type for calling builtin function %I: expect %T for parameter %u, %I provided", Name, p.ty, i, callArgs[i]->ty);
-            } else {
-                callArgs[i] = castto(callArgs[i], p.ty, Implict_Call);
+        ty = context.GetBuiltinType(ID - ((unsigned)Kend_lib_builtin_functions + 1), Error, &IntegerConstantArgs);
+        assert(ty->getKind() == TYFUNCTION);
+        size_t argSize = callArgs.size();
+        size_t paramSize = ty->params.size();
+        if (argSize > paramSize) {
+            type_error(range.getStart(), "too many arguments to builtin function %I: expect %u arguments, %u provided", Name, paramSize, argSize);
+        } else if (argSize < paramSize) {
+            if (ty->isVarArg)
+                type_error(range.getStart(), "too few arguments to builtin function %I: at least %u arguments are requested", Name, paramSize);
+            else
+                type_error(range.getStart(), "too few arguments to builtin function %I: expect %u arguments, %u provided", Name, paramSize, argSize);
+        } else {
+            for (size_t i = 0;i < argSize;++i) {
+                const Param &p = ty->params[i];
+                if (!compatible(p.ty, callArgs[i]->ty))
+                    type_error(
+                        range.getStart(),
+                        "incompatible type for calling builtin function %I:"
+                        " expect %T for parameter %u, %T provided", Name, p.ty, i, callArgs[i]->ty);
+                else 
+                    callArgs[i] = castto(callArgs[i], p.ty, Implict_Call);
             }
         }
         return ENEW(CallCompilerBuiltinCallExpr) {.ty = ty->ret, .cbc_args = callArgs, .cbc_type = ty, .cbc_name = Name, .cbc_ID = (Token)ID, .cbc_start_loc = range.getStart(), .cbc_end_loc = endLoc};

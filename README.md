@@ -174,3 +174,46 @@ struct alignas(2) bar { int a; };
 ## Memory Leaks
 
 Use AddressSanitizer to detect memory leaks.
+
+## TODO List
+
+Feature          | Status
+---------------- | ----------------
+Atomic           | ❌
+Align            | ❌
+Ast Dump (Text)  | ✔
+Ast Dump (JSON)  | ❌
+Ast to .dot      | ❌
+LLVM IR Reader   | ❌
+LLVM BC Reader   | ❌
+LLVM Assembly Reader | ❌
+LLVM Machine Code Writer | ✔
+LLVM IR Writer  | ✔
+LLVM BC Writer  | ✔
+LLVM Assembly Writer  | ✔
+Complex Number   | ✔
+VLA              | ✔
+VLA in structure | ❌
+GNU inline Assembly | ❌
+Linking          | ❌
+Target builtin   | ✔
+Compiler(Other) builtin | ❌
+Bit field        | ❌
+Record Layout    | ❌
+Union            | ❌
+OpenCL           | ❌
+VA_OPT           | ❌
+C23 `_BitInt`      | ❌
+C23 `constexpr`    | ✔
+C23 `typeof`       | ✔
+C23 `nullptr`      | ✔
+C23 attribute    | ❌
+GNU `__attribute__` | ✔
+Interpreter/REPL | ❌
+JIT Interpreter  | ❌
+Recover parsing error | ❌
+Diagnostic       | ✔
+Source Manager   | ✔
+Macro expansion location | ❌
+Constant Folding | ✔
+Vararg (All platforms) | ✔

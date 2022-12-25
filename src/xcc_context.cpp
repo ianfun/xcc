@@ -67,13 +67,20 @@ struct xcc_context {
 
         unsigned pointerSize = DL.getPointerSize();
         switch (pointerSize) {
-        case 32:
+        case 2:
+            intptr_ty = i16;
+            uintptr_ty = u16;
+        case 4:
             intptr_ty = i32;
             uintptr_ty = u32;
             break;
-        case 64:
+        case 8:
             intptr_ty = u64;
             uintptr_ty = u64;
+            break;
+        case 16:
+            intptr_ty = i128;
+            uintptr_ty = u128;
             break;
         default: llvm_unreachable("unhandled size");
         }
@@ -152,7 +159,7 @@ struct xcc_context {
         return nullptr;
     }
 
-    [[nodiscard]] CType DecodeTypeFromStr(const char *Str, enum GetBuiltinTypeError &Error, bool &RequiresICE,
+    [[nodiscard]] CType DecodeTypeFromStr(const char * &Str, enum GetBuiltinTypeError &Error, bool &RequiresICE,
                                           bool AllowTypeModifiers) {
         int HowLong = 0;
         bool Signed = false, Unsigned = false;
@@ -370,6 +377,7 @@ struct xcc_context {
                 // qualified with an address space.
                 char *End;
                 unsigned AddrSpace = strtoul(Str, &End, 10);
+                (void)AddrSpace;
                 if (End != Str) {
                     // Note AddrSpace == 0 is not the same as an unspecified address space.
                     // Type = getAddrSpaceQualType(Type, getLangASForBuiltinAddressSpace(AddrSpace));
@@ -394,12 +402,13 @@ struct xcc_context {
     }
     [[nodiscard]] CType GetBuiltinType(unsigned ID, enum GetBuiltinTypeError &Error, unsigned *IntegerConstantArgs) {
         const char *TypeStr = builtin_type_table[ID];
+        dbgprint("xcc_context::GetBuiltinType(ID = %u, TypeStr=%s)\n", ID, TypeStr);
         if (TypeStr[0] == '\0') {
             Error = GE_Missing_type;
             return nullptr;
         }
         bool RequiresICE = false;
-        xvector<Param> ArgTypes;
+        xvector<Param> ArgTypes = xvector<Param>::get_with_capacity(3);
         Error = GE_None;
         CType ResType = DecodeTypeFromStr(TypeStr, Error, RequiresICE, true);
         if (Error != GE_None)

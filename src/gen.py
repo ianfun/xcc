@@ -221,7 +221,7 @@ exprs = {
 	"EBlockAddress": ("label_t addr", "location_t block_loc_begin", "IdentRef labelName"),
 	"EBuiltinCall": ("IdentRef builtin_func_name", "llvm::Intrinsic::ID ID", "location_t builtin_call_start_loc", "xvector<Expr> buitin_call_args", "llvm::FunctionType *builtin_func_type"),
 	"ECallCompilerBuiltinCall": ("xvector<Expr> cbc_args", "CType cbc_type", "IdentRef cbc_name", "Token cbc_ID", "location_t cbc_start_loc", "location_t cbc_end_loc"),
-	"ECallImplictFunction": ("xvector<Expr> imt_args", "IdentRef imt_name", "location_t imt_start_loc", "location_t imt_end_loc")
+	"ECallImplictFunction": ("xvector<Expr> imt_args", "IdentRef imt_name", "Token imt_ID", "location_t imt_start_loc", "location_t imt_end_loc")
 }
 ctypes = {
 	"TYPRIM": (),
@@ -404,19 +404,19 @@ def gen_tokens():
 	f.write(",\n  ".join(x[0] for x in ops) + ",\n  ")
 	f.write(",\n  ".join(('K' + i for i in keywords)) + ",\n  ")
 	f.write(",\n  ".join((i[0] for i in ppkeywords)) + ",\n")
-	f.write(",\n  ".join('K' + i for i in builtin_names))
+	f.write(",\n  ".join('BI' + i for i in builtin_names))
 	f.write("\n};\n")
 	f.write("""\
 static constexpr Token 
-    Kstart_builtin_functions = K%s,
-    Kend_lib_builtin_functions = K%s,
-    Kend_compiler_builtin_functions = K%s;
+    Kstart_builtin_functions = BI%s,
+    Kend_lib_builtin_functions = BI%s,
+    Kend_compiler_builtin_functions = BI%s;
 """ % (builtin_names[0], globals()["lastLibBuiltin"], builtin_names[-1]))
 	f.write("static const char *show(Token o){\n  switch(o) {\n")
 	f.write('\n'.join(("    case K%s: return \"%s\";" % (k, k)) for k in keywords) + '\n')
 	f.write('\n'.join(("    case %s: return \"%s\";" % (x[0], x[1])) for x in ppkeywords) + '\n')
 	f.write('\n'.join(("    case %s: return \"%s\";" % (x[0], cstr(x[1]))) for x in ops) + '\n')
-	f.write('\n'.join(("    case K%s: return \"%s\";" % (b, b) for b in builtin_names)))
+	f.write('\n'.join(("    case BI%s: return \"%s\";" % (b, b) for b in builtin_names)))
 	f.write("\n    default: return \"(unknown token)\";\n  }\n}\n")
 	f.close()
 	f = open("IdentifierTableInit.inc", "w")
@@ -433,7 +433,7 @@ static constexpr Token
 	)
 	f.write(',\n')
 	f.write(',\n'.join(
-		('{"%s", K%s}' % (i, i)) for i in builtin_names)
+		('{"%s", BI%s}' % (i, i)) for i in builtin_names)
 	)
 	f.write('\n')
 	f.close()

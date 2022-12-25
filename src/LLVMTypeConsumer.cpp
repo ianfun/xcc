@@ -43,6 +43,7 @@ struct LLVMTypeConsumer
     unsigned pointerSizeInBits;
     llvm::FunctionType *implict_func_ty;
     llvm::ConstantInt *i1_0, *i1_1;
+    llvm::PointerType *AllocaTy;
     const Options &options;
     
     uint64_t getsizeof(llvm::Type *ty) { return options.DL.getTypeStoreSize(ty); }
@@ -226,5 +227,7 @@ struct LLVMTypeConsumer
         i32_0 = llvm::ConstantInt::get(i32Ty, 0);
         i1_0 = llvm::ConstantInt::getFalse(getLLVMContext());
         i1_1 = llvm::ConstantInt::getTrue(getLLVMContext());
+
+        AllocaTy = llvm::PointerType::get(ctx, options.DL.getAllocaAddrSpace());
     }
 };

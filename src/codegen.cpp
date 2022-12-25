@@ -55,6 +55,7 @@ struct IRGen : public DiagnosticHelper {
     }
 
 private:
+    llvm::Value *GenBuiltinCall(Expr);
     auto &getMapFor(const StringRef &) { return str8Map; }
     auto &getMapFor(const ArrayRef<uint16_t> &) { return str16Map; }
     auto &getMapFor(const ArrayRef<uint32_t> &) { return str32Map; }
@@ -209,8 +210,24 @@ private:
         }
         return icmp(llvm::ICmpInst::ICMP_EQ, Val, C);
     }
-    [[nodiscard]] llvm::GetElementPtrInst *gep(llvm::Type *PointeeType, llvm::Value *Ptr, ArrayRef<llvm::Value*> IdxList) {
+    [[nodiscard]] llvm::Value *gep(llvm::Type *PointeeType, llvm::Value *Ptr, ArrayRef<llvm::Value*> IdxList) {
+        if (llvm::Constant *C = dyn_cast<llvm::Constant>(Ptr)) {
+            SmallVector<llvm::Constant*> Cs;
+            Cs.resize_for_overwrite(IdxList.size());
+            for (size_t i = 0;i < IdxList.size();++i) {
+                if (llvm::Constant *idx = dyn_cast<llvm::Constant>(IdxList[i]))
+                    Cs[i] = idx;
+                else
+                    goto GEP;
+            }
+            return llvm::ConstantExpr::getInBoundsGetElementPtr(PointeeType, C, Cs);
+        }
+GEP: ;
         return Insert(llvm::GetElementPtrInst::CreateInBounds(PointeeType, Ptr, IdxList, "", insertBB));
+    }
+    [[nodiscard]] llvm::Value *gep(llvm::Type *PointeeType, llvm::Value *Ptr, unsigned index) {
+        llvm::Value *i = ConstantInt::get(cast<llvm::IntegerType>(type_cache.integer_types[5]), index);
+        return gep(PointeeType, Ptr, i);
     }
     [[nodiscard]] llvm::Value *structGEP(llvm::Type *StructTy, llvm::Value *Ptr, ArrayRef<unsigned> idxs) {
         while (idxs.size() && !idxs.back())
@@ -281,6 +298,12 @@ private:
     }
     llvm::CallInst *call(llvm::FunctionCallee Func, ArrayRef<llvm::Value*> Args = {}) {
         return Insert(llvm::CallInst::Create(Func, Args, {}, "", insertBB));
+    }
+    llvm::CallInst *call(llvm::Function *F, ArrayRef<llvm::Value*> Args = {}) {
+        return call(llvm::FunctionCallee(F->getFunctionType(), F), Args);
+    }
+    llvm::CallInst *call(unsigned ID, ArrayRef<llvm::Value*> Args = {}, ArrayRef<llvm::Type*> Tys = {}) {
+        return call(llvm::Intrinsic::getDeclaration(&*module, ID, Tys), Args);
     }
     [[nodiscard]] llvm::ExtractValueInst* extractValue(llvm::Value *Agg, ArrayRef<unsigned> idxs) {
         return Insert(llvm::ExtractValueInst::Create(Agg, idxs, "", insertBB));
@@ -523,19 +546,21 @@ private:
             return old;
         auto F = addFunction(fty, name->getKey());
         F->setDSOLocal(true);
-        F->setDoesNotThrow();
+        llvm::AttrBuilder builder(getLLVMContext());
+        builder.addAttribute(llvm::Attribute::NoUnwind);
         if (options.OptimizationLevel == 0) {
-            F->addFnAttr(llvm::Attribute::NoInline);
-            F->addFnAttr(llvm::Attribute::OptimizeNone);
+            builder.addAttribute(llvm::Attribute::NoInline);
+            builder.addAttribute(llvm::Attribute::OptimizeNone);
         } else if (isDefinition) {
-            F->addFnAttr(llvm::Attribute::OptimizeForSize);
+            builder.addAttribute(llvm::Attribute::OptimizeForSize);
         }
         if (tags & TYSTATIC)
             F->setLinkage(InternalLinkage);
         if (tags & TYNORETURN)
             F->setDoesNotReturn();
         if (tags & TYINLINE)
-            F->addFnAttr(llvm::Attribute::InlineHint);
+            builder.addAttribute(llvm::Attribute::InlineHint);
+        F->setAttributes(llvm::AttributeList::get(getLLVMContext(), llvm::AttributeList::FunctionIndex, builder));
         vars[idx] = F;
         return F;
     }
@@ -555,7 +580,7 @@ private:
         switch (s->k) {
         case SSwitch: {
             auto cond = gen(s->itest);
-            llvm::SwitchInst *sw = llvm::SwitchInst::Create(cond, labels[s->sw_default], s->switchs.size());
+            llvm::SwitchInst *sw = llvm::SwitchInst::Create(cond, labels[s->sw_default], s->switchs.size(), insertBB);
             if (s->gnu_switchs.size()) {
                 for (const auto &it : s->gnu_switchs) {
                     // Range is small enough to add multiple switch instruction cases.
@@ -1449,33 +1474,47 @@ BINOP_SHIFT:
         case ECast: return createCast(getCastOp(e->castop), gen(e->castval), wrap(e->ty));
         case ECallImplictFunction:
         {
+            unsigned char attrs = builtin_attr_table[(unsigned)e->imt_ID - (unsigned)Kstart_builtin_functions];
+            llvm::AttrBuilder builder(getLLVMContext());
+            builder.addAttribute(llvm::Attribute::NoUnwind); // C always no wind the stack
+            // if (attrs & 1) {
+            //     builder.addAttribute(llvm::Attribute::NoUnwind);
+            // }
+            if (attrs & 2) {
+                builder.addAttribute(llvm::Attribute::NoReturn);
+            }
+            if (attrs & 4) {
+                // builder.addAttribute(llvm::Attribute::NoUnwind);
+                builder.addAttribute(llvm::Attribute::ReadOnly);
+                builder.addAttribute(llvm::Attribute::WillReturn);
+            }
+            if (attrs & 8) {
+                // builder.addAttribute(llvm::Attribute::NoUnwind);
+                builder.addAttribute(llvm::Attribute::ReadNone);
+            }
             StringRef Name = e->imt_name->getKey();
             llvm::FunctionType *FTy = type_cache.implict_func_ty;
-            llvm::Function *F = cast<llvm::Function>(module->getOrInsertFunction(Name, FTy).getCallee());
+            llvm::FunctionCallee FC = module->getOrInsertFunction(Name, FTy, 
+                llvm::AttributeList::get(getLLVMContext(), llvm::AttributeList::FunctionIndex, builder));
             size_t l = e->imt_args.size();
             llvm::Value **buf = type_cache.alloc.Allocate<llvm::Value *>(l);
             for (size_t i = 0; i < l; ++i)
                 buf[i] = gen(e->imt_args[i]);
-            return call(FTy, F, ArrayRef<llvm::Value *>(buf, l));
+            // convert call to (...) to (i32, ...), ...etc.
+            if (l) {
+                SmallVector<llvm::Type*> callTypes;
+                callTypes.resize_for_overwrite(l);
+                for (size_t i = 0;i < l;++i)
+                    callTypes[i] = buf[i]->getType();
+                FTy = llvm::FunctionType::get(FTy->getReturnType(), callTypes, true);
+            }
+            return call(FC, ArrayRef<llvm::Value *>(buf, l));
         }
         case ECallCompilerBuiltinCall:
-        {
-            Token ID = e->cbc_ID;
-            size_t l = e->imt_args.size();
-            llvm::Value *Fn;
-            llvm::FunctionType *FTy = cast<llvm::FunctionType>(wrap(e->cbc_type));
-            llvm::Value **buf = type_cache.alloc.Allocate<llvm::Value *>(l);
-            for (size_t i = 0; i < l; ++i)
-                buf[i] = gen(e->imt_args[i]);
-            switch (ID) {
-            default:
-                llvm_unreachable("unsupported builtin function");
-            }
-            return call(FTy, Fn, ArrayRef<llvm::Value *>(buf, l));
-        }
+            return GenBuiltinCall(e);
         case ECall: {
             llvm::Value *f;
-            llvm::FunctionType *ty;
+            llvm::FunctionType *ty = cast<llvm::FunctionType>(wrap(e->callfunc->ty->p));
             if (e->callfunc->k == EUnary) {
                 assert(e->callfunc->uop == AddressOf);
                 f = getAddress(e->callfunc);
@@ -1486,16 +1525,7 @@ BINOP_SHIFT:
             llvm::Value **buf = type_cache.alloc.Allocate<llvm::Value *>(l);
             for (size_t i = 0; i < l; ++i)
                 buf[i] = gen(e->callargs[i]); // eval argument from left to right
-            ty = cast<llvm::FunctionType>(wrap(e->callfunc->ty->p));
-            // convert call to (...) to (i32, ...), ...etc.
-            if (ty->isVarArg() && ty->getNumParams() == 0 && l != 0) {
-                SmallVector<llvm::Type*> callTypes;
-                callTypes.resize_for_overwrite(l);
-                for (size_t i = 0;i < l;++i) 
-                    callTypes[i] = buf[i]->getType();
-                ty = llvm::FunctionType::get(ty, callTypes, true);
-            }
-            return call(ty, f, ArrayRef<llvm::Value *>(buf, l));
+            return call(ty, f, llvm::makeArrayRef(buf, l));
         }
         default: llvm_unreachable("bad enum kind!");
         }

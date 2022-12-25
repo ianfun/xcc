@@ -311,7 +311,6 @@ struct Function: public DiagnosticHelper {
             }
         }
         // sequence points
-        unsigned pop;
         Value lhs = eval(e->lhs);
         Value rhs = eval(e->rhs);
         switch (e->bop) {

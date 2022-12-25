@@ -141,6 +141,7 @@ union alignas(void*) {
     struct alignas(void*) {
       xvector<Expr> imt_args;
         IdentRef imt_name;
+        Token imt_ID;
         location_t imt_start_loc;
         location_t imt_end_loc;
     };
@@ -321,6 +322,7 @@ struct CallImplictFunctionExpr {
     struct alignas(void*) {
           xvector<Expr> imt_args;
         IdentRef imt_name;
+        Token imt_ID;
         location_t imt_start_loc;
         location_t imt_end_loc;
   };
