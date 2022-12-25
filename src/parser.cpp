@@ -86,7 +86,6 @@ struct Parser : public EvalHelper {
     location_t unreachable_reason_loc = 0, current_stmt_loc = 0, current_declator_loc = 0;
     Expr intzero, intone, size_t_one, cfalse, ctrue;
     Expr null_ptr_expr;
-    CType size_t_ty;
     SmallString<64> parseLiteralCache;
 
   private:
@@ -132,9 +131,9 @@ NORMAL:
             CType ty = e->arr3->ty;
             if (ty->isVLA())
                 return ENEW(SizeofExpr){
-                    .ty = size_t_ty, .theType = ty, .sizeof_loc_begin = begin, .sizeof_loc_end = end};
+                    .ty = context.getSize_t(), .theType = ty, .sizeof_loc_begin = begin, .sizeof_loc_end = end};
         }
-        return wrap(size_t_ty, ConstantInt::get(getLLVMContext(), APInt(size_t_ty->getBitWidth(), getsizeof(e->ty))), begin, end);
+        return wrap(context.getSize_t(), ConstantInt::get(getLLVMContext(), APInt(llvmTypeCache.pointerSizeInBits, getsizeof(e->ty))), begin, end);
     }
     [[nodiscard]] Expr binop(Expr a, BinOp op, Expr b, CType ty) {
         return ENEW(BinExpr){.ty = ty, .lhs = a, .bop = op, .rhs = b};
@@ -431,6 +430,8 @@ PUT:
             return Cast_Imcompatible;
         const auto mask = OpaqueCType::important_mask;
         switch (p->getKind()) {
+        case TYVECTOR:
+            return p->vec_num_elems == expected->vec_num_elems && p->vec_kind == expected->vec_kind && type_equal(p->vec_ty, expected->vec_ty) ? Cast_Ok : Cast_Imcompatible;
         case TYVLA:
             return ((p->vla_expr == expected->vla_expr) && compatible(p->vla_arraytype, expected->vla_arraytype))
                        ? Cast_Ok
@@ -1146,6 +1147,8 @@ SIDE_EFFECT:
         case EBlockAddress:
         case EArrToAddress:
         case ESizeof:
+        case ECallCompilerBuiltinCall:
+        case ECallImplictFunction:
         case EInitList:
         case EConstantArraySubstript: return e;
         }
@@ -1184,7 +1187,7 @@ SIDE_EFFECT:
             }
         }
         // getelementptr treat operand as signed, so we need to prmote to intptr type
-        intPart = int_cast(intPart, size_t_ty);
+        intPart = int_cast(intPart, context.getSize_t());
         CType pointer_ty = ptrPart->ty;
         if (pointer_ty->p->isVoid() || pointer_ty->p->getKind() == TYFUNCTION)
             pointer_ty = context.stringty;
@@ -1336,7 +1339,7 @@ SIDE_EFFECT:
         if (p1 && p2) {
             if (!compatible(result->ty->p, r->ty->p))
                 warning(opLoc, "substract two pointers of incompatible types");
-            result = binop(result, PtrDiff, r, size_t_ty);
+            result = binop(result, PtrDiff, r, context.getPtrDiff_t());
             return;
         }
         if (p1 || p2) {
@@ -2789,7 +2792,7 @@ designator:
                 ty->hassize = true;
                 ty->arrsize = try_eval(e, ok);
                 if (!ok) {
-                    ty = TNEW(VlaType){.vla_arraytype = base, .vla_expr = int_cast(e, size_t_ty)};
+                    ty = TNEW(VlaType){.vla_arraytype = base, .vla_expr = int_cast(e, context.getSize_t())};
                     ty->addTags(tags);
                     ty->setKind(TYVLA);
                 }
@@ -3518,7 +3521,7 @@ ARGV_OK:;
                 return e;
             if (!e->ty->isScalar())
                 return type_error(e->getBeginLoc(), "expect scalar operand to '++'/'--'"), e;
-            CType ty = e->ty->getKind() == TYPOINTER ? size_t_ty : e->ty;
+            CType ty = e->ty->getKind() == TYPOINTER ? context.getSize_t() : e->ty;
             Expr obj = e;
             Expr one = e->ty->isFloating()
                            ? wrap(ty, ConstantFP::get(wrapFloating(ty), 1.0), e->getBeginLoc(), e->getEndLoc())
@@ -3540,8 +3543,8 @@ ARGV_OK:;
                         return expectRB(getLoc()), nullptr;
                     location_t endLoc = getLoc();
                     consume();
-                    return wrap(size_t_ty,
-                                ConstantInt::get(getLLVMContext(), APInt(size_t_ty->getBitWidth(), getsizeof(ty))), loc,
+                    return wrap(context.getSize_t(),
+                                ConstantInt::get(getLLVMContext(), APInt(llvmTypeCache.pointerSizeInBits, getsizeof(ty))), loc,
                                 endLoc);
                 }
                 if (!(e = unary_expression()))
@@ -3567,7 +3570,7 @@ ARGV_OK:;
                 CType ty = type_name();
                 if (!ty)
                     return expect(getLoc(), "type-name"), nullptr;
-                result = wrap(size_t_ty,
+                result = wrap(context.getSize_t(),
                               ConstantInt::get(getLLVMContext(), APInt(llvmTypeCache.pointerSizeInBits, getAlignof(ty))), loc,
                               getLoc());
             } else {
@@ -3575,7 +3578,7 @@ ARGV_OK:;
                 if (!e)
                     return nullptr;
                 result =
-                    wrap(size_t_ty,
+                    wrap(context.getSize_t(),
                          ConstantInt::get(getLLVMContext(), APInt(llvmTypeCache.pointerSizeInBits, getAlignof(e))), loc, getLoc());
             }
             if (l.tok.tok != TRbracket)
@@ -3921,9 +3924,59 @@ NEXT:
         }
         return nullptr;
     }
-    Expr maybe_builtin_call(IdentRef Name, SourceRange range) {
+    Expr compiler_builtin_call(IdentRef Name, SourceRange range) {
+        unsigned ID = Name->second;
+        if (l.tok.tok != TLbracket) return nullptr;
+        if (ID > (unsigned)Kend_compiler_builtin_functions || ID < (unsigned)Kstart_builtin_functions) return nullptr;
+        consume();
+        // 'printf', 'cos', ..., libary builtins needs header
+        if (ID <= (unsigned)Kend_lib_builtin_functions) {
+            const char *Header = getLibHeader(Kstart_builtin_functions);
+            warning(range.getStart(),
+                "call to undeclared library function %I"
+                "; ISO C99 and later do not support implicit function declarations", Name
+            ) << range;
+            note("include the header <%s> or explicitly provide a declaration for %I", Header, Name);
+        }
+        ID -= (unsigned)Kstart_builtin_functions;
+        // '__builtin_' or '__sync_' functions
+        xvector<Expr> callArgs = xvector<Expr>::get();
+        for (;l.tok.tok != TRbracket;) {
+            Expr e = assignment_expression();
+            if (!e)
+                return nullptr;
+            callArgs.push_back(e);
+            if (l.tok.tok == TComma)
+                consume();
+        }
+        location_t endLoc = getLoc();
+        consume();
+        CType ty;
+        if (ID <= Kend_lib_builtin_functions) {
+            ty = context.getImplictFunctionType();
+            for (Expr &arg: callArgs) {
+                default_argument_promotions(arg);
+            }
+            return ENEW(CallImplictFunctionExpr) {.ty = ty->ret, .imt_args = callArgs, .imt_name = Name, .imt_start_loc = range.getStart(), .imt_end_loc = endLoc};
+        }
+        unsigned IntegerConstantArgs = 0;
+        enum GetBuiltinTypeError Error;
+        ty = context.GetBuiltinType(ID, Error, &IntegerConstantArgs);
+        size_t i = 0;
+        for (const Param &p: ty->params) {
+            ++i;
+            if (!compatible(p.ty, callArgs[i]->ty)) {
+                type_error(range.getStart(), "incompatible type for calling builtin function %I: expect %T for parameter %u, %I provided", Name, p.ty, i, callArgs[i]->ty);
+            } else {
+                callArgs[i] = castto(callArgs[i], p.ty, Implict_Call);
+            }
+        }
+        return ENEW(CallCompilerBuiltinCallExpr) {.ty = ty->ret, .cbc_args = callArgs, .cbc_type = ty, .cbc_name = Name, .cbc_ID = (Token)ID, .cbc_start_loc = range.getStart(), .cbc_end_loc = endLoc};
+    }
+    Expr llvm_builtin_call(IdentRef Name, SourceRange range) {
         StringRef NameStr = Name->getKey();
-        if (!NameStr.startswith("__builtin_")) return nullptr;
+        if (!(NameStr.startswith("__builtin_") || NameStr.startswith("__sync_")))
+            return nullptr;
         StringRef Prefix = llvm::Triple::getArchTypePrefix(options.triple.getArch());
         llvm::Intrinsic::ID ID = llvm::Intrinsic::getIntrinsicForClangBuiltin(Prefix.data(), NameStr);
         if (ID == llvm::Intrinsic::not_intrinsic)
@@ -4049,8 +4102,11 @@ NEXT:
                 if (!it) {
                     SourceRange range(loc, endLoc);
                     SourceRange declRange;
-                    Expr builtin_call = maybe_builtin_call(sym, range);
-                    if (builtin_call) return builtin_call;
+                    Expr builtin_call;
+                    if ((builtin_call = compiler_builtin_call(sym, range)))
+                        return builtin_call;
+                    if ((builtin_call = llvm_builtin_call(sym, range)))
+                        return builtin_call;
                     IdentRef Name = try_suggest_identfier(sym, declRange);
                     if (Name) {
                         type_error(loc, "use of undeclared identifier %I; did you mean %I?", sym)
@@ -4089,7 +4145,7 @@ NEXT:
                     break;
                 case TYARRAY:
                     result = ENEW(ArrToAddressExpr){
-                        .ty = context.getPointerType(ty->arrtype),
+                        .ty = context.getArrayDecayedType(ty),
                         .arr3 = ENEW(VarExpr){.ty = ty, .sval = idx, .varName = sym, .varLoc = loc}};
                     break;
                 default:
@@ -5607,7 +5663,7 @@ intone{
 },
 cfalse{wrap(context.getBool(), llvmTypeCache.i1_0, 0, 0)},
 ctrue{wrap(context.getBool(), llvmTypeCache.i1_1, 0, 0)},
-null_ptr_expr{wrap(context.getNullPtr_t(), llvmTypeCache.null_ptr, 0, 0)}, size_t_ty{context.getIntTypeFromBitSize(llvmTypeCache.pointerSizeInBits)} { }
+null_ptr_expr{wrap(context.getNullPtr_t(), llvmTypeCache.null_ptr, 0, 0)} { }
     // used by Lexer
     Expr constant_expression() { return conditional_expression(); }
     void startParse() {

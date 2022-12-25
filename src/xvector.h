@@ -25,6 +25,9 @@ template <typename T> struct xvector: public xvectorBase {
         return res;
     }
     static xvector<T> get_empty() {
+        return get_with_capacity(0);
+    }
+    static xvector<T> get_null() {
         xvector<T> res;
         res.p = nullptr;
         return res;

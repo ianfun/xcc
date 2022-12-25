@@ -1447,9 +1447,35 @@ BINOP_SHIFT:
             return it;
         }
         case ECast: return createCast(getCastOp(e->castop), gen(e->castval), wrap(e->ty));
+        case ECallImplictFunction:
+        {
+            StringRef Name = e->imt_name->getKey();
+            llvm::FunctionType *FTy = type_cache.implict_func_ty;
+            llvm::Function *F = cast<llvm::Function>(module->getOrInsertFunction(Name, FTy).getCallee());
+            size_t l = e->imt_args.size();
+            llvm::Value **buf = type_cache.alloc.Allocate<llvm::Value *>(l);
+            for (size_t i = 0; i < l; ++i)
+                buf[i] = gen(e->imt_args[i]);
+            return call(FTy, F, ArrayRef<llvm::Value *>(buf, l));
+        }
+        case ECallCompilerBuiltinCall:
+        {
+            Token ID = e->cbc_ID;
+            size_t l = e->imt_args.size();
+            llvm::Value *Fn;
+            llvm::FunctionType *FTy = cast<llvm::FunctionType>(wrap(e->cbc_type));
+            llvm::Value **buf = type_cache.alloc.Allocate<llvm::Value *>(l);
+            for (size_t i = 0; i < l; ++i)
+                buf[i] = gen(e->imt_args[i]);
+            switch (ID) {
+            default:
+                llvm_unreachable("unsupported builtin function");
+            }
+            return call(FTy, Fn, ArrayRef<llvm::Value *>(buf, l));
+        }
         case ECall: {
             llvm::Value *f;
-            llvm::FunctionType *ty = cast<llvm::FunctionType>(wrap(e->callfunc->ty->p));
+            llvm::FunctionType *ty;
             if (e->callfunc->k == EUnary) {
                 assert(e->callfunc->uop == AddressOf);
                 f = getAddress(e->callfunc);
@@ -1460,8 +1486,16 @@ BINOP_SHIFT:
             llvm::Value **buf = type_cache.alloc.Allocate<llvm::Value *>(l);
             for (size_t i = 0; i < l; ++i)
                 buf[i] = gen(e->callargs[i]); // eval argument from left to right
-            llvm::CallInst *r = call(ty, f, ArrayRef<llvm::Value *>(buf, l));
-            return r;
+            ty = cast<llvm::FunctionType>(wrap(e->callfunc->ty->p));
+            // convert call to (...) to (i32, ...), ...etc.
+            if (ty->isVarArg() && ty->getNumParams() == 0 && l != 0) {
+                SmallVector<llvm::Type*> callTypes;
+                callTypes.resize_for_overwrite(l);
+                for (size_t i = 0;i < l;++i) 
+                    callTypes[i] = buf[i]->getType();
+                ty = llvm::FunctionType::get(ty, callTypes, true);
+            }
+            return call(ty, f, ArrayRef<llvm::Value *>(buf, l));
         }
         default: llvm_unreachable("bad enum kind!");
         }
@@ -1509,6 +1543,8 @@ BINOP_SHIFT:
     llvm::DIType* wrapDIType(CType ty) {
         assert(ty);
         switch (ty->getKind()) {
+            case TYVECTOR:
+                // TODO
             case TYPRIM:
                 return di_basic_types[type_cache.getTypeIndex(ty)];
             case TYPOINTER:

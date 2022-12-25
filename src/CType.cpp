@@ -311,6 +311,11 @@ struct OpaqueCType {
         assert(isAgg());
         return isTag(TagType_Enum);
     }
+    bool isIntOrEnum() {
+        if (isAgg())
+            return isEnum();
+        return isInteger();
+    }
     bool isUnion() const {
         assert(isAgg());
         return isTag(TagType_Union);

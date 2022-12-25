@@ -17,7 +17,9 @@ enum ExprKind: uint8_t {
     EPostFix,
     ESizeof,
     EBlockAddress,
-    EBuiltinCall
+    EBuiltinCall,
+    ECallCompilerBuiltinCall,
+    ECallImplictFunction
 };
 struct OpaqueExpr {
 OpaqueExpr()=delete;
@@ -127,6 +129,20 @@ union alignas(void*) {
         location_t builtin_call_start_loc;
         xvector<Expr> buitin_call_args;
         llvm::FunctionType *builtin_func_type;
+    };
+    struct alignas(void*) {
+      xvector<Expr> cbc_args;
+        CType cbc_type;
+        IdentRef cbc_name;
+        Token cbc_ID;
+        location_t cbc_start_loc;
+        location_t cbc_end_loc;
+    };
+    struct alignas(void*) {
+      xvector<Expr> imt_args;
+        IdentRef imt_name;
+        location_t imt_start_loc;
+        location_t imt_end_loc;
     };
 };
 };
@@ -287,6 +303,28 @@ struct BuiltinCallExpr {
         llvm::FunctionType *builtin_func_type;
   };
 };
+struct CallCompilerBuiltinCallExpr {
+    enum ExprKind k=ECallCompilerBuiltinCall;
+    CType ty;
+    struct alignas(void*) {
+          xvector<Expr> cbc_args;
+        CType cbc_type;
+        IdentRef cbc_name;
+        Token cbc_ID;
+        location_t cbc_start_loc;
+        location_t cbc_end_loc;
+  };
+};
+struct CallImplictFunctionExpr {
+    enum ExprKind k=ECallImplictFunction;
+    CType ty;
+    struct alignas(void*) {
+          xvector<Expr> imt_args;
+        IdentRef imt_name;
+        location_t imt_start_loc;
+        location_t imt_end_loc;
+  };
+};
 static uint8_t expr_size_map[] = {
     sizeof(ConstantExpr),
     sizeof(BinExpr),
@@ -305,6 +343,8 @@ static uint8_t expr_size_map[] = {
     sizeof(PostFixExpr),
     sizeof(SizeofExpr),
     sizeof(BlockAddressExpr),
-    sizeof(BuiltinCallExpr)
+    sizeof(BuiltinCallExpr),
+    sizeof(CallCompilerBuiltinCallExpr),
+    sizeof(CallImplictFunctionExpr)
 };
-static constexpr size_t expr_max_size = std::max({sizeof(ConstantExpr), sizeof(BinExpr), sizeof(UnaryExpr), sizeof(StringExpr), sizeof(ConstantArraySubstriptExpr), sizeof(InitListExpr), sizeof(VoidExpr), sizeof(VarExpr), sizeof(ConditionExpr), sizeof(CastExpr), sizeof(CallExpr), sizeof(SubscriptExpr), sizeof(MemberAccessExpr), sizeof(ArrToAddressExpr), sizeof(PostFixExpr), sizeof(SizeofExpr), sizeof(BlockAddressExpr), sizeof(BuiltinCallExpr)});
+static constexpr size_t expr_max_size = std::max({sizeof(ConstantExpr), sizeof(BinExpr), sizeof(UnaryExpr), sizeof(StringExpr), sizeof(ConstantArraySubstriptExpr), sizeof(InitListExpr), sizeof(VoidExpr), sizeof(VarExpr), sizeof(ConditionExpr), sizeof(CastExpr), sizeof(CallExpr), sizeof(SubscriptExpr), sizeof(MemberAccessExpr), sizeof(ArrToAddressExpr), sizeof(PostFixExpr), sizeof(SizeofExpr), sizeof(BlockAddressExpr), sizeof(BuiltinCallExpr), sizeof(CallCompilerBuiltinCallExpr), sizeof(CallImplictFunctionExpr)});

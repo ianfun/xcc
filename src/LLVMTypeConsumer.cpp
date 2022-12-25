@@ -41,6 +41,7 @@ struct LLVMTypeConsumer
     llvm::ConstantInt *i32_1, *i32_0, *i32_n1;
     llvm::IntegerType *intptrTy;
     unsigned pointerSizeInBits;
+    llvm::FunctionType *implict_func_ty;
     llvm::ConstantInt *i1_0, *i1_1;
     const Options &options;
     
@@ -217,6 +218,7 @@ struct LLVMTypeConsumer
         _complex_float = llvm::StructType::get(float_types[F_Float], float_types[F_Float]);
         intptrTy = options.DL.getIntPtrType(getLLVMContext());
         pointerSizeInBits = intptrTy->getBitWidth();
+        implict_func_ty = llvm::FunctionType::get(integer_types[5], {}, true);
 
         llvm::IntegerType *i32Ty = cast<llvm::IntegerType>(integer_types[5]);
         i32_n1 = llvm::ConstantInt::get(i32Ty, -1);

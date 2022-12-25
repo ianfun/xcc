@@ -83,7 +83,7 @@ keywords = (
 	"volatile",
 
 # end declaration-specifiers
-  "__func__",
+ 	"__func__",
 	"__declspec",
 	"__attribute",
 	"__builtin_choose_expr",
@@ -107,9 +107,9 @@ keywords = (
 
 	"__PRETTY_FUNCTION__",
 	"__extension__",
-  "__real",     # GNU extension
-  "__imag",     # GNU extension
-  "__label__",
+	"__real",     # GNU extension
+	"__imag",     # GNU extension
+	"__label__",
 	"asm",
 	"nullptr",    # since C23
 	"true",       # since C23
@@ -220,6 +220,8 @@ exprs = {
 	"ESizeof": ("CType theType", "location_t sizeof_loc_begin", "location_t sizeof_loc_end",),
 	"EBlockAddress": ("label_t addr", "location_t block_loc_begin", "IdentRef labelName"),
 	"EBuiltinCall": ("IdentRef builtin_func_name", "llvm::Intrinsic::ID ID", "location_t builtin_call_start_loc", "xvector<Expr> buitin_call_args", "llvm::FunctionType *builtin_func_type"),
+	"ECallCompilerBuiltinCall": ("xvector<Expr> cbc_args", "CType cbc_type", "IdentRef cbc_name", "Token cbc_ID", "location_t cbc_start_loc", "location_t cbc_end_loc"),
+	"ECallImplictFunction": ("xvector<Expr> imt_args", "IdentRef imt_name", "location_t imt_start_loc", "location_t imt_end_loc")
 }
 ctypes = {
 	"TYPRIM": (),
@@ -229,7 +231,8 @@ ctypes = {
 	"TYARRAY": ("CType arrtype", "bool hassize", "unsigned arrsize",),
 	"TYFUNCTION": ("CType ret", "xvector<Param> params", "bool isVarArg",),
 	"TYVLA": ("CType vla_arraytype", "Expr vla_expr"),
-	"TYBITINT": ("CType bitint_base", "unsigned bits")
+	"TYBITINT": ("CType bitint_base", "unsigned bits"),
+	"TYVECTOR": ("CType vec_ty", "unsigned vec_num_elems", "enum VectorKind vec_kind")
 }
 def assertTuple(x: dict):
 	assert(isinstance(x, dict))
@@ -282,9 +285,12 @@ def gen_keywords():
 
 def get_builtins_names():
 	M = []
+	i = None
 	for (_, value_list) in C_LIB_BUILTINS.items():
 		for (name, _) in value_list:
 			yield name
+			i = name
+	globals()["lastLibBuiltin"] = name
 	for (name, _, _) in COMPILER_BUILTINS:
 		yield name
 
@@ -400,10 +406,16 @@ def gen_tokens():
 	f.write(",\n  ".join((i[0] for i in ppkeywords)) + ",\n")
 	f.write(",\n  ".join('K' + i for i in builtin_names))
 	f.write("\n};\n")
+	f.write("""\
+static constexpr Token 
+    Kstart_builtin_functions = K%s,
+    Kend_lib_builtin_functions = K%s,
+    Kend_compiler_builtin_functions = K%s;
+""" % (builtin_names[0], globals()["lastLibBuiltin"], builtin_names[-1]))
 	f.write("static const char *show(Token o){\n  switch(o) {\n")
 	f.write('\n'.join(("    case K%s: return \"%s\";" % (k, k)) for k in keywords) + '\n')
 	f.write('\n'.join(("    case %s: return \"%s\";" % (x[0], x[1])) for x in ppkeywords) + '\n')
-	f.write('\n'.join(("    case %s: return \"%s\";" % (x[0], cstr(x[1]))) for x in ops))
+	f.write('\n'.join(("    case %s: return \"%s\";" % (x[0], cstr(x[1]))) for x in ops) + '\n')
 	f.write('\n'.join(("    case K%s: return \"%s\";" % (b, b) for b in builtin_names)))
 	f.write("\n    default: return \"(unknown token)\";\n  }\n}\n")
 	f.close()
@@ -662,11 +674,25 @@ class VBuf:
 		if isinstance(s, str):
 			s = s.encode('utf-8')
 		self.buf += s
-	def pop_back(self):
-		return self.buf.pop()
 	def close(self):
 		with open(self.path, self.mode) as f:
 			f.write(self.buf)
+
+def getBuiltinAttr(s: str)->int:
+	matchers = {
+		'n': ("nothrow", 1),
+		'r': ("noreturn", 2),
+		'U': ("pure", 4),
+		'c': ("const", 8),
+		't': ("custom", 16),
+		'e': ("const_no_errno", 32),
+	}
+	o = 0
+	for c in s:
+		it = matchers.get(c, None)
+		if it is not None:
+			o |= it[1]
+	return o
 
 def gen_builtins_table():
 	verbose("generating builtins table...")
@@ -688,12 +714,18 @@ enum CLibHeader: unsigned char {
 	LIB_BLOCKS_H,
 	LIB_STDARG_H
 };
+static constexpr unsigned char 
+	attr_nothrow = 1,
+	attr_noreturn = 2,
+	attr_pure = 4,
+	attr_const = 8,
+	attr_custom = 16,
+	attr_const_no_errno = 32;
 """)
 	f.write("static const enum CLibHeader builtin_header_table[] = {\n")
 	for (header, value_list) in C_LIB_BUILTINS.items():
 		for (name, attr) in value_list:
 			f.write('    LIB_%s, // %s\n' % (header.replace('.', '_').upper(), name))
-	f.pop_back()
 	f.write('\n};\n')
 	f.write(b"""\
 const char *getLibHeader(size_t index) {
@@ -715,14 +747,17 @@ const char *getLibHeader(size_t index) {
     llvm_unreachable("bad header");
 }
 """)
-	f.write("static const char *const builtin_attr_table[] = {\n")
+	f.write("static const unsigned char builtin_attr_table[] = {\n")
 	for (header, value_list) in C_LIB_BUILTINS.items():
 		for (name, attr) in value_list:
-			f.write('    "%s", // %s\n' % (attr, name))
+			f.write('    0x%X, // %s\n' % (getBuiltinAttr(attr), name))
 	f.write('\n')
 	for (name, args, attr) in COMPILER_BUILTINS:
-		f.write('    "%s", // %s\n' % (attr, name))
-	f.pop_back()
+		f.write('    0x%X, // %s\n' % (getBuiltinAttr(attr), name))
+	f.write('\n};\n')
+	f.write("static const char * const builtin_type_table[] = {\n")
+	for (name, args, attr) in COMPILER_BUILTINS:
+		f.write('    "%s", // %s\n' % (args, name))
 	f.write('\n};\n')
 	f.close()
 	verbose("done.\n")

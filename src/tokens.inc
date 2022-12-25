@@ -1282,6 +1282,10 @@ Kprintf,
   K__builtin_subcl,
   K__builtin_subcll
 };
+static constexpr Token 
+    Kstart_builtin_functions = Kprintf,
+    Kend_lib_builtin_functions = K_Block_object_dispose,
+    Kend_compiler_builtin_functions = K__builtin_subcll;
 static const char *show(Token o){
   switch(o) {
     case Kextern: return "extern";
@@ -1466,7 +1470,8 @@ static const char *show(Token o){
     case PPSharpSharp: return "##";
     case PPMacroPop: return "<macro-pop>";
     case PPMacroTraceLoc: return "<macro-trace-loc>";
-    case TEOF: return "<EOF>";    case Kprintf: return "printf";
+    case TEOF: return "<EOF>";
+    case Kprintf: return "printf";
     case Kfprintf: return "fprintf";
     case Ksnprintf: return "snprintf";
     case Ksprintf: return "sprintf";

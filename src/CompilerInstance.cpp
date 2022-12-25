@@ -48,8 +48,10 @@ struct CompilerInstance
         return *SM;
     }
     xcc_context &createContext() {
-        if (!context)
-            context = new xcc_context();
+        if (!context) {
+            createOptions().createTarget(createDiags());
+            context = new xcc_context(options->DL, options->triple);
+        }
         return *context;
     }
     LLVMContext &createLLVMContext() {

@@ -7,7 +7,8 @@ enum CTypeKind: uint8_t {
     TYARRAY,
     TYFUNCTION,
     TYVLA,
-    TYBITINT
+    TYBITINT,
+    TYVECTOR
 };
 
 #include "CType.cpp"
@@ -43,6 +44,11 @@ enum CTypeKind: uint8_t {
     struct alignas(void*) {
         CType bitint_base;
         unsigned bits;
+    };
+    struct alignas(void*) {
+        CType vec_ty;
+        unsigned vec_num_elems;
+        enum VectorKind vec_kind;
     };
     };
 };
@@ -102,6 +108,14 @@ struct BitintType{
         unsigned bits;
     };
 };
+struct VectorType{
+    uint64_t tags;
+    struct alignas(void*) {
+        CType vec_ty;
+        unsigned vec_num_elems;
+        enum VectorKind vec_kind;
+    };
+};
 static size_t ctype_size_map[] = {
     sizeof(PrimType),
     sizeof(PointerType),
@@ -110,6 +124,7 @@ static size_t ctype_size_map[] = {
     sizeof(ArrayType),
     sizeof(FunctionType),
     sizeof(VlaType),
-    sizeof(BitintType)
+    sizeof(BitintType),
+    sizeof(VectorType)
 };
-static constexpr size_t ctype_max_size = std::max({sizeof(PrimType), sizeof(PointerType), sizeof(TagType), sizeof(BitfieldType), sizeof(ArrayType), sizeof(FunctionType), sizeof(VlaType), sizeof(BitintType)});
+static constexpr size_t ctype_max_size = std::max({sizeof(PrimType), sizeof(PointerType), sizeof(TagType), sizeof(BitfieldType), sizeof(ArrayType), sizeof(FunctionType), sizeof(VlaType), sizeof(BitintType), sizeof(VectorType)});

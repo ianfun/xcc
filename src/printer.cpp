@@ -135,6 +135,22 @@ void maybe_print_paren(const_Expr e, raw_ostream &OS) {
 }
 raw_ostream &operator<<(llvm::raw_ostream &OS, const_Expr e) {
     switch (e->k) {
+    case ECallCompilerBuiltinCall:
+        OS << e->cbc_name->getKey();
+        for (size_t i =0;i < e->cbc_args.size();++i) {
+            OS << e->cbc_args[i];
+            if (i != e->cbc_args.size())
+                OS << ", ";
+        }
+        return OS;    
+    case ECallImplictFunction:
+        OS << e->imt_name->getKey();
+        for (size_t i = 0;i < e->imt_args.size();++i) {
+            OS << e->imt_args[i];
+            if (i != e->imt_args.size())
+                OS << ", ";
+        }
+        return OS;
     case EBlockAddress:
         return OS << "&&" << e->labelName->getKey();
     case EBuiltinCall:
@@ -283,6 +299,7 @@ raw_ostream &operator<<(llvm::raw_ostream &OS, const_CType ty) {
             vla_expr = vla_expr->castval;
         return OS << ty->vla_arraytype << " [" << vla_expr << ']';
     }
+    case TYVECTOR: return OS << ty->vec_ty << " __attribute__((vector_size(" << ty->vec_num_elems << "))";
     case TYBITINT: return OS << ty->getBitIntBaseType() << " _BitInt(" << ty->getBitIntBits() << ")";
     case TYFUNCTION: {
         auto str = ty->get_storage_str();
@@ -333,10 +350,14 @@ raw_ostream &operator>>(raw_ostream &OS, const_CType ty) {
             OS << ", qualifiers=" << str;
         return OS << "]";
     }
+    case TYVECTOR:
+        OS << "vector[elementType=";
+        OS >> ty->vec_ty;
+        return OS << ", size=" << ty->vec_num_elems << "]";
     case TYTAG: return printTag(ty, OS);
     case TYBITFIELD: return OS >> ty->bittype << " : " << ty->bitsize;
     case TYARRAY:
-        OS << "array[base=" >> ty->arrtype << ", size=";
+        OS << "array[elementType=" >> ty->arrtype << ", size=";
         if (ty->hassize)
             OS << ty->arrsize;
         return OS << "]";
@@ -344,10 +365,10 @@ raw_ostream &operator>>(raw_ostream &OS, const_CType ty) {
         Expr vla_expr = ty->vla_expr;
         if (vla_expr->k == ECast)
             vla_expr = vla_expr->castval;
-        OS << "VLA[base=" >> ty->vla_arraytype << ", size=" << vla_expr << "]";
+        OS << "VLA[elementType=" >> ty->vla_arraytype << ", size=" << vla_expr << "]";
     } break;
     case TYBITINT:
-        OS << "BitInt[base=";
+        OS << "BitInt[elementType=";
         OS << ty->getBitIntBaseType();
         OS << ", bits=";
         OS << ty->getBitIntBits();
@@ -406,6 +427,11 @@ void print_cdecl(const_CType ty, raw_ostream &OS) {
         print_cdecl(ty->p, OS);
         break;
     }
+    case TYVECTOR:
+        OS << "vector ";
+        print_cdecl(ty->vec_ty, OS);
+        OS << " of " << ty->vec_num_elems;
+        break;
     case TYBITFIELD:
         OS << "bitfield " << ty->bitsize << " of ";
         print_cdecl(ty->bittype, OS);

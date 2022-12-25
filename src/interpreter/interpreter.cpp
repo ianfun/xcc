@@ -272,6 +272,8 @@ struct Function: public DiagnosticHelper {
                     }
                 }
             }
+            case ECallCompilerBuiltinCall:
+            case ECallImplictFunction:
             case EBuiltinCall: llvm_unreachable("unsupported builtin function");
             case EInitList: llvm_unreachable("");
             case EBlockAddress:

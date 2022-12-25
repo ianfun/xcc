@@ -60,7 +60,7 @@ int main(int argc_, const char **argv_)
     llvmcontext.setDiagnosticHandler(std::make_unique<xcc::XCCDiagnosticHandler>()); 
 
     // create xcc_context
-    xcc::xcc_context ctx;
+    xcc::xcc_context ctx(options.DL, options.triple);
 
     // create xcc's type cache for LLVM
     xcc::LLVMTypeConsumer type_cache(llvmcontext, options);

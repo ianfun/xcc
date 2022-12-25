@@ -904,7 +904,7 @@ struct Initializer {
     Expr value; // value
     xvector<Designator> idxs; // The index for the array/struct/union
     Designator idx; // -1 if use idxs
-    Initializer(Expr value, Designator idx): value{value}, idxs{xvector<Designator>::get_empty()}, idx{idx} {}
+    Initializer(Expr value, Designator idx): value{value}, idxs{xvector<Designator>::get_null()}, idx{idx} {}
     Initializer(Expr value, ArrayRef<Designator> idxs): value{value}, idxs{xvector<Designator>::get(idxs)}, idx{Designator()} {}
     bool isSingle() const { return idxs.p == nullptr; }
     Designator getDesignator() const {
@@ -949,6 +949,31 @@ struct TranslationUnit {
     Stmt ast; // A HeadStmt
     unsigned max_tags_scope;
     unsigned max_typedef_scope;
+};
+enum VectorKind: unsigned char {
+    /// not a target-specific vector type
+    GenericVector,
+
+    /// is AltiVec vector
+    AltiVecVector,
+
+    /// is AltiVec 'vector Pixel'
+    AltiVecPixel,
+
+    /// is AltiVec 'vector bool ...'
+    AltiVecBool,
+
+    /// is ARM Neon vector
+    NeonVector,
+
+    /// is ARM Neon polynomial vector
+    NeonPolyVector,
+
+    /// is AArch64 SVE fixed-length data vector
+    SveFixedLengthDataVector,
+
+    /// is AArch64 SVE fixed-length predicate vector
+     SveFixedLengthPredicateVector
 };
 #include "ctypes.inc"
 #include "expressions.inc"
@@ -1012,6 +1037,8 @@ location_t OpaqueExpr::getBeginLoc() const {
     case EBuiltinCall: return builtin_call_start_loc;
     case EVoid: return voidStartLoc;
     case EConstantArraySubstript: return casLoc;
+    case ECallCompilerBuiltinCall: return cbc_start_loc;
+    case ECallImplictFunction: return imt_start_loc;
     }
     llvm_unreachable("invalid Expr");
 }
@@ -1037,6 +1064,8 @@ location_t OpaqueExpr::getEndLoc() const {
     case ECall: return callEnd;
     case EPostFix: return postFixEndLoc;
     case EBuiltinCall: return builtin_call_start_loc + builtin_func_name->getKeyLength() - 1;
+    case ECallCompilerBuiltinCall: return cbc_end_loc;
+    case ECallImplictFunction: return imt_end_loc;
     }
     llvm_unreachable("invalid Expr");
 }
@@ -1060,6 +1089,7 @@ static bool type_equal(CType a, CType b) {
         return false;
     switch (a->getKind()) {
     case TYBITFIELD: return (a->bitsize == b->bitsize) && type_equal(a->bittype, b->bittype);
+    case TYVECTOR: return a->vec_num_elems == b->vec_num_elems && a->vec_kind == b->vec_kind && type_equal(a->vec_ty, b->vec_ty);
     case TYARRAY:
         if (a->hassize != b->hassize)
             return false;
@@ -1089,6 +1119,8 @@ static bool compatible(CType p, CType expected) {
     switch (p->getKind()) {
     case TYVLA: return (p->vla_expr == expected->vla_expr) && compatible(p->vla_arraytype, expected->vla_arraytype);
     case TYPRIM: return p->basic_equals(expected);
+    case TYVECTOR:
+        return p->vec_num_elems == expected->vec_num_elems && p->vec_kind == expected->vec_kind && type_equal(p->vec_ty, expected->vec_ty);
     case TYFUNCTION:
         if (!compatible(p->ret, expected->ret) || p->params.size() != expected->params.size())
             return false;
@@ -1318,6 +1350,22 @@ static unsigned scalarRank(const_CType ty) {
         return scalarRankNoComplex(ty) + 1000; // a dummy number
     return scalarRank(ty);
 }
+enum GetBuiltinTypeError: unsigned char {
+    /// No error
+    GE_None,
+
+    /// Missing a type
+    GE_Missing_type,
+
+    /// Missing a type from <stdio.h>
+    GE_Missing_stdio,
+
+    /// Missing a type from <setjmp.h>
+    GE_Missing_setjmp,
+
+    /// Missing a type from <ucontext.h>
+    GE_Missing_ucontext
+};
 
 #ifdef XCC_JIT
 #include "JIT.cpp"
