@@ -1,6 +1,6 @@
 #pragma
 
-_Pragma("");
+_Pragma("")
 
 const char *a = __func__; // ""
 const char *b = __FUNCTION__; // ""

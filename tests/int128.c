@@ -4,9 +4,6 @@ unsigned __int128 b = 0xFFFFFFFFFFFFFFFFF;
 __int128 int128_add(__int128 a, __int128 b) {
 	return a + b;
 }
-__int128 int128_add(__int128 a, __int128 b) {
-        return a + b;
-}
 __int128 int128_sub(__int128 a, __int128 b) {
         return a - b;
 }

@@ -39,11 +39,11 @@ Or use apt
 sudo apt install llvm-15
 ```
 
-## Installing and Buliding
+## Installing and Building
 
 * Windows - MSYS2
 
-Install LLD include headers and static libary files(.a)
+Install LLD include headers and static library files(.a)
 
 ```bash
 $ pacman -S mingw-w64-x86_64-lld
@@ -118,7 +118,7 @@ Fix-it Hints
 
 * trigraphs
 
-Support trigraphs(both two and three charactors) in command line option `-trigraphs`.
+Support trigraphs(both two and three characters) in command line option `-trigraphs`.
 
 ## Author
 
@@ -131,7 +131,7 @@ ianfun
 
 * C23: https://open-std.org/JTC1/SC22/WG14/www/docs/n3054.pdf
 
-## Optmizations
+## Optimizations
 
 * remove unused variables
 
